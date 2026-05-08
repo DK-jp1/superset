@@ -69,8 +69,10 @@ enum ConnectionState {
 
 const DEBUG_CLIENT = process.env.SUPERSET_TERMINAL_DEBUG === "1";
 
-// Get from shared constants for multi-worktree support (imported at top of file)
-const SUPERSET_HOME_DIR = join(homedir(), SUPERSET_DIR_NAME);
+// Prefer SUPERSET_HOME_DIR when explicitly provided by a safe dev launcher.
+// Fall back to the workspace-scoped default for normal Superset behavior.
+const SUPERSET_HOME_DIR =
+	process.env.SUPERSET_HOME_DIR || join(homedir(), SUPERSET_DIR_NAME);
 
 const SOCKET_PATH = join(SUPERSET_HOME_DIR, "terminal-host.sock");
 const TOKEN_PATH = join(SUPERSET_HOME_DIR, "terminal-host.token");

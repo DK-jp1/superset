@@ -17,6 +17,7 @@
 	"private": true,
 	"scripts": {
 		"dev": "turbo run dev dev:caddy --filter=@superset/api --filter=@superset/web --filter=@superset/desktop --filter=electric-proxy --filter=//",
+		"dev:doydeck-safe": "bun run --cwd apps/desktop dev:doydeck-safe",
 		"dev:all": "turbo dev",
 		"dev:caddy": "dotenv -- caddy run --config Caddyfile",
 		"dev:docs": "turbo dev --filter=@superset/docs",
