@@ -7,6 +7,7 @@ import {
 	detectProvider,
 	getProviderLabel,
 	buildInjectionScript,
+	buildAssistantSnapshotScript,
 	buildExtractionScript,
 } from "../browser-adapters";
 import { getTerminalSelection } from "../useActiveTerminal";
@@ -46,6 +47,33 @@ const INSTRUCTION_KEYWORDS = [
 ];
 
 const HEADING_KEYWORD_PATTERN = INSTRUCTION_KEYWORDS.join("|");
+const MIN_CAPTURE_TEXT_LENGTH = 30;
+const MIN_TEXT_CHANGE_BASELINE_LENGTH = 30;
+const AUTO_CAPTURE_POLL_INTERVAL_MS = 1000;
+const AUTO_CAPTURE_STABLE_POLLS = 2;
+const AUTO_CAPTURE_STABLE_MS = 2500;
+const TRANSIENT_RESPONSE_PATTERNS = [
+	/^thought for\b/i,
+	/^thinking\b/i,
+	/^思考中/,
+	/^考え中/,
+	/^回答を生成中/,
+	/^応答を生成中/,
+	/^生成中/,
+	/^処理中/,
+];
+
+export interface AssistantCaptureSnapshot {
+	assistantCount: number;
+	latestText: string;
+	latestFingerprint: string;
+}
+
+interface AutoCaptureStartOptions {
+	baseline?: AssistantCaptureSnapshot | null;
+	prompt?: string;
+	triggeredAt?: number;
+}
 
 export function extractInstructionBlock(text: string): string {
 	const codeBlockPattern =
@@ -84,9 +112,7 @@ export function extractInstructionBlock(text: string): string {
 				!/^[-\d•・]/.test(next) &&
 				!/^\s/.test(lines[j])
 			) {
-				const looksLikeHeading = /^(?:#+\s*|[A-Z　-鿿])[^\n]{2,28}$/.test(
-					next,
-				);
+				const looksLikeHeading = /^(?:#+\s*|[A-Z　-鿿])[^\n]{2,28}$/.test(next);
 				if (looksLikeHeading && bodyLines.length > 0) break;
 			}
 			bodyLines.push(lines[j]);
@@ -109,6 +135,91 @@ export function sendToTerminal(paneId: string, text: string): void {
 				"ターミナル送信に失敗しました — セッションが終了している可能性があります",
 			);
 		});
+}
+
+function emptyAssistantCaptureSnapshot(): AssistantCaptureSnapshot {
+	return {
+		assistantCount: 0,
+		latestText: "",
+		latestFingerprint: "",
+	};
+}
+
+function isAssistantCaptureSnapshot(
+	value: unknown,
+): value is AssistantCaptureSnapshot {
+	if (!value || typeof value !== "object") return false;
+	const snapshot = value as Partial<AssistantCaptureSnapshot>;
+	return (
+		typeof snapshot.assistantCount === "number" &&
+		typeof snapshot.latestText === "string" &&
+		typeof snapshot.latestFingerprint === "string"
+	);
+}
+
+function toAssistantCaptureSnapshot(value: unknown): AssistantCaptureSnapshot {
+	if (isAssistantCaptureSnapshot(value)) {
+		return {
+			assistantCount: value.assistantCount,
+			latestText: value.latestText,
+			latestFingerprint: value.latestFingerprint,
+		};
+	}
+	if (typeof value === "string") {
+		return {
+			assistantCount: value ? 1 : 0,
+			latestText: value.trim(),
+			latestFingerprint: fingerprintText(value),
+		};
+	}
+	return emptyAssistantCaptureSnapshot();
+}
+
+function getCaptureReason(
+	baseline: AssistantCaptureSnapshot,
+	current: AssistantCaptureSnapshot,
+): "count-increased" | "text-changed" | null {
+	if (current.assistantCount > baseline.assistantCount) {
+		return "count-increased";
+	}
+	if (current.assistantCount < baseline.assistantCount) {
+		return null;
+	}
+	if (baseline.latestText.trim().length < MIN_TEXT_CHANGE_BASELINE_LENGTH) {
+		return null;
+	}
+	if (current.latestText.trim().length < MIN_CAPTURE_TEXT_LENGTH) {
+		return null;
+	}
+	if (current.latestFingerprint !== baseline.latestFingerprint) {
+		return "text-changed";
+	}
+	return null;
+}
+
+function isTransientAssistantText(text: string): boolean {
+	const normalized = text.replace(/\s+/g, " ").trim();
+	if (!normalized) return true;
+	if (normalized.length >= 80) return false;
+	return TRANSIENT_RESPONSE_PATTERNS.some((pattern) =>
+		pattern.test(normalized),
+	);
+}
+
+function previewText(text: string): string {
+	const normalized = text.replace(/\s+/g, " ").trim();
+	return normalized.length > 120
+		? `${normalized.slice(0, 120)}...`
+		: normalized;
+}
+
+function fingerprintText(text: string): string {
+	const normalized = text.replace(/\s+/g, " ").trim();
+	let hash = 0;
+	for (let i = 0; i < normalized.length; i++) {
+		hash = (Math.imul(31, hash) + normalized.charCodeAt(i)) | 0;
+	}
+	return `${normalized.length}:${Math.abs(hash).toString(36)}:${normalized.slice(0, 80)}`;
 }
 
 interface UsePromptTransferParams {
@@ -140,21 +251,29 @@ export function usePromptTransfer({
 	} | null>(null);
 	const [selectionPreview, setSelectionPreview] = useState<string | null>(null);
 	const [capturePreview, setCapturePreview] = useState<string | null>(null);
-	const [captureForTerminal, setCaptureForTerminal] = useState<string | null>(
-		null,
-	);
+	const [captureForTerminalPreview, setCaptureForTerminalPreview] = useState<{
+		visible: boolean;
+		text: string;
+	}>({ visible: false, text: "" });
 	const [autoCaptureStatus, setAutoCaptureStatus] = useState<
 		"idle" | "waiting"
 	>("idle");
 	const autoCaptureRef = useRef<{
 		intervalId: ReturnType<typeof setInterval>;
 		timeoutId: ReturnType<typeof setTimeout>;
-		baseline: string | null;
+		baseline: AssistantCaptureSnapshot;
+		prompt: string;
+		triggeredAt: number;
+		candidateText: string;
+		candidateFingerprint: string;
+		candidateStableCount: number;
+		candidateFirstSeenAt: number;
 	} | null>(null);
 
-	const cancelAutoCapture = useCallback(() => {
+	const cancelAutoCapture = useCallback((reason?: string) => {
 		const ref = autoCaptureRef.current;
 		if (ref) {
+			console.log("[S3.11] cancelAutoCapture:", reason ?? "unknown");
 			clearInterval(ref.intervalId);
 			clearTimeout(ref.timeoutId);
 			autoCaptureRef.current = null;
@@ -162,55 +281,206 @@ export function usePromptTransfer({
 		setAutoCaptureStatus("idle");
 	}, []);
 
-	const startAutoCapture = useCallback(async () => {
-		cancelAutoCapture();
+	const startAutoCapture = useCallback(
+		async (options?: AutoCaptureStartOptions) => {
+			console.log("[S3.11] startAutoCapture called");
+			cancelAutoCapture("start-new-capture");
+			setCaptureForTerminalPreview({ visible: false, text: "" });
+			setCapturePreview(null);
 
-		const liveUrl = getLiveUrl() || currentUrl;
-		const provider = detectProvider(liveUrl);
-		if (!provider) {
-			setAutoCaptureStatus("idle");
-			return;
-		}
-
-		let baseline: string | null = null;
-		try {
-			const raw = await injectIntoPage(buildExtractionScript(provider));
-			baseline = typeof raw === "string" ? raw : null;
-		} catch {
-			// baseline取得失敗でもauto-captureは開始する
-		}
-
-		setAutoCaptureStatus("waiting");
-
-		const intervalId = setInterval(async () => {
-			const url = getLiveUrl() || currentUrl;
-			const prov = detectProvider(url);
-			if (!prov) return;
-
-			try {
-				const raw = await injectIntoPage(buildExtractionScript(prov));
-				const text = typeof raw === "string" ? raw : null;
-				if (!text || text.trim().length < 30) return;
-				if (baseline && text.trim() === baseline.trim()) return;
-
-				cancelAutoCapture();
-				const truncated = truncateWithWarning(text, "返答");
-				const extracted = extractInstructionBlock(truncated);
-				setCaptureForTerminal(extracted);
-			} catch {
-				// extraction失敗は無視、次回retry
-			}
-		}, 3000);
-
-		const timeoutId = setTimeout(() => {
-			cancelAutoCapture();
-			toast.warning(
-				"AI返答の自動取得がタイムアウトしました — 手動で ← AI → Term を使ってください",
+			const liveUrl = getLiveUrl() || currentUrl;
+			console.log(
+				"[S3.11] startAutoCapture liveUrl =",
+				liveUrl,
+				"currentUrl =",
+				currentUrl,
 			);
-		}, 60000);
+			const provider = detectProvider(liveUrl);
+			if (!provider) {
+				console.log("[S3.11] startAutoCapture: no provider detected, aborting");
+				setAutoCaptureStatus("idle");
+				return;
+			}
+			console.log("[S3.11] startAutoCapture: provider =", provider);
 
-		autoCaptureRef.current = { intervalId, timeoutId, baseline };
-	}, [getLiveUrl, currentUrl, injectIntoPage, cancelAutoCapture]);
+			let baseline: AssistantCaptureSnapshot | null =
+				options?.baseline && isAssistantCaptureSnapshot(options.baseline)
+					? options.baseline
+					: null;
+			try {
+				if (!baseline) {
+					const raw = await injectIntoPage(
+						buildAssistantSnapshotScript(provider),
+					);
+					baseline = toAssistantCaptureSnapshot(raw);
+				}
+				console.log(
+					"[S3.11] startAutoCapture: baseline assistant count =",
+					baseline?.assistantCount ?? 0,
+					"baseline latest text preview =",
+					previewText(baseline?.latestText ?? ""),
+				);
+			} catch {
+				console.log(
+					"[S3.11] startAutoCapture: baseline extraction failed (continuing)",
+				);
+			}
+
+			const safeBaseline = baseline ?? emptyAssistantCaptureSnapshot();
+			const prompt = options?.prompt ?? "";
+			const triggeredAt = options?.triggeredAt ?? Date.now();
+			console.log(
+				"[S3.11] startAutoCapture: setting autoCaptureStatus = waiting",
+			);
+			setAutoCaptureStatus("waiting");
+
+			const intervalId = setInterval(async () => {
+				const url = getLiveUrl() || currentUrl;
+				const prov = detectProvider(url);
+				if (!prov) return;
+
+				try {
+					const raw = await injectIntoPage(buildAssistantSnapshotScript(prov));
+					const snapshot = toAssistantCaptureSnapshot(raw);
+					const text = snapshot.latestText;
+					const reason = getCaptureReason(safeBaseline, snapshot);
+					const ref = autoCaptureRef.current;
+					console.log(
+						"[S3.11] auto-capture poll current assistant count =",
+						snapshot.assistantCount,
+						"current latest text preview =",
+						previewText(snapshot.latestText),
+						"capture reason =",
+						reason ?? "none",
+					);
+					if (!reason) return;
+					if (!text || text.trim().length < MIN_CAPTURE_TEXT_LENGTH) return;
+					if (isTransientAssistantText(text)) return;
+					if (!ref) return;
+
+					const fingerprint =
+						snapshot.latestFingerprint || fingerprintText(text);
+					const now = Date.now();
+					if (fingerprint !== ref.candidateFingerprint) {
+						ref.candidateText = text;
+						ref.candidateFingerprint = fingerprint;
+						ref.candidateStableCount = 1;
+						ref.candidateFirstSeenAt = now;
+						console.log(
+							"[S3.11] candidate changed, reset stable count:",
+							previewText(text),
+						);
+						console.log(
+							"[S3.11] candidate detected preview:",
+							previewText(text),
+						);
+						console.log(
+							"[S3.11] candidate stable count:",
+							ref.candidateStableCount,
+						);
+						return;
+					}
+
+					ref.candidateText = text;
+					ref.candidateStableCount += 1;
+					const stableMs = now - ref.candidateFirstSeenAt;
+					console.log(
+						"[S3.11] candidate stable count:",
+						ref.candidateStableCount,
+						"stable ms =",
+						stableMs,
+					);
+					if (
+						ref.candidateStableCount < AUTO_CAPTURE_STABLE_POLLS ||
+						stableMs < AUTO_CAPTURE_STABLE_MS
+					) {
+						return;
+					}
+
+					console.log(
+						"[S3.11] capturing stable response:",
+						previewText(ref.candidateText),
+					);
+
+					const finalRaw = await injectIntoPage(buildExtractionScript(prov));
+					const finalText =
+						typeof finalRaw === "string" ? finalRaw : ref.candidateText;
+					if (
+						!finalText ||
+						finalText.trim().length < MIN_CAPTURE_TEXT_LENGTH ||
+						isTransientAssistantText(finalText)
+					) {
+						return;
+					}
+					const finalFingerprint = fingerprintText(finalText);
+					if (finalFingerprint !== ref.candidateFingerprint) {
+						ref.candidateText = finalText;
+						ref.candidateFingerprint = finalFingerprint;
+						ref.candidateStableCount = 1;
+						ref.candidateFirstSeenAt = Date.now();
+						console.log(
+							"[S3.11] candidate changed, reset stable count:",
+							previewText(finalText),
+						);
+						console.log(
+							"[S3.11] candidate detected preview:",
+							previewText(finalText),
+						);
+						console.log(
+							"[S3.11] candidate stable count:",
+							ref.candidateStableCount,
+						);
+						return;
+					}
+
+					cancelAutoCapture("response-captured");
+					const truncated = truncateWithWarning(finalText, "返答");
+					console.log(
+						"[S3.11] response captured raw length =",
+						truncated.length,
+						"captured text preview =",
+						previewText(truncated),
+						"capture reason =",
+						reason,
+						"prompt age ms =",
+						Date.now() - triggeredAt,
+						"prompt preview =",
+						previewText(prompt),
+					);
+					console.log("[S3.11] final raw preview:", previewText(truncated));
+					const extracted = extractInstructionBlock(truncated);
+					console.log("[S3.11] final extracted length:", extracted.length);
+					console.log(
+						"[S3.11] setting captureForTerminalPreview, length =",
+						extracted.length,
+					);
+					setCaptureForTerminalPreview({ visible: true, text: extracted });
+				} catch {
+					// extraction失敗は無視、次回retry
+				}
+			}, AUTO_CAPTURE_POLL_INTERVAL_MS);
+
+			const timeoutId = setTimeout(() => {
+				cancelAutoCapture("timeout");
+				toast.warning(
+					"AI返答の自動取得がタイムアウトしました — 手動で ← AI → Term を使ってください",
+				);
+			}, 60000);
+
+			autoCaptureRef.current = {
+				intervalId,
+				timeoutId,
+				baseline: safeBaseline,
+				prompt,
+				triggeredAt,
+				candidateText: "",
+				candidateFingerprint: "",
+				candidateStableCount: 0,
+				candidateFirstSeenAt: 0,
+			};
+		},
+		[getLiveUrl, currentUrl, injectIntoPage, cancelAutoCapture],
+	);
 
 	useEffect(() => {
 		return () => {
@@ -225,17 +495,34 @@ export function usePromptTransfer({
 
 	useEffect(() => {
 		if (!activeTerminal) {
+			console.log("[S3.11] activeTerminal lost — cancelling auto-capture");
 			if (formSendPreview) setFormSendPreview(null);
 			if (selectionPreview) setSelectionPreview(null);
-			if (captureForTerminal) setCaptureForTerminal(null);
-			cancelAutoCapture();
+			if (captureForTerminalPreview.visible) {
+				setCaptureForTerminalPreview({ visible: false, text: "" });
+			}
+			cancelAutoCapture("active-terminal-lost");
 		}
-	}, [activeTerminal, formSendPreview, selectionPreview, captureForTerminal, cancelAutoCapture]);
+	}, [
+		activeTerminal,
+		formSendPreview,
+		selectionPreview,
+		captureForTerminalPreview.visible,
+		cancelAutoCapture,
+	]);
 
 	useEffect(() => {
 		setCapturePreview(null);
-		setCaptureForTerminal(null);
-		cancelAutoCapture();
+		setCaptureForTerminalPreview({ visible: false, text: "" });
+		if (autoCaptureRef.current) {
+			console.log(
+				"[S3.11] currentUrl changed to:",
+				currentUrl,
+				"— auto-capture active, preserving",
+			);
+		} else {
+			cancelAutoCapture("url-changed");
+		}
 	}, [currentUrl, cancelAutoCapture]);
 
 	const doInject = useCallback(
@@ -379,14 +666,14 @@ export function usePromptTransfer({
 			return;
 		}
 		const extracted = extractInstructionBlock(capturePreview);
-		setCaptureForTerminal(extracted);
+		setCaptureForTerminalPreview({ visible: true, text: extracted });
 	}, [capturePreview, activeTerminal]);
 
 	const handleConfirmCaptureToTerminal = useCallback(
 		(editedText: string) => {
-			if (!activeTerminal || !editedText) return;
+			if (!activeTerminal || !editedText.trim()) return;
 			sendToTerminal(activeTerminal, editedText);
-			setCaptureForTerminal(null);
+			setCaptureForTerminalPreview({ visible: false, text: "" });
 			setCapturePreview(null);
 		},
 		[activeTerminal],
@@ -400,9 +687,7 @@ export function usePromptTransfer({
 				return;
 			}
 			if (!activeTerminal) {
-				toast.error(
-					"Terminal が見つかりません — ターミナルを開いてください",
-				);
+				toast.error("Terminal が見つかりません — ターミナルを開いてください");
 				return;
 			}
 			setFormSendPreview({
@@ -423,7 +708,7 @@ export function usePromptTransfer({
 		formSendPreview,
 		selectionPreview,
 		capturePreview,
-		captureForTerminal,
+		captureForTerminalPreview,
 		autoCaptureStatus,
 		handleInject,
 		handleCaptureResponse,
@@ -440,6 +725,7 @@ export function usePromptTransfer({
 		dismissFormSendPreview: () => setFormSendPreview(null),
 		dismissSelectionPreview: () => setSelectionPreview(null),
 		dismissCapturePreview: () => setCapturePreview(null),
-		dismissCaptureForTerminal: () => setCaptureForTerminal(null),
+		dismissCaptureForTerminal: () =>
+			setCaptureForTerminalPreview({ visible: false, text: "" }),
 	};
 }

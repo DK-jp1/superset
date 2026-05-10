@@ -7,9 +7,7 @@ import {
 	unregisterPaneRef,
 } from "renderer/stores/tabs/pane-refs";
 import { useTabsStore } from "renderer/stores/tabs/store";
-import { useTerminalCallbacksStore } from "renderer/stores/tabs/terminal-callbacks";
 import type { SplitPaneOptions, Tab } from "renderer/stores/tabs/types";
-import { TabContentContextMenu } from "../TabContentContextMenu";
 import { Terminal } from "../Terminal";
 import { BasePaneWindow, PaneTitle, PaneToolbarActions } from "./components";
 
@@ -62,17 +60,8 @@ export function TabPane({
 	const workspaceRun = useTabsStore((s) => s.panes[paneId]?.workspaceRun);
 	const setPaneName = useTabsStore((s) => s.setPaneName);
 	const setPaneStatus = useTabsStore((s) => s.setPaneStatus);
-	const equalizePaneSplits = useTabsStore((s) => s.equalizePaneSplits);
 
 	const terminalContainerRef = useRef<HTMLDivElement>(null);
-	const getClearCallback = useTerminalCallbacksStore((s) => s.getClearCallback);
-	const getScrollToBottomCallback = useTerminalCallbacksStore(
-		(s) => s.getScrollToBottomCallback,
-	);
-	const getGetSelectionCallback = useTerminalCallbacksStore(
-		(s) => s.getGetSelectionCallback,
-	);
-	const getPasteCallback = useTerminalCallbacksStore((s) => s.getPasteCallback);
 
 	useEffect(() => {
 		const container = terminalContainerRef.current;
@@ -84,33 +73,31 @@ export function TabPane({
 		};
 	}, [paneId]);
 
-	// Prevent right-click mousedown/mouseup from reaching xterm.js.
-	// xterm in mouse-tracking mode (used by Claude Code TUI) forwards
-	// button-2 events to the PTY, causing the TUI to redraw and wipe scrollback.
+	// Block all right-click activity on the terminal:
+	// - contextmenu: prevents any menu from appearing
+	// - mousedown/mouseup (button 2): prevents xterm mouse-tracking from
+	//   forwarding right-click to the PTY (Claude Code TUI redraws and wipes scrollback)
 	useEffect(() => {
 		const container = terminalContainerRef.current;
 		if (!container) return;
 
-		const suppress = (e: MouseEvent) => {
-			if (e.button === 2) e.stopPropagation();
+		const suppressRightClick = (e: MouseEvent) => {
+			if (e.type === "contextmenu" || e.button === 2) {
+				e.preventDefault();
+				e.stopPropagation();
+			}
 		};
 
-		container.addEventListener("mousedown", suppress, true);
-		container.addEventListener("mouseup", suppress, true);
+		container.addEventListener("contextmenu", suppressRightClick, true);
+		container.addEventListener("mousedown", suppressRightClick, true);
+		container.addEventListener("mouseup", suppressRightClick, true);
 
 		return () => {
-			container.removeEventListener("mousedown", suppress, true);
-			container.removeEventListener("mouseup", suppress, true);
+			container.removeEventListener("contextmenu", suppressRightClick, true);
+			container.removeEventListener("mousedown", suppressRightClick, true);
+			container.removeEventListener("mouseup", suppressRightClick, true);
 		};
 	}, []);
-
-	const handleClearTerminal = () => {
-		getClearCallback(paneId)?.();
-	};
-
-	const handleScrollToBottom = () => {
-		getScrollToBottomCallback(paneId)?.();
-	};
 
 	return (
 		<BasePaneWindow
@@ -147,33 +134,9 @@ export function TabPane({
 				</div>
 			)}
 		>
-			<TabContentContextMenu
-				modal={false}
-				onSplitHorizontal={() => splitPaneHorizontal(tabId, paneId, path)}
-				onSplitVertical={() => splitPaneVertical(tabId, paneId, path)}
-				onSplitWithNewChat={() =>
-					splitPaneVertical(tabId, paneId, path, { paneType: "chat" })
-				}
-				onSplitWithNewBrowser={() =>
-					splitPaneVertical(tabId, paneId, path, { paneType: "webview" })
-				}
-				onEqualizePaneSplits={() => equalizePaneSplits(tabId)}
-				onClosePane={() => removePane(paneId)}
-				onClearTerminal={handleClearTerminal}
-				onScrollToBottom={handleScrollToBottom}
-				getSelection={() => getGetSelectionCallback(paneId)?.() ?? ""}
-				onPaste={(text) => getPasteCallback(paneId)?.(text)}
-				onMarkAsUnread={() => setPaneStatus(paneId, "review")}
-				currentTabId={tabId}
-				availableTabs={availableTabs}
-				onMoveToTab={onMoveToTab}
-				onMoveToNewTab={onMoveToNewTab}
-				closeLabel="Close Terminal"
-			>
-				<div ref={terminalContainerRef} className="w-full h-full">
-					<Terminal paneId={paneId} tabId={tabId} workspaceId={workspaceId} />
-				</div>
-			</TabContentContextMenu>
+			<div ref={terminalContainerRef} className="w-full h-full">
+				<Terminal paneId={paneId} tabId={tabId} workspaceId={workspaceId} />
+			</div>
 		</BasePaneWindow>
 	);
 }

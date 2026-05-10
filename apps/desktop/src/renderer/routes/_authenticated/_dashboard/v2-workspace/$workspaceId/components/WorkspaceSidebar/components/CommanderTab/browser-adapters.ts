@@ -96,9 +96,58 @@ export function buildExtractionScript(provider: BrowserProvider): string {
 	return EXTRACTION_SCRIPTS[provider];
 }
 
+const SNAPSHOT_HELPER = `
+function normalizeText(value) {
+  return String(value || '').replace(/\\s+/g, ' ').trim();
+}
+function fingerprintText(value) {
+  var text = normalizeText(value);
+  var hash = 0;
+  for (var i = 0; i < text.length; i++) {
+    hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+  }
+  return text.length + ':' + Math.abs(hash).toString(36) + ':' + text.slice(0, 80);
+}
+function toSnapshot(nodes) {
+  var list = Array.prototype.slice.call(nodes || []).filter(Boolean);
+  var latestNode = list[list.length - 1] || null;
+  var latestText = latestNode ? normalizeText(latestNode.innerText || latestNode.textContent || '') : '';
+  return {
+    assistantCount: list.length,
+    latestText: latestText,
+    latestFingerprint: fingerprintText(latestText)
+  };
+}`;
+
+const ASSISTANT_SNAPSHOT_SCRIPTS: Record<BrowserProvider, string> = {
+	chatgpt: `(function() {
+  ${SNAPSHOT_HELPER}
+  var msgs = document.querySelectorAll('[data-message-author-role="assistant"]');
+  if (!msgs.length) {
+    msgs = document.querySelectorAll('.agent-turn');
+  }
+  return toSnapshot(msgs);
+})()`,
+	claude: `(function() {
+  ${SNAPSHOT_HELPER}
+  return toSnapshot(document.querySelectorAll('div.font-claude-response'));
+})()`,
+	gemini: `(function() {
+  ${SNAPSHOT_HELPER}
+  return toSnapshot(document.querySelectorAll('message-content'));
+})()`,
+};
+
+export function buildAssistantSnapshotScript(
+	provider: BrowserProvider,
+): string {
+	return ASSISTANT_SNAPSHOT_SCRIPTS[provider];
+}
+
 const SUBMIT_SELECTORS: Record<BrowserProvider, string[]> = {
 	chatgpt: [
 		'button[data-testid="send-button"]',
+		'button[data-testid="composer-send-button"]',
 		'button[aria-label="Send prompt"]',
 		'form button[type="submit"]',
 	],
@@ -109,7 +158,7 @@ const SUBMIT_SELECTORS: Record<BrowserProvider, string[]> = {
 	],
 	gemini: [
 		'button[aria-label="Send message"]',
-		'button.send-button',
+		"button.send-button",
 		'button[mat-icon-button][aria-label="Send message"]',
 	],
 };

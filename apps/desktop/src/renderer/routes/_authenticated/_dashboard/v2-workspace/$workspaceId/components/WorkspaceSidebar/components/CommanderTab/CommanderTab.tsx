@@ -15,13 +15,11 @@ import {
 	generateWorkerPrompt,
 	generateReviewPrompt,
 } from "./hooks/useCommanderPrompts";
+import type { AssistantCaptureSnapshot } from "./hooks/usePromptTransfer";
 import { usePromptTransfer } from "./hooks/usePromptTransfer";
 import { CommanderBrowser } from "./CommanderBrowser";
 import { CommanderHelperBar } from "./CommanderHelperBar";
-import {
-	CapturePreview,
-	EditableTerminalPreview,
-} from "./PromptPreviewPanel";
+import { CapturePreview, EditableTerminalPreview } from "./PromptPreviewPanel";
 
 export function CommanderTab() {
 	const [view, setView] = useState<CommanderView>("browser");
@@ -56,21 +54,41 @@ export function CommanderTab() {
 		reviewPrompt,
 	});
 
-	const handleAutoCaptureTrigger = useCallback(() => {
-		transfer.startAutoCapture();
-	}, [transfer.startAutoCapture]);
+	const handleAutoCaptureTrigger = useCallback(
+		(options?: {
+			baseline: AssistantCaptureSnapshot | null;
+			prompt: string;
+			triggeredAt: number;
+		}) => {
+			console.log("[S3.11] onAutoCaptureTrigger called");
+			transfer.startAutoCapture(options);
+		},
+		[transfer.startAutoCapture],
+	);
 
 	const handleSendSelectionToAI = useCallback(() => {
+		console.log(
+			"[S3.11] handleSendSelectionToAI called, activeTerminal =",
+			activeTerminal,
+		);
 		if (!activeTerminal) return;
 		const text = getTerminalSelection(activeTerminal);
 		if (!text) {
 			toast.error("ターミナルでテキストを選択してください");
 			return;
 		}
+		console.log(
+			"[S3.11] calling sendSelectionToBrowserAI, text length =",
+			text.length,
+		);
 		sendSelectionToBrowserAI(text);
 	}, [activeTerminal]);
 
 	useEffect(() => {
+		console.log(
+			"[S3.11] registerCommanderBridge with onAutoCaptureTrigger =",
+			typeof handleAutoCaptureTrigger,
+		);
 		registerCommanderBridge({
 			injectIntoPage: webview.injectIntoPage,
 			getLiveUrl: webview.getLiveUrl,
@@ -98,7 +116,7 @@ export function CommanderTab() {
 					onNavigate={webview.navigateTo}
 				/>
 				{transfer.autoCaptureStatus === "waiting" &&
-					!transfer.captureForTerminal && (
+					!transfer.captureForTerminalPreview.visible && (
 						<div className="flex items-center gap-1.5 px-2 py-1 border-b bg-muted/30">
 							<LuLoader className="size-3 animate-spin text-muted-foreground" />
 							<span className="text-[10px] text-muted-foreground">
@@ -109,30 +127,31 @@ export function CommanderTab() {
 								variant="ghost"
 								size="sm"
 								className="h-5 w-5 p-0"
-								onClick={transfer.cancelAutoCapture}
+								onClick={() => transfer.cancelAutoCapture()}
 							>
 								<LuX className="size-3" />
 							</Button>
 						</div>
 					)}
-				{transfer.captureForTerminal && (
+				{transfer.captureForTerminalPreview.visible && (
 					<EditableTerminalPreview
-						text={transfer.captureForTerminal}
+						text={transfer.captureForTerminalPreview.text}
 						onConfirm={transfer.handleConfirmCaptureToTerminal}
 						onCancel={transfer.dismissCaptureForTerminal}
 					/>
 				)}
-				{transfer.capturePreview && !transfer.captureForTerminal && (
-					<CapturePreview
-						text={transfer.capturePreview}
-						title="AI Response Preview"
-						onUse={transfer.handleUseCapture}
-						onCancel={transfer.dismissCapturePreview}
-						onUseAndInject={transfer.handleUseCaptureAndInject}
-						onSendToTerminal={transfer.handleSendCaptureToTerminal}
-						hasTerminal={!!activeTerminal}
-					/>
-				)}
+				{transfer.capturePreview &&
+					!transfer.captureForTerminalPreview.visible && (
+						<CapturePreview
+							text={transfer.capturePreview}
+							title="AI Response Preview"
+							onUse={transfer.handleUseCapture}
+							onCancel={transfer.dismissCapturePreview}
+							onUseAndInject={transfer.handleUseCaptureAndInject}
+							onSendToTerminal={transfer.handleSendCaptureToTerminal}
+							hasTerminal={!!activeTerminal}
+						/>
+					)}
 				<CommanderHelperBar
 					state={state}
 					activeTerminal={activeTerminal}
