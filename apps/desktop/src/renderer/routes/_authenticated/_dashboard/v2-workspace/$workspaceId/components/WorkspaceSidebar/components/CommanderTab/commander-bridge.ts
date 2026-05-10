@@ -8,6 +8,7 @@ import {
 interface CommanderBridge {
 	injectIntoPage: (script: string) => Promise<unknown>;
 	getLiveUrl: () => string;
+	onAutoCaptureTrigger?: () => void;
 }
 
 let bridge: CommanderBridge | null = null;
@@ -58,6 +59,7 @@ ${selectedText}`;
 			toast.success(
 				`${getProviderLabel(provider)} に送信しました`,
 			);
+			bridge.onAutoCaptureTrigger?.();
 		} else if (result === "injected") {
 			toast.success(
 				`${getProviderLabel(provider)} に挿入しました — 手動で送信してください`,

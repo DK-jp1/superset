@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "@superset/ui/sonner";
 import { electronTrpcClient } from "renderer/lib/trpc-client";
 import type { CommanderState, CommanderView } from "../commander-types";
@@ -143,19 +143,100 @@ export function usePromptTransfer({
 	const [captureForTerminal, setCaptureForTerminal] = useState<string | null>(
 		null,
 	);
+	const [autoCaptureStatus, setAutoCaptureStatus] = useState<
+		"idle" | "waiting"
+	>("idle");
+	const autoCaptureRef = useRef<{
+		intervalId: ReturnType<typeof setInterval>;
+		timeoutId: ReturnType<typeof setTimeout>;
+		baseline: string | null;
+	} | null>(null);
+
+	const cancelAutoCapture = useCallback(() => {
+		const ref = autoCaptureRef.current;
+		if (ref) {
+			clearInterval(ref.intervalId);
+			clearTimeout(ref.timeoutId);
+			autoCaptureRef.current = null;
+		}
+		setAutoCaptureStatus("idle");
+	}, []);
+
+	const startAutoCapture = useCallback(async () => {
+		cancelAutoCapture();
+
+		const liveUrl = getLiveUrl() || currentUrl;
+		const provider = detectProvider(liveUrl);
+		if (!provider) {
+			setAutoCaptureStatus("idle");
+			return;
+		}
+
+		let baseline: string | null = null;
+		try {
+			const raw = await injectIntoPage(buildExtractionScript(provider));
+			baseline = typeof raw === "string" ? raw : null;
+		} catch {
+			// baseline取得失敗でもauto-captureは開始する
+		}
+
+		setAutoCaptureStatus("waiting");
+
+		const intervalId = setInterval(async () => {
+			const url = getLiveUrl() || currentUrl;
+			const prov = detectProvider(url);
+			if (!prov) return;
+
+			try {
+				const raw = await injectIntoPage(buildExtractionScript(prov));
+				const text = typeof raw === "string" ? raw : null;
+				if (!text || text.trim().length < 30) return;
+				if (baseline && text.trim() === baseline.trim()) return;
+
+				cancelAutoCapture();
+				const truncated = truncateWithWarning(text, "返答");
+				const extracted = extractInstructionBlock(truncated);
+				setCaptureForTerminal(extracted);
+			} catch {
+				// extraction失敗は無視、次回retry
+			}
+		}, 3000);
+
+		const timeoutId = setTimeout(() => {
+			cancelAutoCapture();
+			toast.warning(
+				"AI返答の自動取得がタイムアウトしました — 手動で ← AI → Term を使ってください",
+			);
+		}, 60000);
+
+		autoCaptureRef.current = { intervalId, timeoutId, baseline };
+	}, [getLiveUrl, currentUrl, injectIntoPage, cancelAutoCapture]);
+
+	useEffect(() => {
+		return () => {
+			const ref = autoCaptureRef.current;
+			if (ref) {
+				clearInterval(ref.intervalId);
+				clearTimeout(ref.timeoutId);
+				autoCaptureRef.current = null;
+			}
+		};
+	}, []);
 
 	useEffect(() => {
 		if (!activeTerminal) {
 			if (formSendPreview) setFormSendPreview(null);
 			if (selectionPreview) setSelectionPreview(null);
 			if (captureForTerminal) setCaptureForTerminal(null);
+			cancelAutoCapture();
 		}
-	}, [activeTerminal, formSendPreview, selectionPreview, captureForTerminal]);
+	}, [activeTerminal, formSendPreview, selectionPreview, captureForTerminal, cancelAutoCapture]);
 
 	useEffect(() => {
 		setCapturePreview(null);
 		setCaptureForTerminal(null);
-	}, [currentUrl]);
+		cancelAutoCapture();
+	}, [currentUrl, cancelAutoCapture]);
 
 	const doInject = useCallback(
 		async (prompt: string) => {
@@ -343,6 +424,7 @@ export function usePromptTransfer({
 		selectionPreview,
 		capturePreview,
 		captureForTerminal,
+		autoCaptureStatus,
 		handleInject,
 		handleCaptureResponse,
 		handleGrabSelection,
@@ -353,6 +435,8 @@ export function usePromptTransfer({
 		handleConfirmCaptureToTerminal,
 		handleFormSendToTerminal,
 		handleFormConfirmSend,
+		startAutoCapture,
+		cancelAutoCapture,
 		dismissFormSendPreview: () => setFormSendPreview(null),
 		dismissSelectionPreview: () => setSelectionPreview(null),
 		dismissCapturePreview: () => setCapturePreview(null),

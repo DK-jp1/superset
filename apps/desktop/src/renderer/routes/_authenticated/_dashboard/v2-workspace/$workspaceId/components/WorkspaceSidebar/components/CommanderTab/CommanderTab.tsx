@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { Button } from "@superset/ui/button";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { LuLoader, LuX } from "react-icons/lu";
 import type { CommanderState, CommanderView } from "./commander-types";
 import { useActiveTerminal } from "./useActiveTerminal";
 import { useCommanderWebview } from "./useCommanderWebview";
@@ -40,17 +42,6 @@ export function CommanderTab() {
 	const activeTerminal = useActiveTerminal();
 	const webview = useCommanderWebview();
 
-	useEffect(() => {
-		registerCommanderBridge({
-			injectIntoPage: webview.injectIntoPage,
-			getLiveUrl: webview.getLiveUrl,
-		});
-		return () => unregisterCommanderBridge();
-	}, [webview.injectIntoPage, webview.getLiveUrl]);
-
-	const currentProvider = detectProvider(webview.currentUrl);
-	const providerLabel = getProviderLabel(currentProvider);
-
 	const transfer = usePromptTransfer({
 		state,
 		activeTerminal,
@@ -62,6 +53,22 @@ export function CommanderTab() {
 		workerPrompt,
 		reviewPrompt,
 	});
+
+	const handleAutoCaptureTrigger = useCallback(() => {
+		transfer.startAutoCapture();
+	}, [transfer.startAutoCapture]);
+
+	useEffect(() => {
+		registerCommanderBridge({
+			injectIntoPage: webview.injectIntoPage,
+			getLiveUrl: webview.getLiveUrl,
+			onAutoCaptureTrigger: handleAutoCaptureTrigger,
+		});
+		return () => unregisterCommanderBridge();
+	}, [webview.injectIntoPage, webview.getLiveUrl, handleAutoCaptureTrigger]);
+
+	const currentProvider = detectProvider(webview.currentUrl);
+	const providerLabel = getProviderLabel(currentProvider);
 
 	return (
 		<div className="flex h-full flex-col overflow-hidden">
@@ -78,6 +85,24 @@ export function CommanderTab() {
 					onReload={webview.reload}
 					onNavigate={webview.navigateTo}
 				/>
+				{transfer.autoCaptureStatus === "waiting" &&
+					!transfer.captureForTerminal && (
+						<div className="flex items-center gap-1.5 px-2 py-1 border-b bg-muted/30">
+							<LuLoader className="size-3 animate-spin text-muted-foreground" />
+							<span className="text-[10px] text-muted-foreground">
+								Waiting for AI response...
+							</span>
+							<div className="flex-1" />
+							<Button
+								variant="ghost"
+								size="sm"
+								className="h-5 w-5 p-0"
+								onClick={transfer.cancelAutoCapture}
+							>
+								<LuX className="size-3" />
+							</Button>
+						</div>
+					)}
 				{transfer.captureForTerminal && (
 					<EditableTerminalPreview
 						text={transfer.captureForTerminal}
