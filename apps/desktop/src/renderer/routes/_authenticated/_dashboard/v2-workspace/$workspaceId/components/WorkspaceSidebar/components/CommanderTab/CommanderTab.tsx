@@ -1,6 +1,5 @@
 import { cn } from "@superset/ui/utils";
-import { toast } from "@superset/ui/sonner";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { CommanderState, CommanderView } from "./commander-types";
 import { useActiveTerminal } from "./useActiveTerminal";
 import { useCommanderWebview } from "./useCommanderWebview";
@@ -23,8 +22,15 @@ export function CommanderTab() {
 		constraints: "",
 		currentProblem: "",
 	});
-	const [workerPrompt, setWorkerPrompt] = useState("");
-	const [reviewPrompt, setReviewPrompt] = useState("");
+
+	const workerPrompt = useMemo(
+		() => generateWorkerPrompt(state),
+		[state.goal, state.context, state.constraints, state.currentProblem],
+	);
+	const reviewPrompt = useMemo(
+		() => generateReviewPrompt(state),
+		[state.goal, state.constraints],
+	);
 
 	const activeTerminal = useActiveTerminal();
 	const webview = useCommanderWebview();
@@ -50,18 +56,6 @@ export function CommanderTab() {
 		workerPrompt,
 		reviewPrompt,
 	});
-
-	const handleGenerateWorker = useCallback(() => {
-		const prompt = generateWorkerPrompt(state);
-		setWorkerPrompt(prompt);
-		if (!prompt) toast.error("Goal を設定してください");
-	}, [state]);
-
-	const handleGenerateReview = useCallback(() => {
-		const prompt = generateReviewPrompt(state);
-		setReviewPrompt(prompt);
-		if (!prompt) toast.error("Goal を設定してください");
-	}, [state]);
 
 	return (
 		<div className="flex h-full flex-col overflow-hidden">
@@ -118,11 +112,14 @@ export function CommanderTab() {
 						title="AI Response Preview"
 						onUse={transfer.handleUseCapture}
 						onCancel={transfer.dismissCapturePreview}
+						onUseAndInject={transfer.handleUseCaptureAndInject}
 					/>
 				)}
 				<CommanderHelperBar
 					state={state}
 					activeTerminal={activeTerminal}
+					workerPrompt={workerPrompt}
+					reviewPrompt={reviewPrompt}
 					onGrabSelection={transfer.handleGrabSelection}
 					onInject={transfer.handleInject}
 					onCaptureResponse={transfer.handleCaptureResponse}
@@ -160,8 +157,6 @@ export function CommanderTab() {
 					updateField={updateField}
 					workerPrompt={workerPrompt}
 					reviewPrompt={reviewPrompt}
-					onGenerateWorker={handleGenerateWorker}
-					onGenerateReview={handleGenerateReview}
 					onSendToTerminal={transfer.handleFormSendToTerminal}
 					onGrabSelection={transfer.handleGrabSelection}
 				/>

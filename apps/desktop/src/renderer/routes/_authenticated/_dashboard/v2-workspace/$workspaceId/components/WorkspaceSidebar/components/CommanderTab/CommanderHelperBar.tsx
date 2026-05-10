@@ -10,17 +10,15 @@ import {
 	LuZap,
 } from "react-icons/lu";
 import type { CommanderState } from "./commander-types";
-import {
-	generateWorkerPrompt,
-	generateReviewPrompt,
-	copyToClipboard,
-} from "./hooks/useCommanderPrompts";
+import { copyToClipboard } from "./hooks/useCommanderPrompts";
 import { sendToTerminal } from "./hooks/usePromptTransfer";
 import { TerminalSendPreview } from "./PromptPreviewPanel";
 
 export function CommanderHelperBar({
 	state,
 	activeTerminal,
+	workerPrompt,
+	reviewPrompt,
 	onGrabSelection,
 	onInject,
 	onCaptureResponse,
@@ -29,6 +27,8 @@ export function CommanderHelperBar({
 }: {
 	state: CommanderState;
 	activeTerminal: string | null;
+	workerPrompt: string;
+	reviewPrompt: string;
 	onGrabSelection: () => void;
 	onInject: (type: "worker" | "review") => void;
 	onCaptureResponse: () => void;
@@ -47,10 +47,7 @@ export function CommanderHelperBar({
 
 	const handleTerminalSend = useCallback(
 		(type: "worker" | "review") => {
-			const prompt =
-				type === "worker"
-					? generateWorkerPrompt(state)
-					: generateReviewPrompt(state);
+			const prompt = type === "worker" ? workerPrompt : reviewPrompt;
 			if (!prompt) {
 				toast.error("Goal を設定してください");
 				return;
@@ -66,7 +63,7 @@ export function CommanderHelperBar({
 				label: type === "worker" ? "Worker Prompt" : "Review Prompt",
 			});
 		},
-		[state, activeTerminal],
+		[workerPrompt, reviewPrompt, activeTerminal],
 	);
 
 	const handleConfirmSend = useCallback(() => {
@@ -116,12 +113,8 @@ export function CommanderHelperBar({
 						variant="outline"
 						size="sm"
 						className="h-6 gap-1 text-[10px] flex-1"
-						disabled={!hasSetup}
-						onClick={() => {
-							const prompt = generateWorkerPrompt(state);
-							if (prompt) copyToClipboard(prompt);
-							else toast.error("Goal を設定してください");
-						}}
+						disabled={!workerPrompt}
+						onClick={() => copyToClipboard(workerPrompt)}
 					>
 						<LuClipboard className="size-2.5" />
 						Copy W
@@ -130,12 +123,8 @@ export function CommanderHelperBar({
 						variant="outline"
 						size="sm"
 						className="h-6 gap-1 text-[10px] flex-1"
-						disabled={!hasSetup}
-						onClick={() => {
-							const prompt = generateReviewPrompt(state);
-							if (prompt) copyToClipboard(prompt);
-							else toast.error("Goal を設定してください");
-						}}
+						disabled={!reviewPrompt}
+						onClick={() => copyToClipboard(reviewPrompt)}
 					>
 						<LuClipboard className="size-2.5" />
 						Copy R

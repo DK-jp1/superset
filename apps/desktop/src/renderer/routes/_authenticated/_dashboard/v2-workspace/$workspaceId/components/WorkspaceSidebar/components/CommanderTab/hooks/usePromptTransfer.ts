@@ -86,16 +86,8 @@ export function usePromptTransfer({
 		setCapturePreview(null);
 	}, [currentUrl]);
 
-	const handleInject = useCallback(
-		async (type: "worker" | "review") => {
-			const prompt =
-				type === "worker"
-					? generateWorkerPrompt(state)
-					: generateReviewPrompt(state);
-			if (!prompt) {
-				toast.warning("Goal を設定してください");
-				return;
-			}
+	const doInject = useCallback(
+		async (prompt: string) => {
 			const liveUrl = getLiveUrl() || currentUrl;
 			const provider = detectProvider(liveUrl);
 			if (!provider) {
@@ -122,7 +114,19 @@ export function usePromptTransfer({
 				);
 			}
 		},
-		[state, getLiveUrl, currentUrl, injectIntoPage],
+		[getLiveUrl, currentUrl, injectIntoPage],
+	);
+
+	const handleInject = useCallback(
+		async (type: "worker" | "review") => {
+			const prompt = type === "worker" ? workerPrompt : reviewPrompt;
+			if (!prompt) {
+				toast.warning("Goal を設定してください");
+				return;
+			}
+			await doInject(prompt);
+		},
+		[workerPrompt, reviewPrompt, doInject],
 	);
 
 	const handleCaptureResponse = useCallback(async () => {
@@ -190,11 +194,37 @@ export function usePromptTransfer({
 		toast.success("Context に取り込みました");
 	}, [capturePreview, onUpdateState, onSetView]);
 
+	const handleUseCaptureAndInject = useCallback(async () => {
+		if (!capturePreview) return;
+
+		const appendCapture = (ctx: string) =>
+			appendToField(ctx, capturePreview, "--- AI Response ---");
+
+		onUpdateState((prev) => ({
+			...prev,
+			context: appendCapture(prev.context),
+		}));
+
+		const updatedState: CommanderState = {
+			...state,
+			context: appendCapture(state.context),
+		};
+		setCapturePreview(null);
+		toast.success("Context に取り込みました");
+
+		const prompt = generateWorkerPrompt(updatedState);
+		if (!prompt) {
+			toast.warning("Goal を設定してください");
+			return;
+		}
+		await doInject(prompt);
+	}, [capturePreview, state, onUpdateState, doInject]);
+
 	const handleFormSendToTerminal = useCallback(
 		(type: "worker" | "review") => {
 			const prompt = type === "worker" ? workerPrompt : reviewPrompt;
 			if (!prompt) {
-				toast.error("先に Worker / Review を生成してください");
+				toast.error("Goal を設定してください");
 				return;
 			}
 			if (!activeTerminal) {
@@ -226,6 +256,7 @@ export function usePromptTransfer({
 		handleGrabSelection,
 		handleUseSelection,
 		handleUseCapture,
+		handleUseCaptureAndInject,
 		handleFormSendToTerminal,
 		handleFormConfirmSend,
 		dismissFormSendPreview: () => setFormSendPreview(null),

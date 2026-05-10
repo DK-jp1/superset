@@ -1,5 +1,5 @@
 import { Button } from "@superset/ui/button";
-import { LuCheck, LuX } from "react-icons/lu";
+import { LuCheck, LuX, LuZap } from "react-icons/lu";
 
 export function TerminalSendPreview({
 	text,
@@ -50,11 +50,13 @@ export function CapturePreview({
 	title,
 	onUse,
 	onCancel,
+	onUseAndInject,
 }: {
 	text: string;
 	title: string;
 	onUse: () => void;
 	onCancel: () => void;
+	onUseAndInject?: () => void;
 }) {
 	return (
 		<div className="flex flex-col gap-1.5 p-1.5 border-b bg-muted/30">
@@ -80,6 +82,17 @@ export function CapturePreview({
 						<LuCheck className="size-2.5" />
 						Use
 					</Button>
+					{onUseAndInject && (
+						<Button
+							variant="default"
+							size="sm"
+							className="h-5 px-1.5 gap-0.5 text-[10px] bg-primary"
+							onClick={onUseAndInject}
+						>
+							<LuZap className="size-2.5" />
+							Use & Inject W
+						</Button>
+					)}
 				</div>
 			</div>
 			<pre className="text-[10px] font-mono bg-muted rounded p-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap break-all">
