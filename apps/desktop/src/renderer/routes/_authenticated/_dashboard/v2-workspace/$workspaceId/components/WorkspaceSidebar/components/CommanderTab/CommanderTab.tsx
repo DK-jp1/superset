@@ -1,624 +1,22 @@
-import { Button } from "@superset/ui/button";
-import { Label } from "@superset/ui/label";
-import { Textarea } from "@superset/ui/textarea";
-import { toast } from "@superset/ui/sonner";
 import { cn } from "@superset/ui/utils";
-import { useCallback, useEffect, useState } from "react";
-import {
-	LuArrowLeft,
-	LuArrowRight,
-	LuCheck,
-	LuClipboard,
-	LuDownload,
-	LuLoader,
-	LuPlay,
-	LuRefreshCw,
-	LuSend,
-	LuTerminalSquare,
-	LuX,
-	LuZap,
-} from "react-icons/lu";
-import { electronTrpcClient } from "renderer/lib/trpc-client";
-import { useActiveTerminal, getTerminalSelection } from "./useActiveTerminal";
-import {
-	detectProvider,
-	getProviderLabel,
-	buildInjectionScript,
-	buildExtractionScript,
-} from "./browser-adapters";
+import { toast } from "@superset/ui/sonner";
+import { useCallback, useState } from "react";
+import type { CommanderState, CommanderView } from "./commander-types";
+import { useActiveTerminal } from "./useActiveTerminal";
 import { useCommanderWebview } from "./useCommanderWebview";
-
-interface CommanderState {
-	goal: string;
-	context: string;
-	constraints: string;
-	currentProblem: string;
-}
-
-type CommanderView = "browser" | "form";
-
-const AI_PRESETS = [
-	{ label: "ChatGPT", url: "https://chatgpt.com" },
-	{ label: "Claude", url: "https://claude.ai" },
-	{ label: "Gemini", url: "https://gemini.google.com" },
-] as const;
-
-function generateWorkerPrompt(state: CommanderState): string {
-	const sections: string[] = [];
-	if (state.goal) sections.push(`## Goal\n${state.goal}`);
-	if (state.context) sections.push(`## Context\n${state.context}`);
-	if (state.constraints) sections.push(`## Constraints\n${state.constraints}`);
-	if (state.currentProblem)
-		sections.push(`## Current Problem\n${state.currentProblem}`);
-
-	if (sections.length === 0) return "";
-
-	return `# Worker Prompt\n\n${sections.join("\n\n")}\n\n---\nExecute the goal above. Follow all constraints. Report what you did and any issues found.`;
-}
-
-function generateReviewPrompt(state: CommanderState): string {
-	const sections: string[] = [];
-	if (state.goal) sections.push(`## Original Goal\n${state.goal}`);
-	if (state.constraints)
-		sections.push(`## Constraints to Verify\n${state.constraints}`);
-
-	if (sections.length === 0) return "";
-
-	return `# Review Prompt\n\n${sections.join("\n\n")}\n\n---\nReview the worker's output against the goal and constraints above. Check for:\n1. Goal completion — did the worker fully achieve the goal?\n2. Constraint violations — were all constraints respected?\n3. Side effects — any unintended changes?\n4. Quality — code quality, security, correctness\n\nReport: PASS / FAIL with specific findings.`;
-}
-
-async function copyToClipboard(text: string) {
-	try {
-		await navigator.clipboard.writeText(text);
-		toast.success("Copied to clipboard");
-	} catch {
-		toast.error("Clipboard access denied");
-	}
-}
-
-function BrowserToolbar({
-	currentUrl,
-	isLoading,
-	canGoBack,
-	canGoForward,
-	onGoBack,
-	onGoForward,
-	onReload,
-	onNavigate,
-}: {
-	currentUrl: string;
-	isLoading: boolean;
-	canGoBack: boolean;
-	canGoForward: boolean;
-	onGoBack: () => void;
-	onGoForward: () => void;
-	onReload: () => void;
-	onNavigate: (url: string) => void;
-}) {
-	const [editingUrl, setEditingUrl] = useState(currentUrl);
-	const [isFocused, setIsFocused] = useState(false);
-
-	useEffect(() => {
-		if (!isFocused) setEditingUrl(currentUrl);
-	}, [currentUrl, isFocused]);
-
-	return (
-		<div className="flex items-center gap-1 px-1.5 py-1 border-b shrink-0">
-			<button
-				type="button"
-				onClick={onGoBack}
-				disabled={!canGoBack}
-				className="p-0.5 rounded hover:bg-accent disabled:opacity-30"
-			>
-				<LuArrowLeft className="size-3" />
-			</button>
-			<button
-				type="button"
-				onClick={onGoForward}
-				disabled={!canGoForward}
-				className="p-0.5 rounded hover:bg-accent disabled:opacity-30"
-			>
-				<LuArrowRight className="size-3" />
-			</button>
-			<button
-				type="button"
-				onClick={onReload}
-				className="p-0.5 rounded hover:bg-accent"
-			>
-				{isLoading ? (
-					<LuLoader className="size-3 animate-spin" />
-				) : (
-					<LuRefreshCw className="size-3" />
-				)}
-			</button>
-			<form
-				className="flex-1 min-w-0"
-				onSubmit={(e) => {
-					e.preventDefault();
-					const trimmed = editingUrl.trim();
-					if (trimmed) onNavigate(trimmed);
-					setIsFocused(false);
-				}}
-			>
-				<input
-					type="text"
-					value={editingUrl}
-					onChange={(e) => setEditingUrl(e.target.value)}
-					onFocus={() => {
-						setIsFocused(true);
-						setEditingUrl(currentUrl);
-					}}
-					onBlur={() => {
-						setIsFocused(false);
-						setEditingUrl(currentUrl);
-					}}
-					placeholder="URL を入力..."
-					className="w-full text-[10px] bg-muted/50 rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-ring truncate"
-				/>
-			</form>
-		</div>
-	);
-}
-
-function sendToTerminal(paneId: string, text: string): void {
-	electronTrpcClient.terminal.write
-		.mutate({ paneId, data: text })
-		.then(() => {
-			toast.success("Sent to terminal");
-		})
-		.catch(() => {
-			toast.error("Terminal send failed — session may have exited");
-		});
-}
-
-function TerminalSendPreview({
-	text,
-	label,
-	onConfirm,
-	onCancel,
-}: {
-	text: string;
-	label: string;
-	onConfirm: () => void;
-	onCancel: () => void;
-}) {
-	return (
-		<div className="flex flex-col gap-1.5 p-1.5 border-t bg-muted/30">
-			<div className="flex items-center justify-between">
-				<span className="text-[10px] font-medium text-muted-foreground">
-					Send {label} to Terminal
-				</span>
-				<div className="flex gap-0.5">
-					<Button
-						variant="ghost"
-						size="sm"
-						className="h-5 w-5 p-0"
-						onClick={onCancel}
-					>
-						<LuX className="size-3" />
-					</Button>
-					<Button
-						variant="default"
-						size="sm"
-						className="h-5 px-1.5 gap-0.5 text-[10px]"
-						onClick={onConfirm}
-					>
-						<LuCheck className="size-2.5" />
-						Send
-					</Button>
-				</div>
-			</div>
-			<pre className="text-[10px] font-mono bg-muted rounded p-1.5 max-h-24 overflow-y-auto whitespace-pre-wrap break-all">
-				{text}
-			</pre>
-		</div>
-	);
-}
-
-function CapturePreview({
-	text,
-	title,
-	onUse,
-	onCancel,
-}: {
-	text: string;
-	title: string;
-	onUse: () => void;
-	onCancel: () => void;
-}) {
-	return (
-		<div className="flex flex-col gap-1.5 p-1.5 border-b bg-muted/30">
-			<div className="flex items-center justify-between">
-				<span className="text-[10px] font-medium text-muted-foreground">
-					{title}
-				</span>
-				<div className="flex gap-0.5">
-					<Button
-						variant="ghost"
-						size="sm"
-						className="h-5 w-5 p-0"
-						onClick={onCancel}
-					>
-						<LuX className="size-3" />
-					</Button>
-					<Button
-						variant="default"
-						size="sm"
-						className="h-5 px-1.5 gap-0.5 text-[10px]"
-						onClick={onUse}
-					>
-						<LuCheck className="size-2.5" />
-						Use
-					</Button>
-				</div>
-			</div>
-			<pre className="text-[10px] font-mono bg-muted rounded p-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap break-all">
-				{text}
-			</pre>
-		</div>
-	);
-}
-
-function HelperBar({
-	state,
-	activeTerminal,
-	onGrabSelection,
-	onInject,
-	onCaptureResponse,
-	providerLabel,
-	hasProvider,
-}: {
-	state: CommanderState;
-	activeTerminal: string | null;
-	onGrabSelection: () => void;
-	onInject: (type: "worker" | "review") => void;
-	onCaptureResponse: () => void;
-	providerLabel: string;
-	hasProvider: boolean;
-}) {
-	const hasSetup = !!state.goal;
-	const [pendingSend, setPendingSend] = useState<{
-		text: string;
-		label: string;
-	} | null>(null);
-
-	useEffect(() => {
-		if (!activeTerminal && pendingSend) setPendingSend(null);
-	}, [activeTerminal, pendingSend]);
-
-	const handleTerminalSend = useCallback(
-		(type: "worker" | "review") => {
-			const prompt =
-				type === "worker"
-					? generateWorkerPrompt(state)
-					: generateReviewPrompt(state);
-			if (!prompt) {
-				toast.error("Form で Goal を設定してください");
-				return;
-			}
-			if (!activeTerminal) {
-				toast.error("Terminal が見つかりません — ターミナルを開いてください");
-				return;
-			}
-			setPendingSend({
-				text: prompt,
-				label: type === "worker" ? "Worker Prompt" : "Review Prompt",
-			});
-		},
-		[state, activeTerminal],
-	);
-
-	const handleConfirmSend = useCallback(() => {
-		if (!pendingSend || !activeTerminal) return;
-		sendToTerminal(activeTerminal, pendingSend.text);
-		setPendingSend(null);
-	}, [pendingSend, activeTerminal]);
-
-	return (
-		<div className="shrink-0">
-			{pendingSend && (
-				<TerminalSendPreview
-					text={pendingSend.text}
-					label={pendingSend.label}
-					onConfirm={handleConfirmSend}
-					onCancel={() => setPendingSend(null)}
-				/>
-			)}
-			<div className="border-t px-1.5 pt-1 pb-0.5">
-				<div className="flex items-center justify-between mb-1">
-					<span
-						className={cn(
-							"text-[9px] font-medium px-1 py-0.5 rounded",
-							hasProvider
-								? "bg-primary/10 text-primary"
-								: "bg-muted text-muted-foreground",
-						)}
-					>
-						{providerLabel}
-					</span>
-				</div>
-				<div className="flex flex-wrap gap-1">
-					<Button
-						variant="outline"
-						size="sm"
-						className="h-6 gap-1 text-[10px] flex-1"
-						disabled={!hasSetup}
-						onClick={() => {
-							const prompt = generateWorkerPrompt(state);
-							if (prompt) copyToClipboard(prompt);
-							else toast.error("Form で Goal を設定してください");
-						}}
-					>
-						<LuClipboard className="size-2.5" />
-						Worker
-					</Button>
-					<Button
-						variant="outline"
-						size="sm"
-						className="h-6 gap-1 text-[10px] flex-1"
-						disabled={!hasSetup}
-						onClick={() => {
-							const prompt = generateReviewPrompt(state);
-							if (prompt) copyToClipboard(prompt);
-							else toast.error("Form で Goal を設定してください");
-						}}
-					>
-						<LuClipboard className="size-2.5" />
-						Review
-					</Button>
-				</div>
-				<div className="flex flex-wrap gap-1 mt-1">
-					<Button
-						variant={hasProvider ? "default" : "ghost"}
-						size="sm"
-						className="h-6 gap-1 text-[10px] flex-1"
-						disabled={!hasSetup}
-						onClick={() => onInject("worker")}
-					>
-						<LuZap className="size-2.5" />
-						Inject W
-					</Button>
-					<Button
-						variant={hasProvider ? "default" : "ghost"}
-						size="sm"
-						className="h-6 gap-1 text-[10px] flex-1"
-						disabled={!hasSetup}
-						onClick={() => onInject("review")}
-					>
-						<LuZap className="size-2.5" />
-						Inject R
-					</Button>
-				</div>
-				<div className="flex flex-wrap gap-1 mt-1">
-					<Button
-						variant={activeTerminal ? "secondary" : "ghost"}
-						size="sm"
-						className="h-6 gap-1 text-[10px] flex-1"
-						disabled={!hasSetup}
-						onClick={() => handleTerminalSend("worker")}
-					>
-						<LuSend className="size-2.5" />
-						→ Term
-					</Button>
-					<Button
-						variant={activeTerminal ? "secondary" : "ghost"}
-						size="sm"
-						className="h-6 gap-1 text-[10px] flex-1"
-						disabled={!activeTerminal}
-						onClick={onGrabSelection}
-					>
-						<LuTerminalSquare className="size-2.5" />
-						← Term
-					</Button>
-					<Button
-						variant={hasProvider ? "secondary" : "ghost"}
-						size="sm"
-						className="h-6 gap-1 text-[10px] flex-1"
-						disabled={!hasProvider}
-						onClick={onCaptureResponse}
-					>
-						<LuDownload className="size-2.5" />
-						← AI
-					</Button>
-				</div>
-			</div>
-		</div>
-	);
-}
-
-function FormView({
-	state,
-	updateField,
-	workerPrompt,
-	reviewPrompt,
-	onGenerateWorker,
-	onGenerateReview,
-	onSendToTerminal,
-	onGrabSelection,
-}: {
-	state: CommanderState;
-	updateField: (field: keyof CommanderState, value: string) => void;
-	workerPrompt: string;
-	reviewPrompt: string;
-	onGenerateWorker: () => void;
-	onGenerateReview: () => void;
-	onSendToTerminal: (type: "worker" | "review") => void;
-	onGrabSelection: () => void;
-}) {
-	return (
-		<div className="flex h-full flex-col gap-3 overflow-y-auto p-3">
-			<div className="flex flex-col gap-2.5">
-				<div className="flex flex-col gap-1">
-					<Label htmlFor="commander-goal" className="text-xs">
-						Goal
-					</Label>
-					<Textarea
-						id="commander-goal"
-						placeholder="What should the worker accomplish?"
-						value={state.goal}
-						onChange={(e) => updateField("goal", e.target.value)}
-						rows={2}
-						className="resize-y text-xs"
-					/>
-				</div>
-
-				<div className="flex flex-col gap-1">
-					<Label htmlFor="commander-context" className="text-xs">
-						Context
-					</Label>
-					<Textarea
-						id="commander-context"
-						placeholder="Relevant background, files, architecture..."
-						value={state.context}
-						onChange={(e) => updateField("context", e.target.value)}
-						rows={2}
-						className="resize-y text-xs"
-					/>
-				</div>
-
-				<div className="flex flex-col gap-1">
-					<Label htmlFor="commander-constraints" className="text-xs">
-						Constraints
-					</Label>
-					<Textarea
-						id="commander-constraints"
-						placeholder="What NOT to do, limits, requirements..."
-						value={state.constraints}
-						onChange={(e) => updateField("constraints", e.target.value)}
-						rows={2}
-						className="resize-y text-xs"
-					/>
-				</div>
-
-				<div className="flex flex-col gap-1">
-					<div className="flex items-center justify-between">
-						<Label htmlFor="commander-problem" className="text-xs">
-							Current Problem
-						</Label>
-						<Button
-							variant="ghost"
-							size="sm"
-							className="h-5 gap-1 text-[10px] px-1.5"
-							onClick={onGrabSelection}
-						>
-							<LuTerminalSquare className="size-2.5" />
-							Use Selection
-						</Button>
-					</div>
-					<Textarea
-						id="commander-problem"
-						placeholder="The specific issue to solve right now..."
-						value={state.currentProblem}
-						onChange={(e) => updateField("currentProblem", e.target.value)}
-						rows={2}
-						className="resize-y text-xs"
-					/>
-				</div>
-			</div>
-
-			<div className="flex flex-col gap-1.5">
-				<div className="flex gap-1.5">
-					<Button
-						variant="default"
-						size="sm"
-						className="h-7 flex-1 gap-1 text-xs"
-						onClick={onGenerateWorker}
-					>
-						<LuPlay className="size-3" />
-						Worker
-					</Button>
-					<Button
-						variant="outline"
-						size="sm"
-						className="h-7 gap-1 text-xs"
-						disabled={!workerPrompt}
-						onClick={() => copyToClipboard(workerPrompt)}
-					>
-						<LuClipboard className="size-3" />
-						Copy
-					</Button>
-				</div>
-				<div className="flex gap-1.5">
-					<Button
-						variant="default"
-						size="sm"
-						className="h-7 flex-1 gap-1 text-xs"
-						onClick={onGenerateReview}
-					>
-						<LuPlay className="size-3" />
-						Review
-					</Button>
-					<Button
-						variant="outline"
-						size="sm"
-						className="h-7 gap-1 text-xs"
-						disabled={!reviewPrompt}
-						onClick={() => copyToClipboard(reviewPrompt)}
-					>
-						<LuClipboard className="size-3" />
-						Copy
-					</Button>
-				</div>
-				<div className="flex gap-1.5">
-					<Button
-						variant="secondary"
-						size="sm"
-						className="h-7 flex-1 gap-1 text-xs"
-						disabled={!workerPrompt}
-						onClick={() => onSendToTerminal("worker")}
-					>
-						<LuSend className="size-3" />
-						Worker → Term
-					</Button>
-					<Button
-						variant="secondary"
-						size="sm"
-						className="h-7 flex-1 gap-1 text-xs"
-						disabled={!reviewPrompt}
-						onClick={() => onSendToTerminal("review")}
-					>
-						<LuSend className="size-3" />
-						Review → Term
-					</Button>
-				</div>
-			</div>
-
-			<div className="flex flex-col gap-2.5">
-				<div className="flex flex-col gap-1">
-					<Label className="text-xs">Worker Prompt</Label>
-					<Textarea
-						readOnly
-						value={workerPrompt}
-						placeholder="Click 'Worker' to generate..."
-						rows={5}
-						className={cn(
-							"resize-y font-mono text-[11px]",
-							!workerPrompt && "text-muted-foreground",
-						)}
-					/>
-				</div>
-
-				<div className="flex flex-col gap-1">
-					<Label className="text-xs">Review Prompt</Label>
-					<Textarea
-						readOnly
-						value={reviewPrompt}
-						placeholder="Click 'Review' to generate..."
-						rows={5}
-						className={cn(
-							"resize-y font-mono text-[11px]",
-							!reviewPrompt && "text-muted-foreground",
-						)}
-					/>
-				</div>
-			</div>
-		</div>
-	);
-}
+import { detectProvider, getProviderLabel } from "./browser-adapters";
+import {
+	generateWorkerPrompt,
+	generateReviewPrompt,
+} from "./hooks/useCommanderPrompts";
+import { usePromptTransfer } from "./hooks/usePromptTransfer";
+import { CommanderBrowser } from "./CommanderBrowser";
+import { CommanderForm } from "./CommanderForm";
+import { CommanderHelperBar } from "./CommanderHelperBar";
+import { TerminalSendPreview, CapturePreview } from "./PromptPreviewPanel";
 
 export function CommanderTab() {
 	const [view, setView] = useState<CommanderView>("browser");
-
 	const [state, setState] = useState<CommanderState>({
 		goal: "",
 		context: "",
@@ -628,50 +26,11 @@ export function CommanderTab() {
 	const [workerPrompt, setWorkerPrompt] = useState("");
 	const [reviewPrompt, setReviewPrompt] = useState("");
 
-	const [formSendPreview, setFormSendPreview] = useState<{
-		text: string;
-		label: string;
-	} | null>(null);
-	const [selectionPreview, setSelectionPreview] = useState<string | null>(null);
-
 	const activeTerminal = useActiveTerminal();
 	const webview = useCommanderWebview();
-	const isBlank = !webview.currentUrl || webview.currentUrl === "about:blank";
 
-	const handleFormSendToTerminal = useCallback(
-		(type: "worker" | "review") => {
-			const prompt =
-				type === "worker" ? workerPrompt : reviewPrompt;
-			if (!prompt) {
-				toast.error("先に Worker / Review を生成してください");
-				return;
-			}
-			if (!activeTerminal) {
-				toast.error(
-					"Terminal が見つかりません — ターミナルを開いてください",
-				);
-				return;
-			}
-			setFormSendPreview({
-				text: prompt,
-				label: type === "worker" ? "Worker Prompt" : "Review Prompt",
-			});
-		},
-		[workerPrompt, reviewPrompt, activeTerminal],
-	);
-
-	useEffect(() => {
-		if (!activeTerminal) {
-			if (formSendPreview) setFormSendPreview(null);
-			if (selectionPreview) setSelectionPreview(null);
-		}
-	}, [activeTerminal, formSendPreview, selectionPreview]);
-
-	const handleFormConfirmSend = useCallback(() => {
-		if (!formSendPreview || !activeTerminal) return;
-		sendToTerminal(activeTerminal, formSendPreview.text);
-		setFormSendPreview(null);
-	}, [formSendPreview, activeTerminal]);
+	const currentProvider = detectProvider(webview.currentUrl);
+	const providerLabel = getProviderLabel(currentProvider);
 
 	const updateField = useCallback(
 		(field: keyof CommanderState, value: string) => {
@@ -680,131 +39,28 @@ export function CommanderTab() {
 		[],
 	);
 
-	const MAX_SELECTION = 10_000;
-
-	const handleGrabSelection = useCallback(() => {
-		if (!activeTerminal) {
-			toast.error("Terminal が見つかりません — ターミナルを開いてください");
-			return;
-		}
-		let text = getTerminalSelection(activeTerminal);
-		if (!text) {
-			toast.error("ターミナルでテキストを選択してください");
-			return;
-		}
-		if (text.length > MAX_SELECTION) {
-			text = text.slice(0, MAX_SELECTION);
-			toast.warning(`選択テキストを ${MAX_SELECTION.toLocaleString()} 文字に切り詰めました`);
-		}
-		setSelectionPreview(text);
-		setView("form");
-	}, [activeTerminal]);
-
-	const handleUseSelection = useCallback(() => {
-		if (!selectionPreview) return;
-		setState((prev) => ({
-			...prev,
-			currentProblem: prev.currentProblem
-				? `${prev.currentProblem}\n\n--- Terminal Output ---\n${selectionPreview}`
-				: selectionPreview,
-		}));
-		setSelectionPreview(null);
-		toast.success("Current Problem に取り込みました");
-	}, [selectionPreview]);
-
-	const currentProvider = detectProvider(webview.currentUrl);
-	const providerLabel = getProviderLabel(currentProvider);
-
-	const handleInject = useCallback(
-		async (type: "worker" | "review") => {
-			const prompt =
-				type === "worker"
-					? generateWorkerPrompt(state)
-					: generateReviewPrompt(state);
-			if (!prompt) {
-				toast.warning("Form で Goal を設定してください");
-				return;
-			}
-			const liveUrl = webview.getLiveUrl() || webview.currentUrl;
-			const provider = detectProvider(liveUrl);
-			if (!provider) {
-				await copyToClipboard(prompt);
-				toast.warning("未対応サイトです — クリップボードにコピーしました。手動 paste してください");
-				return;
-			}
-			try {
-				const ok = await webview.injectIntoPage(buildInjectionScript(prompt));
-				if (ok) {
-					toast.success(`${getProviderLabel(provider)} に挿入しました`);
-				} else {
-					await copyToClipboard(prompt);
-					toast.warning("入力欄が見つかりません — クリップボードにコピーしました。手動 paste してください");
-				}
-			} catch {
-				await copyToClipboard(prompt);
-				toast.warning("挿入に失敗しました — クリップボードにコピーしました。手動 paste してください");
-			}
-		},
-		[state, webview.getLiveUrl, webview.currentUrl, webview.injectIntoPage],
-	);
-
-	const [capturePreview, setCapturePreview] = useState<string | null>(null);
-
-	useEffect(() => {
-		setCapturePreview(null);
-	}, [webview.currentUrl]);
-
-	const handleCaptureResponse = useCallback(async () => {
-		const liveUrl = webview.getLiveUrl() || webview.currentUrl;
-		const provider = detectProvider(liveUrl);
-		if (!provider) {
-			toast.warning("未対応サイトです — AI返答を取得できません");
-			return;
-		}
-		try {
-			const raw = await webview.injectIntoPage(
-				buildExtractionScript(provider),
-			);
-			let text = typeof raw === "string" ? raw : null;
-			if (!text) {
-				toast.error("AI返答が見つかりません — 会話を開始してください");
-				return;
-			}
-			if (text.length > MAX_SELECTION) {
-				text = text.slice(0, MAX_SELECTION);
-				toast.warning(
-					`返答を ${MAX_SELECTION.toLocaleString()} 文字に切り詰めました`,
-				);
-			}
-			setCapturePreview(text);
-		} catch {
-			toast.error("AI返答の取得に失敗しました");
-		}
-	}, [webview.getLiveUrl, webview.currentUrl, webview.injectIntoPage]);
-
-	const handleUseCapture = useCallback(() => {
-		if (!capturePreview) return;
-		setState((prev) => ({
-			...prev,
-			context: prev.context
-				? `${prev.context}\n\n--- AI Response ---\n${capturePreview}`
-				: capturePreview,
-		}));
-		setCapturePreview(null);
-		setView("form");
-		toast.success("Context に取り込みました");
-	}, [capturePreview]);
+	const transfer = usePromptTransfer({
+		state,
+		activeTerminal,
+		getLiveUrl: webview.getLiveUrl,
+		currentUrl: webview.currentUrl,
+		injectIntoPage: webview.injectIntoPage,
+		onUpdateState: setState,
+		onSetView: setView,
+		workerPrompt,
+		reviewPrompt,
+	});
 
 	const handleGenerateWorker = useCallback(() => {
 		const prompt = generateWorkerPrompt(state);
 		setWorkerPrompt(prompt);
-		if (!prompt) toast.error("Enter at least a Goal to generate a prompt");
+		if (!prompt) toast.error("Goal を設定してください");
 	}, [state]);
 
 	const handleGenerateReview = useCallback(() => {
 		const prompt = generateReviewPrompt(state);
 		setReviewPrompt(prompt);
-		if (!prompt) toast.error("Enter at least a Goal to generate a prompt");
+		if (!prompt) toast.error("Goal を設定してください");
 	}, [state]);
 
 	return (
@@ -837,7 +93,7 @@ export function CommanderTab() {
 				</button>
 			</div>
 
-			{/* Browser view — always rendered to persist webview state */}
+			{/* Browser view */}
 			<div
 				className={
 					view === "browser"
@@ -845,80 +101,31 @@ export function CommanderTab() {
 						: "hidden"
 				}
 			>
-				<BrowserToolbar
+				<CommanderBrowser
 					currentUrl={webview.currentUrl}
 					isLoading={webview.isLoading}
 					canGoBack={webview.canGoBack}
 					canGoForward={webview.canGoForward}
+					containerRef={webview.containerRef}
 					onGoBack={webview.goBack}
 					onGoForward={webview.goForward}
 					onReload={webview.reload}
 					onNavigate={webview.navigateTo}
 				/>
-				{/* AI presets */}
-				<div className="flex gap-1 px-1.5 py-1 border-b shrink-0">
-					{AI_PRESETS.map((p) => (
-						<Button
-							key={p.label}
-							variant="outline"
-							size="sm"
-							className="h-5 text-[10px] px-1.5"
-							onClick={() => webview.navigateTo(p.url)}
-						>
-							{p.label}
-						</Button>
-					))}
-				</div>
-				{/* Webview container */}
-				<div className="flex-1 min-h-0 relative">
-					<div
-						ref={webview.containerRef}
-						className="absolute inset-0"
-					/>
-					{isBlank && (
-						<div className="absolute inset-0 flex items-center justify-center bg-background z-10">
-							<div className="text-center space-y-3 px-4">
-								<p className="text-xs text-muted-foreground leading-relaxed">
-									AI アシスタントを選択して
-									<br />
-									壁打ちを開始
-								</p>
-								<div className="flex flex-col gap-1.5">
-									{AI_PRESETS.map((p) => (
-										<Button
-											key={p.label}
-											variant="outline"
-											size="sm"
-											className="text-xs"
-											onClick={() => webview.navigateTo(p.url)}
-										>
-											{p.label}
-										</Button>
-									))}
-								</div>
-								<p className="text-[10px] text-muted-foreground">
-									Form タブで文脈を設定 → Worker/Review をコピー
-								</p>
-							</div>
-						</div>
-					)}
-				</div>
-				{/* Capture preview */}
-				{capturePreview && (
+				{transfer.capturePreview && (
 					<CapturePreview
-						text={capturePreview}
+						text={transfer.capturePreview}
 						title="AI Response Preview"
-						onUse={handleUseCapture}
-						onCancel={() => setCapturePreview(null)}
+						onUse={transfer.handleUseCapture}
+						onCancel={transfer.dismissCapturePreview}
 					/>
 				)}
-				{/* Helper bar */}
-				<HelperBar
+				<CommanderHelperBar
 					state={state}
 					activeTerminal={activeTerminal}
-					onGrabSelection={handleGrabSelection}
-					onInject={handleInject}
-					onCaptureResponse={handleCaptureResponse}
+					onGrabSelection={transfer.handleGrabSelection}
+					onInject={transfer.handleInject}
+					onCaptureResponse={transfer.handleCaptureResponse}
 					providerLabel={providerLabel}
 					hasProvider={!!currentProvider}
 				/>
@@ -932,31 +139,31 @@ export function CommanderTab() {
 						: "hidden"
 				}
 			>
-				{formSendPreview && (
+				{transfer.formSendPreview && (
 					<TerminalSendPreview
-						text={formSendPreview.text}
-						label={formSendPreview.label}
-						onConfirm={handleFormConfirmSend}
-						onCancel={() => setFormSendPreview(null)}
+						text={transfer.formSendPreview.text}
+						label={transfer.formSendPreview.label}
+						onConfirm={transfer.handleFormConfirmSend}
+						onCancel={transfer.dismissFormSendPreview}
 					/>
 				)}
-				{selectionPreview && (
+				{transfer.selectionPreview && (
 					<CapturePreview
-						text={selectionPreview}
+						text={transfer.selectionPreview}
 						title="Terminal Selection Preview"
-						onUse={handleUseSelection}
-						onCancel={() => setSelectionPreview(null)}
+						onUse={transfer.handleUseSelection}
+						onCancel={transfer.dismissSelectionPreview}
 					/>
 				)}
-				<FormView
+				<CommanderForm
 					state={state}
 					updateField={updateField}
 					workerPrompt={workerPrompt}
 					reviewPrompt={reviewPrompt}
 					onGenerateWorker={handleGenerateWorker}
 					onGenerateReview={handleGenerateReview}
-					onSendToTerminal={handleFormSendToTerminal}
-					onGrabSelection={handleGrabSelection}
+					onSendToTerminal={transfer.handleFormSendToTerminal}
+					onGrabSelection={transfer.handleGrabSelection}
 				/>
 			</div>
 		</div>
