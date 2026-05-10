@@ -16,10 +16,15 @@ import {
 	generateReviewPrompt,
 } from "./hooks/useCommanderPrompts";
 import type { AssistantCaptureSnapshot } from "./hooks/usePromptTransfer";
+import type { AutoRelayMode } from "./hooks/usePromptTransfer";
 import { usePromptTransfer } from "./hooks/usePromptTransfer";
 import { CommanderBrowser } from "./CommanderBrowser";
 import { CommanderHelperBar } from "./CommanderHelperBar";
-import { CapturePreview, EditableTerminalPreview } from "./PromptPreviewPanel";
+import {
+	CapturePreview,
+	EditableTerminalPreview,
+	WorkerResponsePreview,
+} from "./PromptPreviewPanel";
 
 export function CommanderTab() {
 	const [view, setView] = useState<CommanderView>("browser");
@@ -29,6 +34,7 @@ export function CommanderTab() {
 		constraints: "",
 		currentProblem: "",
 	});
+	const [autoRelayMode, setAutoRelayMode] = useState<AutoRelayMode>("off");
 
 	const workerPrompt = useMemo(
 		() => generateWorkerPrompt(state),
@@ -45,6 +51,7 @@ export function CommanderTab() {
 	const transfer = usePromptTransfer({
 		state,
 		activeTerminal,
+		autoRelayMode,
 		getLiveUrl: webview.getLiveUrl,
 		currentUrl: webview.currentUrl,
 		injectIntoPage: webview.injectIntoPage,
@@ -141,6 +148,32 @@ export function CommanderTab() {
 						onCancel={transfer.dismissCaptureForTerminal}
 					/>
 				)}
+				{transfer.workerResponsePreview.visible && (
+					<WorkerResponsePreview
+						text={transfer.workerResponsePreview.text}
+						hasProvider={!!currentProvider}
+						onSendToBrowserAI={transfer.handleSendWorkerResponseToBrowserAI}
+						onCancel={transfer.dismissWorkerResponsePreview}
+					/>
+				)}
+				{transfer.autoRelayStatus === "watching" &&
+					!transfer.workerResponsePreview.visible && (
+						<div className="flex items-center gap-1.5 px-2 py-1 border-b bg-muted/30">
+							<LuLoader className="size-3 animate-spin text-muted-foreground" />
+							<span className="text-[10px] text-muted-foreground">
+								Waiting for worker response...
+							</span>
+							<div className="flex-1" />
+							<Button
+								variant="ghost"
+								size="sm"
+								className="h-5 w-5 p-0"
+								onClick={() => transfer.cancelAutoRelay()}
+							>
+								<LuX className="size-3" />
+							</Button>
+						</div>
+					)}
 				{transfer.capturePreview &&
 					!transfer.captureForTerminalPreview.visible && (
 						<CapturePreview
@@ -162,6 +195,9 @@ export function CommanderTab() {
 					onInject={transfer.handleInject}
 					onCaptureResponse={transfer.handleCaptureResponse}
 					onSendSelectionToAI={handleSendSelectionToAI}
+					autoRelayMode={autoRelayMode}
+					onAutoRelayModeChange={setAutoRelayMode}
+					onTerminalSubmitBeforeSend={transfer.handleTerminalSubmitBeforeSend}
 					providerLabel={providerLabel}
 					hasProvider={!!currentProvider}
 				/>

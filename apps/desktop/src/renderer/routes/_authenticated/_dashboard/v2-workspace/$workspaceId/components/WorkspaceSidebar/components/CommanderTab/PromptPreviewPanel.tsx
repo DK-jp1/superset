@@ -195,3 +195,50 @@ export function EditableTerminalPreview({
 		</div>
 	);
 }
+
+export function WorkerResponsePreview({
+	text,
+	hasProvider,
+	onSendToBrowserAI,
+	onCancel,
+}: {
+	text: string;
+	hasProvider: boolean;
+	onSendToBrowserAI: () => void;
+	onCancel: () => void;
+}) {
+	const canSend = hasProvider && text.trim().length > 0;
+
+	return (
+		<div className="flex flex-col gap-1.5 p-1.5 border-b bg-muted/30">
+			<div className="flex items-center justify-between">
+				<span className="text-[10px] font-medium text-muted-foreground">
+					Worker Response Preview
+				</span>
+				<div className="flex flex-wrap justify-end gap-0.5">
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-5 w-5 p-0"
+						onClick={onCancel}
+					>
+						<LuX className="size-3" />
+					</Button>
+					<Button
+						variant="default"
+						size="sm"
+						className="h-5 px-1.5 gap-0.5 text-[10px]"
+						disabled={!canSend}
+						onClick={onSendToBrowserAI}
+					>
+						<LuSend className="size-2.5" />
+						Send to Browser AI
+					</Button>
+				</div>
+			</div>
+			<pre className="text-[10px] font-mono bg-muted rounded p-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap break-all">
+				{text}
+			</pre>
+		</div>
+	);
+}

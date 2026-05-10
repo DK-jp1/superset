@@ -129,6 +129,92 @@ ${selectedText}`;
 	}
 }
 
+export async function sendWorkerResponseToBrowserAI(
+	workerResponse: string,
+): Promise<boolean> {
+	console.log("[S3.13] send worker response to browser ai clicked");
+	console.log("[S3.13] worker response length =", workerResponse.length);
+
+	if (!bridge) {
+		console.log("[S3.13] inject result = failed");
+		toast.error("Commander タブを開いてください — Browser AI が未初期化です");
+		return false;
+	}
+
+	const prompt = `以下のCodex / Claude Code worker返答を確認し、次にDoyDeckで判断すべき点と、必要ならWorkerへ渡す次の指示を整理してください。
+
+--- Worker Response ---
+${workerResponse}`;
+
+	const liveUrl = bridge.getLiveUrl();
+	const provider = detectProvider(liveUrl);
+	console.log("[S3.13] provider =", provider ?? "none", "url =", liveUrl);
+
+	if (!provider) {
+		console.log("[S3.13] inject result = failed");
+		await navigator.clipboard.writeText(prompt);
+		toast.warning(
+			"未対応サイトです — クリップボードにコピーしました。手動で貼り付けてください",
+		);
+		return false;
+	}
+
+	try {
+		let baseline: AssistantCaptureSnapshot | null = null;
+		try {
+			const rawBaseline = await bridge.injectIntoPage(
+				buildAssistantSnapshotScript(provider),
+			);
+			baseline = toAssistantCaptureSnapshot(rawBaseline);
+		} catch (err) {
+			console.log("[S3.13] pre-send baseline extraction failed:", err);
+		}
+
+		const result = await bridge.injectIntoPage(
+			buildInjectionWithSubmitScript(prompt, provider),
+		);
+		const normalizedResult =
+			result === "submitted" || result === "injected" ? result : "failed";
+		console.log("[S3.13] inject result =", normalizedResult);
+
+		if (result === "submitted") {
+			toast.success(`${getProviderLabel(provider)} に送信しました`);
+			if (baseline) {
+				bridge.onAutoCaptureTrigger?.({
+					baseline,
+					prompt,
+					triggeredAt: Date.now(),
+				});
+			}
+			return true;
+		}
+
+		if (result === "injected") {
+			toast.success(
+				`${getProviderLabel(provider)} に挿入しました — 手動で送信してください`,
+			);
+			if (baseline) {
+				bridge.onAutoCaptureTrigger?.({
+					baseline,
+					prompt,
+					triggeredAt: Date.now(),
+				});
+			}
+			return true;
+		}
+
+		await navigator.clipboard.writeText(prompt);
+		toast.warning("入力欄が見つかりません — クリップボードにコピーしました");
+		return false;
+	} catch (err) {
+		console.error("[S3.13] inject error =", err);
+		console.log("[S3.13] inject result = failed");
+		await navigator.clipboard.writeText(prompt);
+		toast.warning("挿入に失敗しました — クリップボードにコピーしました");
+		return false;
+	}
+}
+
 function toAssistantCaptureSnapshot(
 	value: unknown,
 ): AssistantCaptureSnapshot | null {

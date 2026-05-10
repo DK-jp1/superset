@@ -58,6 +58,42 @@ export interface CachedTerminal {
 }
 
 const cache = new Map<string, CachedTerminal>();
+const MAX_OUTPUT_LOG_LENGTH = 2_000_000;
+
+interface OutputLog {
+	baseOffset: number;
+	text: string;
+}
+
+const outputLogs = new Map<string, OutputLog>();
+
+function appendOutputLog(paneId: string, data: string): void {
+	let log = outputLogs.get(paneId);
+	if (!log) {
+		log = { baseOffset: 0, text: "" };
+		outputLogs.set(paneId, log);
+	}
+
+	log.text += data;
+	if (log.text.length <= MAX_OUTPUT_LOG_LENGTH) return;
+
+	const trimLength = log.text.length - MAX_OUTPUT_LOG_LENGTH;
+	log.text = log.text.slice(trimLength);
+	log.baseOffset += trimLength;
+}
+
+export function getOutputLogOffset(paneId: string): number {
+	const log = outputLogs.get(paneId);
+	if (!log) return 0;
+	return log.baseOffset + log.text.length;
+}
+
+export function getOutputLogSince(paneId: string, offset: number): string {
+	const log = outputLogs.get(paneId);
+	if (!log) return "";
+	const start = Math.max(0, offset - log.baseOffset);
+	return log.text.slice(start);
+}
 
 function hostIsVisible(container: HTMLDivElement | null): boolean {
 	if (!container) return false;
@@ -249,6 +285,9 @@ export function startStream(paneId: string): void {
 
 	entry.subscription = electronTrpcClient.terminal.stream.subscribe(paneId, {
 		onData: (event: TerminalStreamEvent) => {
+			if (event.type === "data") {
+				appendOutputLog(paneId, event.data);
+			}
 			routeEvent(entry, event);
 		},
 		onError: (error: unknown) => {
@@ -339,6 +378,7 @@ export function dispose(paneId: string): void {
 	entry.wrapper.remove();
 	entry.xterm.dispose();
 	cache.delete(paneId);
+	outputLogs.delete(paneId);
 }
 
 // Preserve cache across Vite HMR in dev so active terminals aren't orphaned.

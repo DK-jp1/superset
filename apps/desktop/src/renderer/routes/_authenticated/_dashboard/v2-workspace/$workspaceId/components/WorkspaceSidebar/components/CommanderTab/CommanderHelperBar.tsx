@@ -20,6 +20,7 @@ import {
 import type { CommanderState } from "./commander-types";
 import { copyToClipboard } from "./hooks/useCommanderPrompts";
 import { sendToTerminal } from "./hooks/usePromptTransfer";
+import type { AutoRelayMode } from "./hooks/usePromptTransfer";
 import { TerminalSendPreview } from "./PromptPreviewPanel";
 
 export function CommanderHelperBar({
@@ -31,6 +32,9 @@ export function CommanderHelperBar({
 	onInject,
 	onCaptureResponse,
 	onSendSelectionToAI,
+	autoRelayMode,
+	onAutoRelayModeChange,
+	onTerminalSubmitBeforeSend,
 	providerLabel,
 	hasProvider,
 }: {
@@ -42,6 +46,9 @@ export function CommanderHelperBar({
 	onInject: (type: "worker" | "review") => void;
 	onCaptureResponse: () => void;
 	onSendSelectionToAI: () => void;
+	autoRelayMode: AutoRelayMode;
+	onAutoRelayModeChange: (mode: AutoRelayMode) => void;
+	onTerminalSubmitBeforeSend: (paneId: string) => (() => void) | null;
 	providerLabel: string;
 	hasProvider: boolean;
 }) {
@@ -77,10 +84,16 @@ export function CommanderHelperBar({
 	const handleConfirmSend = useCallback(
 		(options?: { submit?: boolean }) => {
 			if (!pendingSend || !activeTerminal) return;
-			void sendToTerminal(activeTerminal, pendingSend.text, options);
+			const startRelay = options?.submit
+				? onTerminalSubmitBeforeSend(activeTerminal)
+				: null;
+			void (async () => {
+				await sendToTerminal(activeTerminal, pendingSend.text, options);
+				startRelay?.();
+			})();
 			setPendingSend(null);
 		},
-		[pendingSend, activeTerminal],
+		[pendingSend, activeTerminal, onTerminalSubmitBeforeSend],
 	);
 
 	return (
@@ -115,6 +128,18 @@ export function CommanderHelperBar({
 				>
 					{activeTerminal ? "Term ✓" : "Term ✗"}
 				</span>
+				<Button
+					variant={autoRelayMode === "preview" ? "secondary" : "ghost"}
+					size="sm"
+					className="h-5 px-1 text-[9px]"
+					onClick={() =>
+						onAutoRelayModeChange(
+							autoRelayMode === "preview" ? "off" : "preview",
+						)
+					}
+				>
+					Auto Relay {autoRelayMode === "preview" ? "Preview" : "OFF"}
+				</Button>
 				<div className="flex-1" />
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
