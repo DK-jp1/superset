@@ -15,9 +15,15 @@ import {
 	LuSend,
 	LuTerminalSquare,
 	LuX,
+	LuZap,
 } from "react-icons/lu";
 import { electronTrpcClient } from "renderer/lib/trpc-client";
 import { useActiveTerminal, getTerminalSelection } from "./useActiveTerminal";
+import {
+	detectProvider,
+	getProviderLabel,
+	buildInjectionScript,
+} from "./browser-adapters";
 import { useCommanderWebview } from "./useCommanderWebview";
 
 interface CommanderState {
@@ -253,10 +259,16 @@ function HelperBar({
 	state,
 	activeTerminal,
 	onGrabSelection,
+	onInject,
+	providerLabel,
+	hasProvider,
 }: {
 	state: CommanderState;
 	activeTerminal: string | null;
 	onGrabSelection: () => void;
+	onInject: (type: "worker" | "review") => void;
+	providerLabel: string;
+	hasProvider: boolean;
 }) {
 	const hasSetup = !!state.goal;
 	const [pendingSend, setPendingSend] = useState<{
@@ -306,55 +318,93 @@ function HelperBar({
 					onCancel={() => setPendingSend(null)}
 				/>
 			)}
-			<div className="border-t p-1.5 flex flex-wrap gap-1">
-				<Button
-					variant="outline"
-					size="sm"
-					className="h-6 gap-1 text-[10px] flex-1"
-					disabled={!hasSetup}
-					onClick={() => {
-						const prompt = generateWorkerPrompt(state);
-						if (prompt) copyToClipboard(prompt);
-						else toast.error("Form で Goal を設定してください");
-					}}
-				>
-					<LuClipboard className="size-2.5" />
-					Worker
-				</Button>
-				<Button
-					variant="outline"
-					size="sm"
-					className="h-6 gap-1 text-[10px] flex-1"
-					disabled={!hasSetup}
-					onClick={() => {
-						const prompt = generateReviewPrompt(state);
-						if (prompt) copyToClipboard(prompt);
-						else toast.error("Form で Goal を設定してください");
-					}}
-				>
-					<LuClipboard className="size-2.5" />
-					Review
-				</Button>
-				<Button
-					variant={activeTerminal ? "secondary" : "ghost"}
-					size="sm"
-					className="h-6 gap-1 text-[10px] flex-1"
-					disabled={!hasSetup}
-					onClick={() => handleTerminalSend("worker")}
-				>
-					<LuSend className="size-2.5" />
-					→ Term
-				</Button>
-				<Button
-					variant={activeTerminal ? "secondary" : "ghost"}
-					size="sm"
-					className="h-6 gap-1 text-[10px] flex-1"
-					disabled={!activeTerminal}
-					onClick={onGrabSelection}
-				>
-					<LuTerminalSquare className="size-2.5" />
-					← Term
-				</Button>
+			<div className="border-t px-1.5 pt-1 pb-0.5">
+				<div className="flex items-center justify-between mb-1">
+					<span
+						className={cn(
+							"text-[9px] font-medium px-1 py-0.5 rounded",
+							hasProvider
+								? "bg-primary/10 text-primary"
+								: "bg-muted text-muted-foreground",
+						)}
+					>
+						{providerLabel}
+					</span>
+				</div>
+				<div className="flex flex-wrap gap-1">
+					<Button
+						variant="outline"
+						size="sm"
+						className="h-6 gap-1 text-[10px] flex-1"
+						disabled={!hasSetup}
+						onClick={() => {
+							const prompt = generateWorkerPrompt(state);
+							if (prompt) copyToClipboard(prompt);
+							else toast.error("Form で Goal を設定してください");
+						}}
+					>
+						<LuClipboard className="size-2.5" />
+						Worker
+					</Button>
+					<Button
+						variant="outline"
+						size="sm"
+						className="h-6 gap-1 text-[10px] flex-1"
+						disabled={!hasSetup}
+						onClick={() => {
+							const prompt = generateReviewPrompt(state);
+							if (prompt) copyToClipboard(prompt);
+							else toast.error("Form で Goal を設定してください");
+						}}
+					>
+						<LuClipboard className="size-2.5" />
+						Review
+					</Button>
+				</div>
+				<div className="flex flex-wrap gap-1 mt-1">
+					<Button
+						variant={hasProvider ? "default" : "ghost"}
+						size="sm"
+						className="h-6 gap-1 text-[10px] flex-1"
+						disabled={!hasSetup}
+						onClick={() => onInject("worker")}
+					>
+						<LuZap className="size-2.5" />
+						Inject W
+					</Button>
+					<Button
+						variant={hasProvider ? "default" : "ghost"}
+						size="sm"
+						className="h-6 gap-1 text-[10px] flex-1"
+						disabled={!hasSetup}
+						onClick={() => onInject("review")}
+					>
+						<LuZap className="size-2.5" />
+						Inject R
+					</Button>
+				</div>
+				<div className="flex flex-wrap gap-1 mt-1">
+					<Button
+						variant={activeTerminal ? "secondary" : "ghost"}
+						size="sm"
+						className="h-6 gap-1 text-[10px] flex-1"
+						disabled={!hasSetup}
+						onClick={() => handleTerminalSend("worker")}
+					>
+						<LuSend className="size-2.5" />
+						→ Term
+					</Button>
+					<Button
+						variant={activeTerminal ? "secondary" : "ghost"}
+						size="sm"
+						className="h-6 gap-1 text-[10px] flex-1"
+						disabled={!activeTerminal}
+						onClick={onGrabSelection}
+					>
+						<LuTerminalSquare className="size-2.5" />
+						← Term
+					</Button>
+				</div>
 			</div>
 		</div>
 	);
@@ -566,6 +616,7 @@ export function CommanderTab() {
 		text: string;
 		label: string;
 	} | null>(null);
+	const [selectionPreview, setSelectionPreview] = useState<string | null>(null);
 
 	const activeTerminal = useActiveTerminal();
 	const webview = useCommanderWebview();
@@ -613,8 +664,6 @@ export function CommanderTab() {
 		[],
 	);
 
-	const [selectionPreview, setSelectionPreview] = useState<string | null>(null);
-
 	const MAX_SELECTION = 10_000;
 
 	const handleGrabSelection = useCallback(() => {
@@ -646,6 +695,42 @@ export function CommanderTab() {
 		setSelectionPreview(null);
 		toast.success("Current Problem に取り込みました");
 	}, [selectionPreview]);
+
+	const currentProvider = detectProvider(webview.currentUrl);
+	const providerLabel = getProviderLabel(currentProvider);
+
+	const handleInject = useCallback(
+		async (type: "worker" | "review") => {
+			const prompt =
+				type === "worker"
+					? generateWorkerPrompt(state)
+					: generateReviewPrompt(state);
+			if (!prompt) {
+				toast.warning("Form で Goal を設定してください");
+				return;
+			}
+			const liveUrl = webview.getLiveUrl() || webview.currentUrl;
+			const provider = detectProvider(liveUrl);
+			if (!provider) {
+				await copyToClipboard(prompt);
+				toast.warning("未対応サイトです — クリップボードにコピーしました。手動 paste してください");
+				return;
+			}
+			try {
+				const ok = await webview.injectIntoPage(buildInjectionScript(prompt));
+				if (ok) {
+					toast.success(`${getProviderLabel(provider)} に挿入しました`);
+				} else {
+					await copyToClipboard(prompt);
+					toast.warning("入力欄が見つかりません — クリップボードにコピーしました。手動 paste してください");
+				}
+			} catch {
+				await copyToClipboard(prompt);
+				toast.warning("挿入に失敗しました — クリップボードにコピーしました。手動 paste してください");
+			}
+		},
+		[state, webview.getLiveUrl, webview.currentUrl, webview.injectIntoPage],
+	);
 
 	const handleGenerateWorker = useCallback(() => {
 		const prompt = generateWorkerPrompt(state);
@@ -756,7 +841,14 @@ export function CommanderTab() {
 					)}
 				</div>
 				{/* Helper bar */}
-				<HelperBar state={state} activeTerminal={activeTerminal} onGrabSelection={handleGrabSelection} />
+				<HelperBar
+					state={state}
+					activeTerminal={activeTerminal}
+					onGrabSelection={handleGrabSelection}
+					onInject={handleInject}
+					providerLabel={providerLabel}
+					hasProvider={!!currentProvider}
+				/>
 			</div>
 
 			{/* Form view */}

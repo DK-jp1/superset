@@ -121,5 +121,22 @@ export function useCommanderWebview() {
 	const goForward = useCallback(() => webviewRef.current?.goForward(), []);
 	const reload = useCallback(() => webviewRef.current?.reload(), []);
 
-	return { containerRef, navigateTo, goBack, goForward, reload, ...state };
+	const getLiveUrl = useCallback((): string => {
+		try {
+			return webviewRef.current?.getURL() ?? "";
+		} catch {
+			return "";
+		}
+	}, []);
+
+	const injectIntoPage = useCallback(
+		async (script: string): Promise<unknown> => {
+			const wv = webviewRef.current;
+			if (!wv) throw new Error("Webview not mounted");
+			return wv.executeJavaScript(script);
+		},
+		[],
+	);
+
+	return { containerRef, navigateTo, goBack, goForward, reload, getLiveUrl, injectIntoPage, ...state };
 }
