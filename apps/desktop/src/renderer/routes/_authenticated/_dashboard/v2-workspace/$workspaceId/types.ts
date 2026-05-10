@@ -56,6 +56,15 @@ export interface CommentPaneData {
 	line?: number;
 }
 
+export interface CommanderPaneData {
+	goal: string;
+	context: string;
+	constraints: string;
+	currentProblem: string;
+	workerPrompt: string;
+	reviewPrompt: string;
+}
+
 export type PaneViewerData =
 	| FilePaneData
 	| TerminalPaneData
@@ -63,4 +72,5 @@ export type PaneViewerData =
 	| BrowserPaneData
 	| DevtoolsPaneData
 	| DiffPaneData
-	| CommentPaneData;
+	| CommentPaneData
+	| CommanderPaneData;

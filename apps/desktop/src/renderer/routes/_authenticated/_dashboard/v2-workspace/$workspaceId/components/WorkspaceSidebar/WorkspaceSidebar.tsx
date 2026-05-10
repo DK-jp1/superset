@@ -1,11 +1,12 @@
 import { Button } from "@superset/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@superset/ui/tooltip";
-import { Search } from "lucide-react";
+import { Search, Swords } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { LuFile, LuGitCompareArrows } from "react-icons/lu";
 import { useGitStatus } from "renderer/hooks/host-service/useGitStatus";
 import { useCollections } from "renderer/routes/_authenticated/providers/CollectionsProvider";
 import type { CommentPaneData } from "../../types";
+import { CommanderTab } from "./components/CommanderTab/CommanderTab";
 import { FilesTab } from "./components/FilesTab";
 import { PRActionHeader } from "./components/PRActionHeader";
 import { SidebarHeader } from "./components/SidebarHeader";
@@ -20,9 +21,14 @@ import type { SidebarTabDefinition } from "./types";
 // always renders so users can see PR state and merge once a PR exists.
 const CREATE_PR_BUTTON_ENABLED = false;
 
-type SidebarTabId = "changes" | "files" | "review";
+type SidebarTabId = "changes" | "files" | "review" | "commander";
 
-const VALID_TAB_IDS: readonly SidebarTabId[] = ["changes", "files", "review"];
+const VALID_TAB_IDS: readonly SidebarTabId[] = [
+	"changes",
+	"files",
+	"review",
+	"commander",
+];
 
 function isSidebarTabId(tab: string): tab is SidebarTabId {
 	return (VALID_TAB_IDS as readonly string[]).includes(tab);
@@ -90,7 +96,7 @@ export function WorkspaceSidebar({
 		if (!isSidebarTabId(tab)) return;
 		if (!collections.v2WorkspaceLocalState.get(workspaceId)) return;
 		collections.v2WorkspaceLocalState.update(workspaceId, (draft) => {
-			draft.sidebarState.activeTab = tab;
+			draft.sidebarState.activeTab = tab as typeof draft.sidebarState.activeTab;
 		});
 	}
 
@@ -146,7 +152,19 @@ export function WorkspaceSidebar({
 		),
 	};
 
-	const tabs: SidebarTabDefinition[] = [filesTab, changesTab, reviewTab];
+	const commanderTab: SidebarTabDefinition = {
+		id: "commander",
+		label: "Commander",
+		icon: Swords,
+		content: <CommanderTab />,
+	};
+
+	const tabs: SidebarTabDefinition[] = [
+		filesTab,
+		changesTab,
+		reviewTab,
+		commanderTab,
+	];
 	const activeTabDef = tabs.find((t) => t.id === activeTab);
 
 	return (

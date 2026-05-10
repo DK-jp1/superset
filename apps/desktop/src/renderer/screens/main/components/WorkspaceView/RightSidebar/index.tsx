@@ -2,6 +2,7 @@ import { Button } from "@superset/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@superset/ui/tooltip";
 import { useParams } from "@tanstack/react-router";
 import { useCallback } from "react";
+import { Swords } from "lucide-react";
 import {
 	LuExpand,
 	LuFile,
@@ -20,6 +21,7 @@ import { useTabsStore } from "renderer/stores/tabs/store";
 import { toAbsoluteWorkspacePath } from "shared/absolute-paths";
 import type { ChangeCategory, ChangedFile } from "shared/changes-types";
 import { useScrollContext } from "../ChangesContent";
+import { CommanderTab } from "renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/components/WorkspaceSidebar/components/CommanderTab/CommanderTab";
 import { ChangesView } from "./ChangesView";
 import { FilesView } from "./FilesView";
 import { getSidebarHeaderTabButtonClassName } from "./headerTabStyles";
@@ -177,6 +179,13 @@ export function RightSidebar() {
 						label="Files"
 						compact={compactTabs}
 					/>
+					<TabButton
+						isActive={rightSidebarTab === RightSidebarTab.Commander}
+						onClick={() => setRightSidebarTab(RightSidebarTab.Commander)}
+						icon={<Swords className="size-3.5" />}
+						label="Commander"
+						compact={compactTabs}
+					/>
 				</div>
 				<div className="flex-1" />
 				<div className="flex items-center h-10 pr-2 gap-0.5">
@@ -236,12 +245,21 @@ export function RightSidebar() {
 			)}
 			<div
 				className={
-					rightSidebarTab === RightSidebarTab.Changes && showChangesTab
-						? "hidden"
-						: "flex-1 min-h-0 flex flex-col overflow-hidden"
+					rightSidebarTab === RightSidebarTab.Files
+						? "flex-1 min-h-0 flex flex-col overflow-hidden"
+						: "hidden"
 				}
 			>
 				<FilesView />
+			</div>
+			<div
+				className={
+					rightSidebarTab === RightSidebarTab.Commander
+						? "flex-1 min-h-0 flex flex-col overflow-hidden"
+						: "hidden"
+				}
+			>
+				<CommanderTab />
 			</div>
 		</aside>
 	);
