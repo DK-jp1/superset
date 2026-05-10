@@ -7,12 +7,16 @@ import { useCallback, useEffect, useState } from "react";
 import {
 	LuArrowLeft,
 	LuArrowRight,
+	LuCheck,
 	LuClipboard,
 	LuLoader,
 	LuPlay,
 	LuRefreshCw,
 	LuSend,
+	LuX,
 } from "react-icons/lu";
+import { electronTrpcClient } from "renderer/lib/trpc-client";
+import { useActiveTerminal } from "./useActiveTerminal";
 import { useCommanderWebview } from "./useCommanderWebview";
 
 interface CommanderState {
@@ -147,48 +151,153 @@ function BrowserToolbar({
 	);
 }
 
-function HelperBar({ state }: { state: CommanderState }) {
+function sendToTerminal(paneId: string, text: string): void {
+	electronTrpcClient.terminal.write
+		.mutate({ paneId, data: text })
+		.then(() => {
+			toast.success("Sent to terminal");
+		})
+		.catch(() => {
+			toast.error("Terminal send failed — session may have exited");
+		});
+}
+
+function TerminalSendPreview({
+	text,
+	label,
+	onConfirm,
+	onCancel,
+}: {
+	text: string;
+	label: string;
+	onConfirm: () => void;
+	onCancel: () => void;
+}) {
+	return (
+		<div className="flex flex-col gap-1.5 p-1.5 border-t bg-muted/30">
+			<div className="flex items-center justify-between">
+				<span className="text-[10px] font-medium text-muted-foreground">
+					Send {label} to Terminal
+				</span>
+				<div className="flex gap-0.5">
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-5 w-5 p-0"
+						onClick={onCancel}
+					>
+						<LuX className="size-3" />
+					</Button>
+					<Button
+						variant="default"
+						size="sm"
+						className="h-5 px-1.5 gap-0.5 text-[10px]"
+						onClick={onConfirm}
+					>
+						<LuCheck className="size-2.5" />
+						Send
+					</Button>
+				</div>
+			</div>
+			<pre className="text-[10px] font-mono bg-muted rounded p-1.5 max-h-24 overflow-y-auto whitespace-pre-wrap break-all">
+				{text}
+			</pre>
+		</div>
+	);
+}
+
+function HelperBar({
+	state,
+	activeTerminal,
+}: { state: CommanderState; activeTerminal: string | null }) {
 	const hasSetup = !!state.goal;
+	const [pendingSend, setPendingSend] = useState<{
+		text: string;
+		label: string;
+	} | null>(null);
+
+	useEffect(() => {
+		if (!activeTerminal && pendingSend) setPendingSend(null);
+	}, [activeTerminal, pendingSend]);
+
+	const handleTerminalSend = useCallback(
+		(type: "worker" | "review") => {
+			const prompt =
+				type === "worker"
+					? generateWorkerPrompt(state)
+					: generateReviewPrompt(state);
+			if (!prompt) {
+				toast.error("Form で Goal を設定してください");
+				return;
+			}
+			if (!activeTerminal) {
+				toast.error("Terminal が見つかりません — ターミナルを開いてください");
+				return;
+			}
+			setPendingSend({
+				text: prompt,
+				label: type === "worker" ? "Worker Prompt" : "Review Prompt",
+			});
+		},
+		[state, activeTerminal],
+	);
+
+	const handleConfirmSend = useCallback(() => {
+		if (!pendingSend || !activeTerminal) return;
+		sendToTerminal(activeTerminal, pendingSend.text);
+		setPendingSend(null);
+	}, [pendingSend, activeTerminal]);
 
 	return (
-		<div className="shrink-0 border-t p-1.5 flex flex-wrap gap-1">
-			<Button
-				variant="outline"
-				size="sm"
-				className="h-6 gap-1 text-[10px] flex-1"
-				disabled={!hasSetup}
-				onClick={() => {
-					const prompt = generateWorkerPrompt(state);
-					if (prompt) copyToClipboard(prompt);
-					else toast.error("Form で Goal を設定してください");
-				}}
-			>
-				<LuClipboard className="size-2.5" />
-				Worker
-			</Button>
-			<Button
-				variant="outline"
-				size="sm"
-				className="h-6 gap-1 text-[10px] flex-1"
-				disabled={!hasSetup}
-				onClick={() => {
-					const prompt = generateReviewPrompt(state);
-					if (prompt) copyToClipboard(prompt);
-					else toast.error("Form で Goal を設定してください");
-				}}
-			>
-				<LuClipboard className="size-2.5" />
-				Review
-			</Button>
-			<Button
-				variant="ghost"
-				size="sm"
-				className="h-6 gap-1 text-[10px] flex-1"
-				onClick={() => toast.info("Send to Terminal — Phase 4")}
-			>
-				<LuSend className="size-2.5" />
-				Terminal
-			</Button>
+		<div className="shrink-0">
+			{pendingSend && (
+				<TerminalSendPreview
+					text={pendingSend.text}
+					label={pendingSend.label}
+					onConfirm={handleConfirmSend}
+					onCancel={() => setPendingSend(null)}
+				/>
+			)}
+			<div className="border-t p-1.5 flex flex-wrap gap-1">
+				<Button
+					variant="outline"
+					size="sm"
+					className="h-6 gap-1 text-[10px] flex-1"
+					disabled={!hasSetup}
+					onClick={() => {
+						const prompt = generateWorkerPrompt(state);
+						if (prompt) copyToClipboard(prompt);
+						else toast.error("Form で Goal を設定してください");
+					}}
+				>
+					<LuClipboard className="size-2.5" />
+					Worker
+				</Button>
+				<Button
+					variant="outline"
+					size="sm"
+					className="h-6 gap-1 text-[10px] flex-1"
+					disabled={!hasSetup}
+					onClick={() => {
+						const prompt = generateReviewPrompt(state);
+						if (prompt) copyToClipboard(prompt);
+						else toast.error("Form で Goal を設定してください");
+					}}
+				>
+					<LuClipboard className="size-2.5" />
+					Review
+				</Button>
+				<Button
+					variant={activeTerminal ? "secondary" : "ghost"}
+					size="sm"
+					className="h-6 gap-1 text-[10px] flex-1"
+					disabled={!hasSetup}
+					onClick={() => handleTerminalSend("worker")}
+				>
+					<LuSend className="size-2.5" />
+					→ Term
+				</Button>
+			</div>
 		</div>
 	);
 }
@@ -200,6 +309,7 @@ function FormView({
 	reviewPrompt,
 	onGenerateWorker,
 	onGenerateReview,
+	onSendToTerminal,
 }: {
 	state: CommanderState;
 	updateField: (field: keyof CommanderState, value: string) => void;
@@ -207,6 +317,7 @@ function FormView({
 	reviewPrompt: string;
 	onGenerateWorker: () => void;
 	onGenerateReview: () => void;
+	onSendToTerminal: (type: "worker" | "review") => void;
 }) {
 	return (
 		<div className="flex h-full flex-col gap-3 overflow-y-auto p-3">
@@ -311,17 +422,28 @@ function FormView({
 						Copy
 					</Button>
 				</div>
-				<Button
-					variant="secondary"
-					size="sm"
-					className="h-7 gap-1 text-xs"
-					onClick={() =>
-						toast.info("Send to Active Terminal — coming in Phase 4")
-					}
-				>
-					<LuSend className="size-3" />
-					Send to Active Terminal
-				</Button>
+				<div className="flex gap-1.5">
+					<Button
+						variant="secondary"
+						size="sm"
+						className="h-7 flex-1 gap-1 text-xs"
+						disabled={!workerPrompt}
+						onClick={() => onSendToTerminal("worker")}
+					>
+						<LuSend className="size-3" />
+						Worker → Term
+					</Button>
+					<Button
+						variant="secondary"
+						size="sm"
+						className="h-7 flex-1 gap-1 text-xs"
+						disabled={!reviewPrompt}
+						onClick={() => onSendToTerminal("review")}
+					>
+						<LuSend className="size-3" />
+						Review → Term
+					</Button>
+				</div>
 			</div>
 
 			<div className="flex flex-col gap-2.5">
@@ -369,8 +491,46 @@ export function CommanderTab() {
 	const [workerPrompt, setWorkerPrompt] = useState("");
 	const [reviewPrompt, setReviewPrompt] = useState("");
 
+	const [formSendPreview, setFormSendPreview] = useState<{
+		text: string;
+		label: string;
+	} | null>(null);
+
+	const activeTerminal = useActiveTerminal();
 	const webview = useCommanderWebview();
 	const isBlank = !webview.currentUrl || webview.currentUrl === "about:blank";
+
+	const handleFormSendToTerminal = useCallback(
+		(type: "worker" | "review") => {
+			const prompt =
+				type === "worker" ? workerPrompt : reviewPrompt;
+			if (!prompt) {
+				toast.error("先に Worker / Review を生成してください");
+				return;
+			}
+			if (!activeTerminal) {
+				toast.error(
+					"Terminal が見つかりません — ターミナルを開いてください",
+				);
+				return;
+			}
+			setFormSendPreview({
+				text: prompt,
+				label: type === "worker" ? "Worker Prompt" : "Review Prompt",
+			});
+		},
+		[workerPrompt, reviewPrompt, activeTerminal],
+	);
+
+	useEffect(() => {
+		if (!activeTerminal && formSendPreview) setFormSendPreview(null);
+	}, [activeTerminal, formSendPreview]);
+
+	const handleFormConfirmSend = useCallback(() => {
+		if (!formSendPreview || !activeTerminal) return;
+		sendToTerminal(activeTerminal, formSendPreview.text);
+		setFormSendPreview(null);
+	}, [formSendPreview, activeTerminal]);
 
 	const updateField = useCallback(
 		(field: keyof CommanderState, value: string) => {
@@ -488,7 +648,7 @@ export function CommanderTab() {
 					)}
 				</div>
 				{/* Helper bar */}
-				<HelperBar state={state} />
+				<HelperBar state={state} activeTerminal={activeTerminal} />
 			</div>
 
 			{/* Form view */}
@@ -499,6 +659,14 @@ export function CommanderTab() {
 						: "hidden"
 				}
 			>
+				{formSendPreview && (
+					<TerminalSendPreview
+						text={formSendPreview.text}
+						label={formSendPreview.label}
+						onConfirm={handleFormConfirmSend}
+						onCancel={() => setFormSendPreview(null)}
+					/>
+				)}
 				<FormView
 					state={state}
 					updateField={updateField}
@@ -506,6 +674,7 @@ export function CommanderTab() {
 					reviewPrompt={reviewPrompt}
 					onGenerateWorker={handleGenerateWorker}
 					onGenerateReview={handleGenerateReview}
+					onSendToTerminal={handleFormSendToTerminal}
 				/>
 			</div>
 		</div>
