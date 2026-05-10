@@ -159,6 +159,7 @@ export function CommanderTab() {
 					reviewPrompt={reviewPrompt}
 					onSendToTerminal={transfer.handleFormSendToTerminal}
 					onGrabSelection={transfer.handleGrabSelection}
+					hasTerminal={!!activeTerminal}
 				/>
 			</div>
 		</div>

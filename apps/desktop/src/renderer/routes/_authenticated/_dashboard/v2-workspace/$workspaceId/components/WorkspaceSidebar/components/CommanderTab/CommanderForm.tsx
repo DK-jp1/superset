@@ -19,6 +19,7 @@ export function CommanderForm({
 	reviewPrompt,
 	onSendToTerminal,
 	onGrabSelection,
+	hasTerminal,
 }: {
 	state: CommanderState;
 	updateField: (field: keyof CommanderState, value: string) => void;
@@ -26,6 +27,7 @@ export function CommanderForm({
 	reviewPrompt: string;
 	onSendToTerminal: (type: "worker" | "review") => void;
 	onGrabSelection: () => void;
+	hasTerminal: boolean;
 }) {
 	return (
 		<div className="flex h-full flex-col gap-3 overflow-y-auto p-3">
@@ -137,6 +139,7 @@ export function CommanderForm({
 							variant="ghost"
 							size="sm"
 							className="h-5 gap-1 text-[10px] px-1.5"
+							disabled={!hasTerminal}
 							onClick={onGrabSelection}
 						>
 							<LuTerminal className="size-2.5" />
@@ -172,7 +175,7 @@ export function CommanderForm({
 						variant="secondary"
 						size="sm"
 						className="h-7 flex-1 gap-1 text-xs"
-						disabled={!workerPrompt}
+						disabled={!workerPrompt || !hasTerminal}
 						onClick={() => onSendToTerminal("worker")}
 					>
 						<LuSend className="size-3" />
@@ -194,7 +197,7 @@ export function CommanderForm({
 						variant="secondary"
 						size="sm"
 						className="h-7 flex-1 gap-1 text-xs"
-						disabled={!reviewPrompt}
+						disabled={!reviewPrompt || !hasTerminal}
 						onClick={() => onSendToTerminal("review")}
 					>
 						<LuSend className="size-3" />

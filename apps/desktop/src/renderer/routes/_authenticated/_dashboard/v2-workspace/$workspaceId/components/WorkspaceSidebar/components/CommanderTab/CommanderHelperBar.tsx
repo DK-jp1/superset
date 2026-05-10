@@ -171,7 +171,7 @@ export function CommanderHelperBar({
 						variant={activeTerminal ? "secondary" : "ghost"}
 						size="sm"
 						className="h-6 gap-1 text-[10px] flex-1"
-						disabled={!hasSetup}
+						disabled={!hasSetup || !activeTerminal}
 						onClick={() => handleTerminalSend("worker")}
 					>
 						<LuSend className="size-2.5" />
