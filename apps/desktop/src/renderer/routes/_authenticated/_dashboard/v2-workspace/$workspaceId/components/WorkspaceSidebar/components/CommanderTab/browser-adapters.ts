@@ -68,3 +68,30 @@ export function buildInjectionScript(text: string): string {
   return true;
 })()`;
 }
+
+const EXTRACTION_SCRIPTS: Record<BrowserProvider, string> = {
+	chatgpt: `(function() {
+  var msgs = document.querySelectorAll('[data-message-author-role="assistant"]');
+  if (!msgs.length) {
+    msgs = document.querySelectorAll('.agent-turn');
+  }
+  if (!msgs.length) return null;
+  var last = msgs[msgs.length - 1];
+  var md = last.querySelector('.markdown');
+  return (md || last).innerText || null;
+})()`,
+	claude: `(function() {
+  var msgs = document.querySelectorAll('div.font-claude-response');
+  if (!msgs.length) return null;
+  return msgs[msgs.length - 1].innerText || null;
+})()`,
+	gemini: `(function() {
+  var msgs = document.querySelectorAll('message-content');
+  if (!msgs.length) return null;
+  return msgs[msgs.length - 1].innerText || null;
+})()`,
+};
+
+export function buildExtractionScript(provider: BrowserProvider): string {
+	return EXTRACTION_SCRIPTS[provider];
+}

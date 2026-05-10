@@ -9,6 +9,7 @@ import {
 	LuArrowRight,
 	LuCheck,
 	LuClipboard,
+	LuDownload,
 	LuLoader,
 	LuPlay,
 	LuRefreshCw,
@@ -23,6 +24,7 @@ import {
 	detectProvider,
 	getProviderLabel,
 	buildInjectionScript,
+	buildExtractionScript,
 } from "./browser-adapters";
 import { useCommanderWebview } from "./useCommanderWebview";
 
@@ -213,12 +215,14 @@ function TerminalSendPreview({
 	);
 }
 
-function TerminalSelectionPreview({
+function CapturePreview({
 	text,
+	title,
 	onUse,
 	onCancel,
 }: {
 	text: string;
+	title: string;
 	onUse: () => void;
 	onCancel: () => void;
 }) {
@@ -226,7 +230,7 @@ function TerminalSelectionPreview({
 		<div className="flex flex-col gap-1.5 p-1.5 border-b bg-muted/30">
 			<div className="flex items-center justify-between">
 				<span className="text-[10px] font-medium text-muted-foreground">
-					Terminal Selection Preview
+					{title}
 				</span>
 				<div className="flex gap-0.5">
 					<Button
@@ -260,6 +264,7 @@ function HelperBar({
 	activeTerminal,
 	onGrabSelection,
 	onInject,
+	onCaptureResponse,
 	providerLabel,
 	hasProvider,
 }: {
@@ -267,6 +272,7 @@ function HelperBar({
 	activeTerminal: string | null;
 	onGrabSelection: () => void;
 	onInject: (type: "worker" | "review") => void;
+	onCaptureResponse: () => void;
 	providerLabel: string;
 	hasProvider: boolean;
 }) {
@@ -403,6 +409,16 @@ function HelperBar({
 					>
 						<LuTerminalSquare className="size-2.5" />
 						← Term
+					</Button>
+					<Button
+						variant={hasProvider ? "secondary" : "ghost"}
+						size="sm"
+						className="h-6 gap-1 text-[10px] flex-1"
+						disabled={!hasProvider}
+						onClick={onCaptureResponse}
+					>
+						<LuDownload className="size-2.5" />
+						← AI
 					</Button>
 				</div>
 			</div>
@@ -732,6 +748,53 @@ export function CommanderTab() {
 		[state, webview.getLiveUrl, webview.currentUrl, webview.injectIntoPage],
 	);
 
+	const [capturePreview, setCapturePreview] = useState<string | null>(null);
+
+	useEffect(() => {
+		setCapturePreview(null);
+	}, [webview.currentUrl]);
+
+	const handleCaptureResponse = useCallback(async () => {
+		const liveUrl = webview.getLiveUrl() || webview.currentUrl;
+		const provider = detectProvider(liveUrl);
+		if (!provider) {
+			toast.warning("未対応サイトです — AI返答を取得できません");
+			return;
+		}
+		try {
+			const raw = await webview.injectIntoPage(
+				buildExtractionScript(provider),
+			);
+			let text = typeof raw === "string" ? raw : null;
+			if (!text) {
+				toast.error("AI返答が見つかりません — 会話を開始してください");
+				return;
+			}
+			if (text.length > MAX_SELECTION) {
+				text = text.slice(0, MAX_SELECTION);
+				toast.warning(
+					`返答を ${MAX_SELECTION.toLocaleString()} 文字に切り詰めました`,
+				);
+			}
+			setCapturePreview(text);
+		} catch {
+			toast.error("AI返答の取得に失敗しました");
+		}
+	}, [webview.getLiveUrl, webview.currentUrl, webview.injectIntoPage]);
+
+	const handleUseCapture = useCallback(() => {
+		if (!capturePreview) return;
+		setState((prev) => ({
+			...prev,
+			context: prev.context
+				? `${prev.context}\n\n--- AI Response ---\n${capturePreview}`
+				: capturePreview,
+		}));
+		setCapturePreview(null);
+		setView("form");
+		toast.success("Context に取り込みました");
+	}, [capturePreview]);
+
 	const handleGenerateWorker = useCallback(() => {
 		const prompt = generateWorkerPrompt(state);
 		setWorkerPrompt(prompt);
@@ -840,12 +903,22 @@ export function CommanderTab() {
 						</div>
 					)}
 				</div>
+				{/* Capture preview */}
+				{capturePreview && (
+					<CapturePreview
+						text={capturePreview}
+						title="AI Response Preview"
+						onUse={handleUseCapture}
+						onCancel={() => setCapturePreview(null)}
+					/>
+				)}
 				{/* Helper bar */}
 				<HelperBar
 					state={state}
 					activeTerminal={activeTerminal}
 					onGrabSelection={handleGrabSelection}
 					onInject={handleInject}
+					onCaptureResponse={handleCaptureResponse}
 					providerLabel={providerLabel}
 					hasProvider={!!currentProvider}
 				/>
@@ -868,8 +941,9 @@ export function CommanderTab() {
 					/>
 				)}
 				{selectionPreview && (
-					<TerminalSelectionPreview
+					<CapturePreview
 						text={selectionPreview}
+						title="Terminal Selection Preview"
 						onUse={handleUseSelection}
 						onCancel={() => setSelectionPreview(null)}
 					/>
