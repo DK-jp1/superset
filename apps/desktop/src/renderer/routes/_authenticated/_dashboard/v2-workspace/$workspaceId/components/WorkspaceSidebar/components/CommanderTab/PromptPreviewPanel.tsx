@@ -161,6 +161,7 @@ export function EditableTerminalPreview({
 			<Textarea
 				value={editedText}
 				onChange={(e) => setEditedText(e.target.value)}
+				placeholder="指示文を抽出できませんでした。送る内容を手動で入力してください"
 				rows={6}
 				className="resize-y font-mono text-[10px] max-h-48"
 			/>

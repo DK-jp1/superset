@@ -32,6 +32,21 @@ export function appendToField(
 	return existing ? `${existing}\n\n${separator}\n${addition}` : addition;
 }
 
+const INSTRUCTION_KEYWORDS = [
+	"Worker\\s*Prompt",
+	"Worker[へに]渡す指示",
+	"Claude\\s*Code[^\\n]*指示",
+	"Codex[^\\n]*指示",
+	"ターミナルに送る指示",
+	"実行指示",
+	"修正指示",
+	"次にやること",
+	"指示文",
+	"次に実行[^\\n]*指示",
+];
+
+const HEADING_KEYWORD_PATTERN = INSTRUCTION_KEYWORDS.join("|");
+
 export function extractInstructionBlock(text: string): string {
 	const codeBlockPattern =
 		/```(?:bash|sh|text|shell|zsh|cmd|terminal)[^\n]*\n([\s\S]*?)```/gi;
@@ -44,16 +59,43 @@ export function extractInstructionBlock(text: string): string {
 	}
 	if (blocks.length > 0) return blocks.join("\n\n");
 
-	const headingPatterns = [
-		/(?:^|\n)#+\s*(?:Worker\s*Prompt|Claude\s*Code[^\n]*指示|次に実行[^\n]*指示|実行指示)[^\n]*\n([\s\S]*?)(?=\n#+\s|\n---|\n\*\*\*|$)/i,
-		/(?:^|\n)(?:Worker\s*Prompt|Claude\s*Code[^\n]*指示|次に実行[^\n]*指示)[：:]\s*\n([\s\S]*?)(?=\n#+\s|\n---|\n\*\*\*|$)/i,
-	];
-	for (const pattern of headingPatterns) {
-		const m = pattern.exec(text);
-		if (m?.[1]?.trim()) return m[1].trim();
+	const plainTextPattern = new RegExp(
+		`(?:^|\\n)\\s*(?:#+\\s*|\\*\\*)?(?:${HEADING_KEYWORD_PATTERN})(?:\\*\\*)?[：:\\s]*\\n([\\s\\S]*?)(?=\\n\\s*(?:#{1,4}\\s|\\*\\*[^*]+\\*\\*)|$)`,
+		"i",
+	);
+	const pm = plainTextPattern.exec(text);
+	if (pm?.[1]?.trim()) return pm[1].trim();
+
+	const lines = text.split("\n");
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i].trim();
+		const keywordMatch = new RegExp(
+			`^(?:#+\\s*|\\*\\*)?(?:${HEADING_KEYWORD_PATTERN})(?:\\*\\*)?[：:]?\\s*$`,
+			"i",
+		).test(line);
+		if (!keywordMatch) continue;
+
+		const bodyLines: string[] = [];
+		for (let j = i + 1; j < lines.length; j++) {
+			const next = lines[j].trim();
+			if (
+				next.length > 0 &&
+				next.length < 30 &&
+				!/^[-\d•・]/.test(next) &&
+				!/^\s/.test(lines[j])
+			) {
+				const looksLikeHeading = /^(?:#+\s*|[A-Z　-鿿])[^\n]{2,28}$/.test(
+					next,
+				);
+				if (looksLikeHeading && bodyLines.length > 0) break;
+			}
+			bodyLines.push(lines[j]);
+		}
+		const body = bodyLines.join("\n").trim();
+		if (body) return body;
 	}
 
-	return text;
+	return "";
 }
 
 export function sendToTerminal(paneId: string, text: string): void {
