@@ -1,4 +1,5 @@
 import { useParams } from "@tanstack/react-router";
+import { useTerminalCallbacksStore } from "renderer/stores/tabs/terminal-callbacks";
 import { useTabsStore } from "renderer/stores/tabs/store";
 
 export function useActiveTerminal(): string | null {
@@ -16,4 +17,11 @@ export function useActiveTerminal(): string | null {
 		const terminal = tabPanes.find((p) => p.type === "terminal");
 		return terminal?.id ?? null;
 	});
+}
+
+export function getTerminalSelection(paneId: string): string {
+	const cb = useTerminalCallbacksStore
+		.getState()
+		.getGetSelectionCallback(paneId);
+	return cb?.() ?? "";
 }

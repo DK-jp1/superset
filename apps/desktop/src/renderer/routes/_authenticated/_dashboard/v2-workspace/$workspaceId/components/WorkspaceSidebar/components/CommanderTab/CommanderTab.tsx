@@ -13,10 +13,11 @@ import {
 	LuPlay,
 	LuRefreshCw,
 	LuSend,
+	LuTerminalSquare,
 	LuX,
 } from "react-icons/lu";
 import { electronTrpcClient } from "renderer/lib/trpc-client";
-import { useActiveTerminal } from "./useActiveTerminal";
+import { useActiveTerminal, getTerminalSelection } from "./useActiveTerminal";
 import { useCommanderWebview } from "./useCommanderWebview";
 
 interface CommanderState {
@@ -206,10 +207,57 @@ function TerminalSendPreview({
 	);
 }
 
+function TerminalSelectionPreview({
+	text,
+	onUse,
+	onCancel,
+}: {
+	text: string;
+	onUse: () => void;
+	onCancel: () => void;
+}) {
+	return (
+		<div className="flex flex-col gap-1.5 p-1.5 border-b bg-muted/30">
+			<div className="flex items-center justify-between">
+				<span className="text-[10px] font-medium text-muted-foreground">
+					Terminal Selection Preview
+				</span>
+				<div className="flex gap-0.5">
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-5 w-5 p-0"
+						onClick={onCancel}
+					>
+						<LuX className="size-3" />
+					</Button>
+					<Button
+						variant="default"
+						size="sm"
+						className="h-5 px-1.5 gap-0.5 text-[10px]"
+						onClick={onUse}
+					>
+						<LuCheck className="size-2.5" />
+						Use
+					</Button>
+				</div>
+			</div>
+			<pre className="text-[10px] font-mono bg-muted rounded p-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap break-all">
+				{text}
+			</pre>
+		</div>
+	);
+}
+
 function HelperBar({
 	state,
 	activeTerminal,
-}: { state: CommanderState; activeTerminal: string | null }) {
+	onGrabSelection,
+}: {
+	state: CommanderState;
+	activeTerminal: string | null;
+	onGrabSelection: () => void;
+}) {
 	const hasSetup = !!state.goal;
 	const [pendingSend, setPendingSend] = useState<{
 		text: string;
@@ -297,6 +345,16 @@ function HelperBar({
 					<LuSend className="size-2.5" />
 					→ Term
 				</Button>
+				<Button
+					variant={activeTerminal ? "secondary" : "ghost"}
+					size="sm"
+					className="h-6 gap-1 text-[10px] flex-1"
+					disabled={!activeTerminal}
+					onClick={onGrabSelection}
+				>
+					<LuTerminalSquare className="size-2.5" />
+					← Term
+				</Button>
 			</div>
 		</div>
 	);
@@ -310,6 +368,7 @@ function FormView({
 	onGenerateWorker,
 	onGenerateReview,
 	onSendToTerminal,
+	onGrabSelection,
 }: {
 	state: CommanderState;
 	updateField: (field: keyof CommanderState, value: string) => void;
@@ -318,6 +377,7 @@ function FormView({
 	onGenerateWorker: () => void;
 	onGenerateReview: () => void;
 	onSendToTerminal: (type: "worker" | "review") => void;
+	onGrabSelection: () => void;
 }) {
 	return (
 		<div className="flex h-full flex-col gap-3 overflow-y-auto p-3">
@@ -365,9 +425,20 @@ function FormView({
 				</div>
 
 				<div className="flex flex-col gap-1">
-					<Label htmlFor="commander-problem" className="text-xs">
-						Current Problem
-					</Label>
+					<div className="flex items-center justify-between">
+						<Label htmlFor="commander-problem" className="text-xs">
+							Current Problem
+						</Label>
+						<Button
+							variant="ghost"
+							size="sm"
+							className="h-5 gap-1 text-[10px] px-1.5"
+							onClick={onGrabSelection}
+						>
+							<LuTerminalSquare className="size-2.5" />
+							Use Selection
+						</Button>
+					</div>
 					<Textarea
 						id="commander-problem"
 						placeholder="The specific issue to solve right now..."
@@ -523,8 +594,11 @@ export function CommanderTab() {
 	);
 
 	useEffect(() => {
-		if (!activeTerminal && formSendPreview) setFormSendPreview(null);
-	}, [activeTerminal, formSendPreview]);
+		if (!activeTerminal) {
+			if (formSendPreview) setFormSendPreview(null);
+			if (selectionPreview) setSelectionPreview(null);
+		}
+	}, [activeTerminal, formSendPreview, selectionPreview]);
 
 	const handleFormConfirmSend = useCallback(() => {
 		if (!formSendPreview || !activeTerminal) return;
@@ -538,6 +612,40 @@ export function CommanderTab() {
 		},
 		[],
 	);
+
+	const [selectionPreview, setSelectionPreview] = useState<string | null>(null);
+
+	const MAX_SELECTION = 10_000;
+
+	const handleGrabSelection = useCallback(() => {
+		if (!activeTerminal) {
+			toast.error("Terminal が見つかりません — ターミナルを開いてください");
+			return;
+		}
+		let text = getTerminalSelection(activeTerminal);
+		if (!text) {
+			toast.error("ターミナルでテキストを選択してください");
+			return;
+		}
+		if (text.length > MAX_SELECTION) {
+			text = text.slice(0, MAX_SELECTION);
+			toast.warning(`選択テキストを ${MAX_SELECTION.toLocaleString()} 文字に切り詰めました`);
+		}
+		setSelectionPreview(text);
+		setView("form");
+	}, [activeTerminal]);
+
+	const handleUseSelection = useCallback(() => {
+		if (!selectionPreview) return;
+		setState((prev) => ({
+			...prev,
+			currentProblem: prev.currentProblem
+				? `${prev.currentProblem}\n\n--- Terminal Output ---\n${selectionPreview}`
+				: selectionPreview,
+		}));
+		setSelectionPreview(null);
+		toast.success("Current Problem に取り込みました");
+	}, [selectionPreview]);
 
 	const handleGenerateWorker = useCallback(() => {
 		const prompt = generateWorkerPrompt(state);
@@ -648,7 +756,7 @@ export function CommanderTab() {
 					)}
 				</div>
 				{/* Helper bar */}
-				<HelperBar state={state} activeTerminal={activeTerminal} />
+				<HelperBar state={state} activeTerminal={activeTerminal} onGrabSelection={handleGrabSelection} />
 			</div>
 
 			{/* Form view */}
@@ -667,6 +775,13 @@ export function CommanderTab() {
 						onCancel={() => setFormSendPreview(null)}
 					/>
 				)}
+				{selectionPreview && (
+					<TerminalSelectionPreview
+						text={selectionPreview}
+						onUse={handleUseSelection}
+						onCancel={() => setSelectionPreview(null)}
+					/>
+				)}
 				<FormView
 					state={state}
 					updateField={updateField}
@@ -675,6 +790,7 @@ export function CommanderTab() {
 					onGenerateWorker={handleGenerateWorker}
 					onGenerateReview={handleGenerateReview}
 					onSendToTerminal={handleFormSendToTerminal}
+					onGrabSelection={handleGrabSelection}
 				/>
 			</div>
 		</div>
