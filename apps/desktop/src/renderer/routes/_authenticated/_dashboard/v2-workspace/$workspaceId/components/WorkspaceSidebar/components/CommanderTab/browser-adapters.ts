@@ -95,3 +95,71 @@ const EXTRACTION_SCRIPTS: Record<BrowserProvider, string> = {
 export function buildExtractionScript(provider: BrowserProvider): string {
 	return EXTRACTION_SCRIPTS[provider];
 }
+
+const SUBMIT_SELECTORS: Record<BrowserProvider, string[]> = {
+	chatgpt: [
+		'button[data-testid="send-button"]',
+		'button[aria-label="Send prompt"]',
+		'form button[type="submit"]',
+	],
+	claude: [
+		'button[aria-label="Send Message"]',
+		'button[aria-label="Send message"]',
+		'fieldset button[type="button"]:last-of-type',
+	],
+	gemini: [
+		'button[aria-label="Send message"]',
+		'button.send-button',
+		'button[mat-icon-button][aria-label="Send message"]',
+	],
+};
+
+export function buildInjectionWithSubmitScript(
+	text: string,
+	provider: BrowserProvider,
+): string {
+	const escaped = JSON.stringify(text);
+	const submitSelectors = JSON.stringify(SUBMIT_SELECTORS[provider]);
+	return `(function() {
+  var selectors = [
+    '#prompt-textarea',
+    '.ProseMirror[contenteditable="true"]',
+    'rich-textarea .ql-editor',
+    'div.ql-editor[contenteditable="true"]',
+    'div[contenteditable="true"]'
+  ];
+  var el = null;
+  for (var i = 0; i < selectors.length; i++) {
+    el = document.querySelector(selectors[i]);
+    if (el) break;
+  }
+  if (!el) return "not_found";
+  el.focus();
+  document.execCommand('selectAll', false, null);
+  document.execCommand('delete', false, null);
+  var ok = document.execCommand('insertText', false, ${escaped});
+  if (!ok) {
+    el.textContent = ${escaped};
+    el.dispatchEvent(new InputEvent('input', {
+      inputType: 'insertText',
+      data: ${escaped},
+      bubbles: true,
+      composed: true
+    }));
+  }
+  return new Promise(function(resolve) {
+    setTimeout(function() {
+      var submitSelectors = ${submitSelectors};
+      for (var i = 0; i < submitSelectors.length; i++) {
+        var btn = document.querySelector(submitSelectors[i]);
+        if (btn && !btn.disabled) {
+          btn.click();
+          resolve("submitted");
+          return;
+        }
+      }
+      resolve("injected");
+    }, 300);
+  });
+})()`;
+}

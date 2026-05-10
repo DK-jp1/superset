@@ -21,11 +21,13 @@ import {
 	LuClipboardCopy,
 	LuEraser,
 	LuPower,
+	LuZap,
 } from "react-icons/lu";
 import { useHotkeyDisplay } from "renderer/hotkeys";
 import { getBaseName } from "renderer/lib/pathBasename";
 import { consumeTerminalBackgroundIntent } from "renderer/lib/terminal/terminal-background-intents";
 import { terminalRuntimeRegistry } from "renderer/lib/terminal/terminal-runtime-registry";
+import { sendSelectionToBrowserAI } from "../../components/WorkspaceSidebar/components/CommanderTab/commander-bridge";
 import { useWorkspace } from "renderer/routes/_authenticated/_dashboard/v2-workspace/providers/WorkspaceProvider";
 import { FileIcon } from "renderer/screens/main/components/WorkspaceView/RightSidebar/FilesView/utils";
 import {
@@ -314,6 +316,26 @@ export function usePaneRegistry({
 								} catch {
 									// Clipboard access denied
 								}
+							},
+						},
+						{
+							key: "send-to-browser-ai",
+							label: "Send to Browser AI",
+							icon: <LuZap />,
+							disabled: (ctx) => {
+								const { terminalId } = ctx.pane.data as TerminalPaneData;
+								return !terminalRuntimeRegistry.getSelection(
+									terminalId,
+									ctx.pane.id,
+								);
+							},
+							onSelect: (ctx) => {
+								const { terminalId } = ctx.pane.data as TerminalPaneData;
+								const text = terminalRuntimeRegistry.getSelection(
+									terminalId,
+									ctx.pane.id,
+								);
+								if (text) sendSelectionToBrowserAI(text);
 							},
 						},
 						{ key: "sep-terminal-clipboard", type: "separator" },

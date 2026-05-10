@@ -14,8 +14,10 @@ import {
 	LuClipboardCopy,
 	LuEraser,
 	LuEyeOff,
+	LuZap,
 } from "react-icons/lu";
 import { useCopyToClipboard } from "renderer/hooks/useCopyToClipboard";
+import { sendSelectionToBrowserAI } from "renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/components/WorkspaceSidebar/components/CommanderTab/commander-bridge";
 import { useHotkeyDisplay } from "renderer/hotkeys";
 import {
 	type PaneContextMenuActions,
@@ -120,6 +122,18 @@ export function TabContentContextMenu({
 						<LuClipboard className="size-4" />
 						Paste
 						<ContextMenuShortcut>{modKey}V</ContextMenuShortcut>
+					</ContextMenuItem>
+				)}
+				{getSelection && (
+					<ContextMenuItem
+						disabled={!hasSelection}
+						onSelect={() => {
+							const text = getSelection?.();
+							if (text) sendSelectionToBrowserAI(text);
+						}}
+					>
+						<LuZap className="size-4" />
+						Send to Browser AI
 					</ContextMenuItem>
 				)}
 				{(getSelection || onPaste) && <ContextMenuSeparator />}
