@@ -136,6 +136,7 @@ export function CommanderTab() {
 				{transfer.captureForTerminalPreview.visible && (
 					<EditableTerminalPreview
 						text={transfer.captureForTerminalPreview.text}
+						hasTerminal={!!activeTerminal}
 						onConfirm={transfer.handleConfirmCaptureToTerminal}
 						onCancel={transfer.dismissCaptureForTerminal}
 					/>

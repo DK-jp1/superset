@@ -63,9 +63,7 @@ export function CommanderHelperBar({
 				return;
 			}
 			if (!activeTerminal) {
-				toast.error(
-					"Terminal が見つかりません — ターミナルを開いてください",
-				);
+				toast.error("Terminal が見つかりません — ターミナルを開いてください");
 				return;
 			}
 			setPendingSend({
@@ -76,11 +74,14 @@ export function CommanderHelperBar({
 		[workerPrompt, reviewPrompt, activeTerminal],
 	);
 
-	const handleConfirmSend = useCallback(() => {
-		if (!pendingSend || !activeTerminal) return;
-		sendToTerminal(activeTerminal, pendingSend.text);
-		setPendingSend(null);
-	}, [pendingSend, activeTerminal]);
+	const handleConfirmSend = useCallback(
+		(options?: { submit?: boolean }) => {
+			if (!pendingSend || !activeTerminal) return;
+			void sendToTerminal(activeTerminal, pendingSend.text, options);
+			setPendingSend(null);
+		},
+		[pendingSend, activeTerminal],
+	);
 
 	return (
 		<div className="shrink-0">
@@ -88,6 +89,7 @@ export function CommanderHelperBar({
 				<TerminalSendPreview
 					text={pendingSend.text}
 					label={pendingSend.label}
+					hasTerminal={!!activeTerminal}
 					onConfirm={handleConfirmSend}
 					onCancel={() => setPendingSend(null)}
 				/>
@@ -159,23 +161,20 @@ export function CommanderHelperBar({
 							disabled={!hasProvider}
 							onSelect={onCaptureResponse}
 						>
-							<LuDownload className="size-3.5" />
-							← AI
+							<LuDownload className="size-3.5" />← AI
 						</DropdownMenuItem>
 						<DropdownMenuSeparator />
 						<DropdownMenuItem
 							disabled={!hasSetup || !activeTerminal}
 							onSelect={() => handleTerminalSend("worker")}
 						>
-							<LuSend className="size-3.5" />
-							→ Term
+							<LuSend className="size-3.5" />→ Term
 						</DropdownMenuItem>
 						<DropdownMenuItem
 							disabled={!activeTerminal}
 							onSelect={onGrabSelection}
 						>
-							<LuTerminal className="size-3.5" />
-							← Term
+							<LuTerminal className="size-3.5" />← Term
 						</DropdownMenuItem>
 						<DropdownMenuItem
 							disabled={!activeTerminal || !hasProvider}

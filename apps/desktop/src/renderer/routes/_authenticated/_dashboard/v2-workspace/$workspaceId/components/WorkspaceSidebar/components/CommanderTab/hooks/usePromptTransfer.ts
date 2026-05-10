@@ -52,6 +52,7 @@ const MIN_TEXT_CHANGE_BASELINE_LENGTH = 30;
 const AUTO_CAPTURE_POLL_INTERVAL_MS = 1000;
 const AUTO_CAPTURE_STABLE_POLLS = 2;
 const AUTO_CAPTURE_STABLE_MS = 2500;
+const TERMINAL_ENTER_INPUT = "\n";
 const TRANSIENT_RESPONSE_PATTERNS = [
 	/^thought for\b/i,
 	/^thinking\b/i,
@@ -124,17 +125,27 @@ export function extractInstructionBlock(text: string): string {
 	return "";
 }
 
-export function sendToTerminal(paneId: string, text: string): void {
-	electronTrpcClient.terminal.write
-		.mutate({ paneId, data: text })
-		.then(() => {
-			toast.success("ターミナルに送信しました");
-		})
-		.catch(() => {
-			toast.error(
-				"ターミナル送信に失敗しました — セッションが終了している可能性があります",
-			);
-		});
+export async function sendToTerminal(
+	paneId: string,
+	text: string,
+	options?: { submit?: boolean },
+): Promise<void> {
+	try {
+		await electronTrpcClient.terminal.write.mutate({ paneId, data: text });
+		if (options?.submit) {
+			await electronTrpcClient.terminal.write.mutate({
+				paneId,
+				data: TERMINAL_ENTER_INPUT,
+			});
+			toast.success("ターミナルに送信して実行しました");
+			return;
+		}
+		toast.success("ターミナルに送信しました");
+	} catch {
+		toast.error(
+			"ターミナル送信に失敗しました — セッションが終了している可能性があります",
+		);
+	}
 }
 
 function emptyAssistantCaptureSnapshot(): AssistantCaptureSnapshot {
@@ -670,9 +681,9 @@ export function usePromptTransfer({
 	}, [capturePreview, activeTerminal]);
 
 	const handleConfirmCaptureToTerminal = useCallback(
-		(editedText: string) => {
+		(editedText: string, options?: { submit?: boolean }) => {
 			if (!activeTerminal || !editedText.trim()) return;
-			sendToTerminal(activeTerminal, editedText);
+			void sendToTerminal(activeTerminal, editedText, options);
 			setCaptureForTerminalPreview({ visible: false, text: "" });
 			setCapturePreview(null);
 		},
@@ -700,7 +711,7 @@ export function usePromptTransfer({
 
 	const handleFormConfirmSend = useCallback(() => {
 		if (!formSendPreview || !activeTerminal) return;
-		sendToTerminal(activeTerminal, formSendPreview.text);
+		void sendToTerminal(activeTerminal, formSendPreview.text);
 		setFormSendPreview(null);
 	}, [formSendPreview, activeTerminal]);
 

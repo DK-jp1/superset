@@ -1,26 +1,30 @@
 import { Button } from "@superset/ui/button";
 import { Textarea } from "@superset/ui/textarea";
 import { useState } from "react";
-import { LuCheck, LuSend, LuX, LuZap } from "react-icons/lu";
+import { LuCheck, LuCornerDownLeft, LuSend, LuX, LuZap } from "react-icons/lu";
 
 export function TerminalSendPreview({
 	text,
 	label,
 	onConfirm,
 	onCancel,
+	hasTerminal = true,
 }: {
 	text: string;
 	label: string;
-	onConfirm: () => void;
+	onConfirm: (options?: { submit?: boolean }) => void;
 	onCancel: () => void;
+	hasTerminal?: boolean;
 }) {
+	const canSend = hasTerminal && text.trim().length > 0;
+
 	return (
 		<div className="flex flex-col gap-1.5 p-1.5 border-t bg-muted/30">
 			<div className="flex items-center justify-between">
 				<span className="text-[10px] font-medium text-muted-foreground">
 					Send {label} to Terminal
 				</span>
-				<div className="flex gap-0.5">
+				<div className="flex flex-wrap justify-end gap-0.5">
 					<Button
 						variant="ghost"
 						size="sm"
@@ -33,10 +37,21 @@ export function TerminalSendPreview({
 						variant="default"
 						size="sm"
 						className="h-5 px-1.5 gap-0.5 text-[10px]"
-						onClick={onConfirm}
+						disabled={!canSend}
+						onClick={() => onConfirm()}
 					>
 						<LuCheck className="size-2.5" />
 						Send
+					</Button>
+					<Button
+						variant="secondary"
+						size="sm"
+						className="h-5 px-1.5 gap-0.5 text-[10px]"
+						disabled={!canSend}
+						onClick={() => onConfirm({ submit: true })}
+					>
+						<LuCornerDownLeft className="size-2.5" />
+						Send + Enter
 					</Button>
 				</div>
 			</div>
@@ -70,7 +85,7 @@ export function CapturePreview({
 				<span className="text-[10px] font-medium text-muted-foreground">
 					{title}
 				</span>
-				<div className="flex gap-0.5">
+				<div className="flex flex-wrap justify-end gap-0.5">
 					<Button
 						variant="ghost"
 						size="sm"
@@ -107,8 +122,7 @@ export function CapturePreview({
 							disabled={!hasTerminal}
 							onClick={onSendToTerminal}
 						>
-							<LuSend className="size-2.5" />
-							→ Term
+							<LuSend className="size-2.5" />→ Term
 						</Button>
 					)}
 				</div>
@@ -122,14 +136,17 @@ export function CapturePreview({
 
 export function EditableTerminalPreview({
 	text,
+	hasTerminal = true,
 	onConfirm,
 	onCancel,
 }: {
 	text: string;
-	onConfirm: (editedText: string) => void;
+	hasTerminal?: boolean;
+	onConfirm: (editedText: string, options?: { submit?: boolean }) => void;
 	onCancel: () => void;
 }) {
 	const [editedText, setEditedText] = useState(text);
+	const canSend = hasTerminal && editedText.trim().length > 0;
 
 	return (
 		<div className="flex flex-col gap-1.5 p-1.5 border-b bg-muted/30">
@@ -137,7 +154,7 @@ export function EditableTerminalPreview({
 				<span className="text-[10px] font-medium text-muted-foreground">
 					Send to Terminal — 送信内容を確認・編集
 				</span>
-				<div className="flex gap-0.5">
+				<div className="flex flex-wrap justify-end gap-0.5">
 					<Button
 						variant="ghost"
 						size="sm"
@@ -150,11 +167,21 @@ export function EditableTerminalPreview({
 						variant="default"
 						size="sm"
 						className="h-5 px-1.5 gap-0.5 text-[10px]"
-						disabled={!editedText.trim()}
+						disabled={!canSend}
 						onClick={() => onConfirm(editedText)}
 					>
 						<LuSend className="size-2.5" />
 						Send
+					</Button>
+					<Button
+						variant="secondary"
+						size="sm"
+						className="h-5 px-1.5 gap-0.5 text-[10px]"
+						disabled={!canSend}
+						onClick={() => onConfirm(editedText, { submit: true })}
+					>
+						<LuCornerDownLeft className="size-2.5" />
+						Send + Enter
 					</Button>
 				</div>
 			</div>
