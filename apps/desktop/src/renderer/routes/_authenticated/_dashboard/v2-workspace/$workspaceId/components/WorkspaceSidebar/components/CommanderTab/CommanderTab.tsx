@@ -23,6 +23,7 @@ import { CommanderHelperBar } from "./CommanderHelperBar";
 import {
 	CapturePreview,
 	EditableTerminalPreview,
+	HandoffPreview,
 	WorkerResponsePreview,
 } from "./PromptPreviewPanel";
 
@@ -156,6 +157,17 @@ export function CommanderTab() {
 						onCancel={transfer.dismissWorkerResponsePreview}
 					/>
 				)}
+				{transfer.handoffPreview.visible && (
+					<HandoffPreview
+						text={transfer.handoffPreview.text}
+						hasProvider={!!currentProvider}
+						hasTerminal={!!activeTerminal}
+						onCopy={transfer.handleCopyHandoff}
+						onInjectToBrowserAI={transfer.handleInjectHandoffToBrowserAI}
+						onSendToTerminal={transfer.handleSendHandoffToTerminal}
+						onCancel={transfer.dismissHandoffPreview}
+					/>
+				)}
 				{transfer.autoRelayStatus === "watching" &&
 					!transfer.workerResponsePreview.visible && (
 						<div className="flex items-center gap-1.5 px-2 py-1 border-b bg-muted/30">
@@ -195,6 +207,9 @@ export function CommanderTab() {
 					onInject={transfer.handleInject}
 					onCaptureResponse={transfer.handleCaptureResponse}
 					onSendSelectionToAI={handleSendSelectionToAI}
+					onGenerateHandoff={transfer.handleGenerateHandoff}
+					onCopyHandoff={transfer.handleCopyHandoff}
+					handoffPrompt={transfer.handoffPreview.text}
 					autoRelayMode={autoRelayMode}
 					onAutoRelayModeChange={setAutoRelayMode}
 					onTerminalSubmitBeforeSend={transfer.handleTerminalSubmitBeforeSend}

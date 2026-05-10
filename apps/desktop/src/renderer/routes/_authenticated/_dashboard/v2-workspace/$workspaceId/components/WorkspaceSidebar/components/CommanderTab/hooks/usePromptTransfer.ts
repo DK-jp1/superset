@@ -19,6 +19,7 @@ import { getTerminalSelection } from "../useActiveTerminal";
 import {
 	generateWorkerPrompt,
 	generateReviewPrompt,
+	generateHandoffPrompt,
 	copyToClipboard,
 } from "./useCommanderPrompts";
 
@@ -442,6 +443,14 @@ export function usePromptTransfer({
 		visible: boolean;
 		text: string;
 	}>({ visible: false, text: "" });
+	const [handoffPreview, setHandoffPreview] = useState<{
+		visible: boolean;
+		text: string;
+	}>({ visible: false, text: "" });
+	const [latestWorkerResponseText, setLatestWorkerResponseText] =
+		useState("");
+	const [latestBrowserAiDirectionText, setLatestBrowserAiDirectionText] =
+		useState("");
 	const autoCaptureRef = useRef<{
 		intervalId: ReturnType<typeof setInterval>;
 		timeoutId: ReturnType<typeof setTimeout>;
@@ -541,9 +550,11 @@ export function usePromptTransfer({
 					"[S3.13-stream] normalized worker response length =",
 					report.length,
 				);
+				const truncatedReport = truncateWithWarning(report, "Worker返答");
+				setLatestWorkerResponseText(truncatedReport);
 				setWorkerResponsePreview({
 					visible: true,
-					text: truncateWithWarning(report, "Worker返答"),
+					text: truncatedReport,
 				});
 			}, AUTO_RELAY_POLL_INTERVAL_MS);
 			relayRef.timeoutId = setTimeout(() => {
@@ -733,6 +744,7 @@ export function usePromptTransfer({
 						"[S3.11] setting captureForTerminalPreview, length =",
 						extracted.length,
 					);
+					setLatestBrowserAiDirectionText(extracted || truncated);
 					setCaptureForTerminalPreview({ visible: true, text: extracted });
 				} catch {
 					// extraction失敗は無視、次回retry
@@ -880,6 +892,61 @@ export function usePromptTransfer({
 		if (ok) setWorkerResponsePreview({ visible: false, text: "" });
 	}, [workerResponsePreview]);
 
+	const handleGenerateHandoff = useCallback(() => {
+		const liveUrl = getLiveUrl() || currentUrl;
+		const provider = detectProvider(liveUrl);
+		const browserDirection =
+			captureForTerminalPreview.text ||
+			capturePreview ||
+			latestBrowserAiDirectionText;
+		const prompt = generateHandoffPrompt({
+			state,
+			latestWorkerReport:
+				workerResponsePreview.text || latestWorkerResponseText,
+			latestBrowserAiDirection: browserDirection,
+			browserProviderLabel: getProviderLabel(provider),
+			currentUrl: liveUrl,
+			activeTerminal,
+			autoRelayMode,
+		});
+		setHandoffPreview({ visible: true, text: prompt });
+		toast.success("Handoff Promptを生成しました");
+	}, [
+		state,
+		workerResponsePreview.text,
+		latestWorkerResponseText,
+		captureForTerminalPreview.text,
+		capturePreview,
+		latestBrowserAiDirectionText,
+		getLiveUrl,
+		currentUrl,
+		activeTerminal,
+		autoRelayMode,
+	]);
+
+	const handleCopyHandoff = useCallback(() => {
+		if (!handoffPreview.text.trim()) return;
+		void copyToClipboard(handoffPreview.text);
+	}, [handoffPreview.text]);
+
+	const handleInjectHandoffToBrowserAI = useCallback(async () => {
+		if (!handoffPreview.text.trim()) return;
+		await doInject(handoffPreview.text);
+	}, [handoffPreview.text, doInject]);
+
+	const handleSendHandoffToTerminal = useCallback(() => {
+		if (!handoffPreview.text.trim()) return;
+		if (!activeTerminal) {
+			toast.error("Terminal が見つかりません — ターミナルを開いてください");
+			return;
+		}
+		setCaptureForTerminalPreview({
+			visible: true,
+			text: handoffPreview.text,
+		});
+		setHandoffPreview((prev) => ({ ...prev, visible: false }));
+	}, [handoffPreview.text, activeTerminal]);
+
 	const handleCaptureResponse = useCallback(async () => {
 		const liveUrl = getLiveUrl() || currentUrl;
 		const provider = detectProvider(liveUrl);
@@ -896,6 +963,7 @@ export function usePromptTransfer({
 			}
 			text = truncateWithWarning(text, "返答");
 			setCapturePreview(text);
+			setLatestBrowserAiDirectionText(text);
 		} catch {
 			toast.error("AI返答の取得に失敗しました");
 		}
@@ -979,6 +1047,7 @@ export function usePromptTransfer({
 		}
 		const extracted = extractInstructionBlock(capturePreview);
 		logWorkerInstructionExtraction(capturePreview, extracted);
+		setLatestBrowserAiDirectionText(extracted || capturePreview);
 		setCaptureForTerminalPreview({ visible: true, text: extracted });
 	}, [capturePreview, activeTerminal]);
 
@@ -1031,6 +1100,7 @@ export function usePromptTransfer({
 		autoCaptureStatus,
 		autoRelayStatus,
 		workerResponsePreview,
+		handoffPreview,
 		handleInject,
 		handleCaptureResponse,
 		handleGrabSelection,
@@ -1043,6 +1113,10 @@ export function usePromptTransfer({
 		handleFormConfirmSend,
 		handleTerminalSubmitBeforeSend,
 		handleSendWorkerResponseToBrowserAI,
+		handleGenerateHandoff,
+		handleCopyHandoff,
+		handleInjectHandoffToBrowserAI,
+		handleSendHandoffToTerminal,
 		startAutoCapture,
 		cancelAutoCapture,
 		cancelAutoRelay,
@@ -1053,5 +1127,7 @@ export function usePromptTransfer({
 			setCaptureForTerminalPreview({ visible: false, text: "" }),
 		dismissWorkerResponsePreview: () =>
 			setWorkerResponsePreview({ visible: false, text: "" }),
+		dismissHandoffPreview: () =>
+			setHandoffPreview((prev) => ({ ...prev, visible: false })),
 	};
 }

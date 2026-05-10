@@ -13,6 +13,7 @@ import {
 	LuChevronDown,
 	LuClipboard,
 	LuDownload,
+	LuFileText,
 	LuSend,
 	LuTerminal,
 	LuZap,
@@ -32,6 +33,9 @@ export function CommanderHelperBar({
 	onInject,
 	onCaptureResponse,
 	onSendSelectionToAI,
+	onGenerateHandoff,
+	onCopyHandoff,
+	handoffPrompt,
 	autoRelayMode,
 	onAutoRelayModeChange,
 	onTerminalSubmitBeforeSend,
@@ -46,6 +50,9 @@ export function CommanderHelperBar({
 	onInject: (type: "worker" | "review") => void;
 	onCaptureResponse: () => void;
 	onSendSelectionToAI: () => void;
+	onGenerateHandoff: () => void;
+	onCopyHandoff: () => void;
+	handoffPrompt: string;
 	autoRelayMode: AutoRelayMode;
 	onAutoRelayModeChange: (mode: AutoRelayMode) => void;
 	onTerminalSubmitBeforeSend: (paneId: string) => (() => void) | null;
@@ -166,6 +173,17 @@ export function CommanderHelperBar({
 						>
 							<LuClipboard className="size-3.5" />
 							Copy R
+						</DropdownMenuItem>
+						<DropdownMenuItem onSelect={onGenerateHandoff}>
+							<LuFileText className="size-3.5" />
+							Generate Handoff
+						</DropdownMenuItem>
+						<DropdownMenuItem
+							disabled={!handoffPrompt.trim()}
+							onSelect={onCopyHandoff}
+						>
+							<LuClipboard className="size-3.5" />
+							Copy Handoff
 						</DropdownMenuItem>
 						<DropdownMenuSeparator />
 						<DropdownMenuItem

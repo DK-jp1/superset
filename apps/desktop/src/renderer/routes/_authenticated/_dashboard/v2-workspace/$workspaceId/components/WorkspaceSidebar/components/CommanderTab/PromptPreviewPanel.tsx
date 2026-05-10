@@ -1,7 +1,15 @@
 import { Button } from "@superset/ui/button";
 import { Textarea } from "@superset/ui/textarea";
 import { useState } from "react";
-import { LuCheck, LuCornerDownLeft, LuSend, LuX, LuZap } from "react-icons/lu";
+import {
+	LuCheck,
+	LuClipboard,
+	LuCornerDownLeft,
+	LuSend,
+	LuTerminal,
+	LuX,
+	LuZap,
+} from "react-icons/lu";
 
 export function TerminalSendPreview({
 	text,
@@ -237,6 +245,79 @@ export function WorkerResponsePreview({
 				</div>
 			</div>
 			<pre className="text-[10px] font-mono bg-muted rounded p-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap break-all">
+				{text}
+			</pre>
+		</div>
+	);
+}
+
+export function HandoffPreview({
+	text,
+	hasProvider,
+	hasTerminal,
+	onCopy,
+	onInjectToBrowserAI,
+	onSendToTerminal,
+	onCancel,
+}: {
+	text: string;
+	hasProvider: boolean;
+	hasTerminal: boolean;
+	onCopy: () => void;
+	onInjectToBrowserAI: () => void;
+	onSendToTerminal: () => void;
+	onCancel: () => void;
+}) {
+	const canUse = text.trim().length > 0;
+
+	return (
+		<div className="flex flex-col gap-1.5 p-1.5 border-b bg-muted/30">
+			<div className="flex items-center justify-between">
+				<span className="text-[10px] font-medium text-muted-foreground">
+					Handoff Preview
+				</span>
+				<div className="flex flex-wrap justify-end gap-0.5">
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-5 w-5 p-0"
+						onClick={onCancel}
+					>
+						<LuX className="size-3" />
+					</Button>
+					<Button
+						variant="secondary"
+						size="sm"
+						className="h-5 px-1.5 gap-0.5 text-[10px]"
+						disabled={!canUse}
+						onClick={onCopy}
+					>
+						<LuClipboard className="size-2.5" />
+						Copy
+					</Button>
+					<Button
+						variant="default"
+						size="sm"
+						className="h-5 px-1.5 gap-0.5 text-[10px]"
+						disabled={!canUse || !hasProvider}
+						onClick={onInjectToBrowserAI}
+					>
+						<LuZap className="size-2.5" />
+						Inject to Browser AI
+					</Button>
+					<Button
+						variant="secondary"
+						size="sm"
+						className="h-5 px-1.5 gap-0.5 text-[10px]"
+						disabled={!canUse || !hasTerminal}
+						onClick={onSendToTerminal}
+					>
+						<LuTerminal className="size-2.5" />
+						Send to Terminal
+					</Button>
+				</div>
+			</div>
+			<pre className="text-[10px] font-mono bg-muted rounded p-1.5 max-h-48 overflow-y-auto whitespace-pre-wrap break-all">
 				{text}
 			</pre>
 		</div>
