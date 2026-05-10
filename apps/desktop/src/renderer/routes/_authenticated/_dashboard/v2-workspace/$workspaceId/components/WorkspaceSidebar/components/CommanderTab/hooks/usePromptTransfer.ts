@@ -52,7 +52,8 @@ const MIN_TEXT_CHANGE_BASELINE_LENGTH = 30;
 const AUTO_CAPTURE_POLL_INTERVAL_MS = 1000;
 const AUTO_CAPTURE_STABLE_POLLS = 2;
 const AUTO_CAPTURE_STABLE_MS = 2500;
-const TERMINAL_ENTER_INPUT = "\n";
+const TERMINAL_ENTER_INPUT = "\r";
+const TERMINAL_ENTER_DELAY_MS = 150;
 const TRANSIENT_RESPONSE_PATTERNS = [
 	/^thought for\b/i,
 	/^thinking\b/i,
@@ -133,6 +134,9 @@ export async function sendToTerminal(
 	try {
 		await electronTrpcClient.terminal.write.mutate({ paneId, data: text });
 		if (options?.submit) {
+			await new Promise((resolve) =>
+				setTimeout(resolve, TERMINAL_ENTER_DELAY_MS),
+			);
 			await electronTrpcClient.terminal.write.mutate({
 				paneId,
 				data: TERMINAL_ENTER_INPUT,
