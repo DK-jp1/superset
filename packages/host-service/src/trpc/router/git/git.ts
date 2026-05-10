@@ -58,7 +58,64 @@ function assertSafeRelativePath(filePath: string): void {
 	}
 }
 
+function getGitErrorMessage(error: unknown): string {
+	if (error instanceof Error) return error.message;
+	return String(error);
+}
+
 export const gitRouter = router({
+	getHandoffSummary: queryProcedure
+		.meta({ timeoutMs: 15_000 })
+		.input(z.object({ workspaceId: z.string() }))
+		.query(async ({ ctx, input }) => {
+			const worktreePath = resolveWorktreePath(ctx, input.workspaceId);
+			const errors: string[] = [];
+
+			let git: Awaited<ReturnType<typeof ctx.git>>;
+			try {
+				git = await ctx.git(worktreePath);
+			} catch (error) {
+				return {
+					branch: "",
+					statusShort: "",
+					diffStat: "",
+					diffNameOnly: [] as string[],
+					error: `Git情報取得失敗: ${getGitErrorMessage(error)}`,
+				};
+			}
+
+			const readGit = async (label: string, args: string[]) => {
+				try {
+					return (await git.raw(args)).trim();
+				} catch (error) {
+					errors.push(`${label}: ${getGitErrorMessage(error)}`);
+					return "";
+				}
+			};
+
+			const [branch, statusShort, diffStat, diffNameOnlyRaw] =
+				await Promise.all([
+					readGit("branch", ["branch", "--show-current"]),
+					readGit("status", ["status", "--short"]),
+					readGit("diff stat", ["diff", "--stat"]),
+					readGit("diff name-only", ["diff", "--name-only"]),
+				]);
+
+			return {
+				branch,
+				statusShort,
+				diffStat,
+				diffNameOnly: diffNameOnlyRaw
+					.split("\n")
+					.map((line) => line.trim())
+					.filter(Boolean),
+				error:
+					errors.length > 0
+						? `Git情報取得失敗: ${errors.join("; ")}`
+						: null,
+			};
+		}),
+
 	listBranches: queryProcedure
 		.input(z.object({ workspaceId: z.string() }))
 		.query(async ({ ctx, input }) => {

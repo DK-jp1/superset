@@ -3,6 +3,7 @@ import type { ChangedFile, GitChangesStatus } from "shared/changes-types";
 import { z } from "zod";
 import { publicProcedure, router } from "../..";
 import { assertRegisteredWorktree } from "./security/path-validation";
+import { getSimpleGitWithShellPath } from "../workspaces/utils/git-client";
 import {
 	clearInFlightStatus,
 	getCachedStatus,
@@ -13,8 +14,68 @@ import {
 } from "./utils/status-cache";
 import { runGitTask } from "./workers/git-task-runner";
 
+function getGitErrorMessage(error: unknown): string {
+	if (error instanceof Error) return error.message;
+	return String(error);
+}
+
 export const createStatusRouter = () => {
 	return router({
+		getHandoffSummary: publicProcedure
+			.input(
+				z.object({
+					worktreePath: z.string(),
+				}),
+			)
+			.query(async ({ input }) => {
+				assertRegisteredWorktree(input.worktreePath);
+				const errors: string[] = [];
+
+				let git: Awaited<ReturnType<typeof getSimpleGitWithShellPath>>;
+				try {
+					git = await getSimpleGitWithShellPath(input.worktreePath);
+				} catch (error) {
+					return {
+						branch: "",
+						statusShort: "",
+						diffStat: "",
+						diffNameOnly: [] as string[],
+						error: `Git情報取得失敗: ${getGitErrorMessage(error)}`,
+					};
+				}
+
+				const readGit = async (label: string, args: string[]) => {
+					try {
+						return (await git.raw(args)).trim();
+					} catch (error) {
+						errors.push(`${label}: ${getGitErrorMessage(error)}`);
+						return "";
+					}
+				};
+
+				const [branch, statusShort, diffStat, diffNameOnlyRaw] =
+					await Promise.all([
+						readGit("branch", ["branch", "--show-current"]),
+						readGit("status", ["status", "--short"]),
+						readGit("diff stat", ["diff", "--stat"]),
+						readGit("diff name-only", ["diff", "--name-only"]),
+					]);
+
+				return {
+					branch,
+					statusShort,
+					diffStat,
+					diffNameOnly: diffNameOnlyRaw
+						.split("\n")
+						.map((line) => line.trim())
+						.filter(Boolean),
+					error:
+						errors.length > 0
+							? `Git情報取得失敗: ${errors.join("; ")}`
+							: null,
+				};
+			}),
+
 		getStatus: publicProcedure
 			.input(
 				z.object({

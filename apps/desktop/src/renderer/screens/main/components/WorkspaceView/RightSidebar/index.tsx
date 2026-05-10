@@ -22,6 +22,7 @@ import { toAbsoluteWorkspacePath } from "shared/absolute-paths";
 import type { ChangeCategory, ChangedFile } from "shared/changes-types";
 import { useScrollContext } from "../ChangesContent";
 import { CommanderTab } from "renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/components/WorkspaceSidebar/components/CommanderTab/CommanderTab";
+import type { HandoffGitSummary } from "renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/components/WorkspaceSidebar/components/CommanderTab/hooks/useCommanderPrompts";
 import { ChangesView } from "./ChangesView";
 import { FilesView } from "./FilesView";
 import { getSidebarHeaderTabButtonClassName } from "./headerTabStyles";
@@ -97,6 +98,19 @@ export function RightSidebar() {
 	const addFileViewerPane = useTabsStore((s) => s.addFileViewerPane);
 	const trpcUtils = electronTrpc.useUtils();
 	const { scrollToFile } = useScrollContext();
+	const fetchCommanderGitSummary =
+		useCallback(async (): Promise<HandoffGitSummary> => {
+			if (!worktreePath) {
+				return {
+					branch: "",
+					statusShort: "",
+					diffStat: "",
+					diffNameOnly: [],
+					error: "Git情報取得失敗: worktreePathが未取得です",
+				};
+			}
+			return trpcUtils.changes.getHandoffSummary.fetch({ worktreePath });
+		}, [trpcUtils, worktreePath]);
 
 	const invalidateFileContent = useCallback(
 		(absolutePath: string) => {
@@ -259,7 +273,10 @@ export function RightSidebar() {
 						: "hidden"
 				}
 			>
-				<CommanderTab />
+				<CommanderTab
+					workspaceId={workspaceId ?? ""}
+					fetchGitSummary={fetchCommanderGitSummary}
+				/>
 			</div>
 		</aside>
 	);

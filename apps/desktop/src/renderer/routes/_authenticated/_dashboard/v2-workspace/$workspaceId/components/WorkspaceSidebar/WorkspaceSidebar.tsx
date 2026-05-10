@@ -1,7 +1,8 @@
 import { Button } from "@superset/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@superset/ui/tooltip";
+import { workspaceTrpc } from "@superset/workspace-client";
 import { Search, Swords } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LuFile, LuGitCompareArrows } from "react-icons/lu";
 import { useGitStatus } from "renderer/hooks/host-service/useGitStatus";
 import { useCollections } from "renderer/routes/_authenticated/providers/CollectionsProvider";
@@ -87,6 +88,7 @@ export function WorkspaceSidebar({
 	workspaceId,
 }: WorkspaceSidebarProps) {
 	const collections = useCollections();
+	const workspaceTrpcUtils = workspaceTrpc.useUtils();
 	const localState = collections.v2WorkspaceLocalState.get(workspaceId);
 	const activeTab: SidebarTabId =
 		(localState?.sidebarState?.activeTab as SidebarTabId | undefined) ??
@@ -135,6 +137,10 @@ export function WorkspaceSidebar({
 	const dispatch = usePRFlowDispatch({
 		onOpenChat: onOpenChat ?? (() => {}),
 	});
+	const fetchCommanderGitSummary = useCallback(
+		() => workspaceTrpcUtils.git.getHandoffSummary.fetch({ workspaceId }),
+		[workspaceTrpcUtils, workspaceId],
+	);
 
 	const filesTab: SidebarTabDefinition = {
 		id: "files",
@@ -156,7 +162,12 @@ export function WorkspaceSidebar({
 		id: "commander",
 		label: "Commander",
 		icon: Swords,
-		content: <CommanderTab />,
+		content: (
+			<CommanderTab
+				workspaceId={workspaceId}
+				fetchGitSummary={fetchCommanderGitSummary}
+			/>
+		),
 	};
 
 	const tabs: SidebarTabDefinition[] = [

@@ -9,11 +9,58 @@ interface HandoffPromptInput {
 	currentUrl: string;
 	activeTerminal: string | null;
 	autoRelayMode: string;
+	gitSummary: HandoffGitSummary | null;
+}
+
+export interface HandoffGitSummary {
+	branch: string;
+	statusShort: string;
+	diffStat: string;
+	diffNameOnly: string[];
+	error: string | null;
 }
 
 function valueOrUnset(value: string, fallback = "未設定。必要なら追記してください"): string {
 	const trimmed = value.trim();
 	return trimmed ? trimmed : fallback;
+}
+
+function formatGitSummary(gitSummary: HandoffGitSummary | null): string {
+	if (!gitSummary) {
+		return "Git情報取得失敗: 結果を取得できませんでした";
+	}
+	if (gitSummary.error) {
+		return `${gitSummary.error}
+
+Branch:
+未取得
+
+Status:
+未取得
+
+Changed files:
+未取得
+
+Diff stat:
+未取得`;
+	}
+
+	const changedFiles =
+		gitSummary.diffNameOnly.length > 0
+			? gitSummary.diffNameOnly.map((path) => `- ${path}`).join("\n")
+			: "変更なし";
+
+	return `Branch:
+${gitSummary.branch || "未取得"}
+
+Status:
+${gitSummary.statusShort || "変更なし"}
+
+Changed files:
+${changedFiles}
+
+Diff stat:
+${gitSummary.diffStat || "変更なし"}`;
 }
 
 export function generateWorkerPrompt(state: CommanderState): string {
@@ -48,6 +95,7 @@ export function generateHandoffPrompt({
 	currentUrl,
 	activeTerminal,
 	autoRelayMode,
+	gitSummary,
 }: HandoffPromptInput): string {
 	const nextAction = latestBrowserAiDirection.trim()
 		? "Latest Browser AI Directionを確認し、制約を守って次の作業から再開してください。"
@@ -97,7 +145,7 @@ ${valueOrUnset(latestBrowserAiDirection, "未取得。必要ならBrowser AI側�
 ${autoRelayMode}
 
 ### Git / Files
-未取得。必要なら \`git status --short\` と \`git diff --stat\` / \`git diff\` を確認してください。
+${formatGitSummary(gitSummary)}
 
 ### Next Action
 ${nextAction}

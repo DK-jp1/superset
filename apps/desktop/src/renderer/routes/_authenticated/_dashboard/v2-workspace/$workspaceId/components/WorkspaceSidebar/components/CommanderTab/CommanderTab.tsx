@@ -14,6 +14,7 @@ import {
 import {
 	generateWorkerPrompt,
 	generateReviewPrompt,
+	type HandoffGitSummary,
 } from "./hooks/useCommanderPrompts";
 import type { AssistantCaptureSnapshot } from "./hooks/usePromptTransfer";
 import type { AutoRelayMode } from "./hooks/usePromptTransfer";
@@ -27,7 +28,13 @@ import {
 	WorkerResponsePreview,
 } from "./PromptPreviewPanel";
 
-export function CommanderTab() {
+export function CommanderTab({
+	workspaceId,
+	fetchGitSummary,
+}: {
+	workspaceId: string;
+	fetchGitSummary?: () => Promise<HandoffGitSummary>;
+}) {
 	const [view, setView] = useState<CommanderView>("browser");
 	const [state, setState] = useState<CommanderState>({
 		goal: "",
@@ -50,6 +57,8 @@ export function CommanderTab() {
 	const webview = useCommanderWebview();
 
 	const transfer = usePromptTransfer({
+		workspaceId,
+		fetchGitSummary,
 		state,
 		activeTerminal,
 		autoRelayMode,

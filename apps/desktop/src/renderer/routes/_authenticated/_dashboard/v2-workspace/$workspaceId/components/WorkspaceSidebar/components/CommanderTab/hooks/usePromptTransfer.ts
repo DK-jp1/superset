@@ -21,6 +21,7 @@ import {
 	generateReviewPrompt,
 	generateHandoffPrompt,
 	copyToClipboard,
+	type HandoffGitSummary,
 } from "./useCommanderPrompts";
 
 export function truncateWithWarning(text: string, label: string): string {
@@ -399,6 +400,8 @@ function extractWorkerCompletionReport(text: string): string {
 }
 
 interface UsePromptTransferParams {
+	workspaceId: string;
+	fetchGitSummary?: () => Promise<HandoffGitSummary>;
 	state: CommanderState;
 	activeTerminal: string | null;
 	autoRelayMode: AutoRelayMode;
@@ -412,6 +415,8 @@ interface UsePromptTransferParams {
 }
 
 export function usePromptTransfer({
+	workspaceId,
+	fetchGitSummary,
 	state,
 	activeTerminal,
 	autoRelayMode,
@@ -892,13 +897,37 @@ export function usePromptTransfer({
 		if (ok) setWorkerResponsePreview({ visible: false, text: "" });
 	}, [workerResponsePreview]);
 
-	const handleGenerateHandoff = useCallback(() => {
+	const handleGenerateHandoff = useCallback(async () => {
 		const liveUrl = getLiveUrl() || currentUrl;
 		const provider = detectProvider(liveUrl);
 		const browserDirection =
 			captureForTerminalPreview.text ||
 			capturePreview ||
 			latestBrowserAiDirectionText;
+		let gitSummary: HandoffGitSummary | null = null;
+		if (!workspaceId || !fetchGitSummary) {
+			gitSummary = {
+				branch: "",
+				statusShort: "",
+				diffStat: "",
+				diffNameOnly: [],
+				error: !workspaceId
+					? "Git情報取得失敗: workspaceIdが未取得です"
+					: "Git情報取得失敗: Git summary fetcherが未接続です",
+			};
+		} else {
+			try {
+				gitSummary = await fetchGitSummary();
+			} catch (error) {
+				gitSummary = {
+					branch: "",
+					statusShort: "",
+					diffStat: "",
+					diffNameOnly: [],
+					error: `Git情報取得失敗: ${error instanceof Error ? error.message : String(error)}`,
+				};
+			}
+		}
 		const prompt = generateHandoffPrompt({
 			state,
 			latestWorkerReport:
@@ -908,10 +937,13 @@ export function usePromptTransfer({
 			currentUrl: liveUrl,
 			activeTerminal,
 			autoRelayMode,
+			gitSummary,
 		});
 		setHandoffPreview({ visible: true, text: prompt });
 		toast.success("Handoff Promptを生成しました");
 	}, [
+		workspaceId,
+		fetchGitSummary,
 		state,
 		workerResponsePreview.text,
 		latestWorkerResponseText,
