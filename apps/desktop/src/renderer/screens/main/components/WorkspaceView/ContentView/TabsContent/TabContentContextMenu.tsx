@@ -7,17 +7,15 @@ import {
 	ContextMenuTrigger,
 } from "@superset/ui/context-menu";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
 	LuArrowDownToLine,
 	LuClipboard,
 	LuClipboardCopy,
 	LuEraser,
 	LuEyeOff,
-	LuZap,
 } from "react-icons/lu";
 import { useCopyToClipboard } from "renderer/hooks/useCopyToClipboard";
-import { sendSelectionToBrowserAI } from "renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/components/WorkspaceSidebar/components/CommanderTab/commander-bridge";
 import { useHotkeyDisplay } from "renderer/hotkeys";
 import {
 	type PaneContextMenuActions,
@@ -47,6 +45,7 @@ interface TabContentContextMenuProps {
 	onMoveToTab: PaneContextMenuActions["onMoveToTab"];
 	onMoveToNewTab: PaneContextMenuActions["onMoveToNewTab"];
 	closeLabel?: string;
+	modal?: boolean;
 }
 
 export function TabContentContextMenu({
@@ -67,6 +66,7 @@ export function TabContentContextMenu({
 	onMoveToTab,
 	onMoveToNewTab,
 	closeLabel = "Close Pane",
+	modal = true,
 }: TabContentContextMenuProps) {
 	const clearShortcut = useHotkeyDisplay("CLEAR_TERMINAL").text;
 	const showClearShortcut = clearShortcut !== "Unassigned";
@@ -78,10 +78,16 @@ export function TabContentContextMenu({
 	const { copyToClipboard } = useCopyToClipboard();
 	const [hasSelection, setHasSelection] = useState(false);
 	const [hasClipboard, setHasClipboard] = useState(false);
+	const selectionSnapshotRef = useRef("");
 
 	const handleOpenChange = async (open: boolean) => {
-		if (!open) return;
-		setHasSelection(!!getSelection?.()?.length);
+		if (!open) {
+			selectionSnapshotRef.current = "";
+			return;
+		}
+		const sel = getSelection?.() ?? "";
+		selectionSnapshotRef.current = sel;
+		setHasSelection(!!sel.length);
 		try {
 			const text = await navigator.clipboard.readText();
 			setHasClipboard(!!text);
@@ -91,7 +97,7 @@ export function TabContentContextMenu({
 	};
 
 	const handleCopy = async () => {
-		const text = getSelection?.();
+		const text = selectionSnapshotRef.current || getSelection?.();
 		if (!text) return;
 		copyToClipboard(text);
 	};
@@ -107,9 +113,11 @@ export function TabContentContextMenu({
 	};
 
 	return (
-		<ContextMenu onOpenChange={handleOpenChange}>
+		<ContextMenu onOpenChange={handleOpenChange} modal={modal}>
 			<ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
-			<ContextMenuContent>
+			<ContextMenuContent
+				onCloseAutoFocus={(e) => e.preventDefault()}
+			>
 				{getSelection && (
 					<ContextMenuItem disabled={!hasSelection} onSelect={handleCopy}>
 						<LuClipboardCopy className="size-4" />
@@ -122,18 +130,6 @@ export function TabContentContextMenu({
 						<LuClipboard className="size-4" />
 						Paste
 						<ContextMenuShortcut>{modKey}V</ContextMenuShortcut>
-					</ContextMenuItem>
-				)}
-				{getSelection && (
-					<ContextMenuItem
-						disabled={!hasSelection}
-						onSelect={() => {
-							const text = getSelection?.();
-							if (text) sendSelectionToBrowserAI(text);
-						}}
-					>
-						<LuZap className="size-4" />
-						Send to Browser AI
 					</ContextMenuItem>
 				)}
 				{(getSelection || onPaste) && <ContextMenuSeparator />}

@@ -30,6 +30,7 @@ export function CommanderHelperBar({
 	onGrabSelection,
 	onInject,
 	onCaptureResponse,
+	onSendSelectionToAI,
 	providerLabel,
 	hasProvider,
 }: {
@@ -40,6 +41,7 @@ export function CommanderHelperBar({
 	onGrabSelection: () => void;
 	onInject: (type: "worker" | "review") => void;
 	onCaptureResponse: () => void;
+	onSendSelectionToAI: () => void;
 	providerLabel: string;
 	hasProvider: boolean;
 }) {
@@ -174,6 +176,13 @@ export function CommanderHelperBar({
 						>
 							<LuTerminal className="size-3.5" />
 							← Term
+						</DropdownMenuItem>
+						<DropdownMenuItem
+							disabled={!activeTerminal || !hasProvider}
+							onSelect={onSendSelectionToAI}
+						>
+							<LuZap className="size-3.5" />
+							Term → AI
 						</DropdownMenuItem>
 					</DropdownMenuContent>
 				</DropdownMenu>

@@ -35,14 +35,14 @@ export function appendToField(
 const INSTRUCTION_KEYWORDS = [
 	"Worker\\s*Prompt",
 	"Worker[へに]渡す指示",
-	"Claude\\s*Code[^\\n]*指示",
-	"Codex[^\\n]*指示",
+	"Claude\\s*Code[へに]渡す指示",
+	"Claude\\s*Code[へに]投げる指示",
+	"Codex[へに]渡す指示",
+	"Codex[へに]投げる指示",
 	"ターミナルに送る指示",
 	"実行指示",
 	"修正指示",
-	"次にやること",
 	"指示文",
-	"次に実行[^\\n]*指示",
 ];
 
 const HEADING_KEYWORD_PATTERN = INSTRUCTION_KEYWORDS.join("|");

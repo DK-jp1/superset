@@ -1,13 +1,15 @@
 import { Button } from "@superset/ui/button";
+import { toast } from "@superset/ui/sonner";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { LuLoader, LuX } from "react-icons/lu";
 import type { CommanderState, CommanderView } from "./commander-types";
-import { useActiveTerminal } from "./useActiveTerminal";
+import { useActiveTerminal, getTerminalSelection } from "./useActiveTerminal";
 import { useCommanderWebview } from "./useCommanderWebview";
 import { detectProvider, getProviderLabel } from "./browser-adapters";
 import {
 	registerCommanderBridge,
 	unregisterCommanderBridge,
+	sendSelectionToBrowserAI,
 } from "./commander-bridge";
 import {
 	generateWorkerPrompt,
@@ -57,6 +59,16 @@ export function CommanderTab() {
 	const handleAutoCaptureTrigger = useCallback(() => {
 		transfer.startAutoCapture();
 	}, [transfer.startAutoCapture]);
+
+	const handleSendSelectionToAI = useCallback(() => {
+		if (!activeTerminal) return;
+		const text = getTerminalSelection(activeTerminal);
+		if (!text) {
+			toast.error("ターミナルでテキストを選択してください");
+			return;
+		}
+		sendSelectionToBrowserAI(text);
+	}, [activeTerminal]);
 
 	useEffect(() => {
 		registerCommanderBridge({
@@ -129,6 +141,7 @@ export function CommanderTab() {
 					onGrabSelection={transfer.handleGrabSelection}
 					onInject={transfer.handleInject}
 					onCaptureResponse={transfer.handleCaptureResponse}
+					onSendSelectionToAI={handleSendSelectionToAI}
 					providerLabel={providerLabel}
 					hasProvider={!!currentProvider}
 				/>

@@ -84,6 +84,26 @@ export function TabPane({
 		};
 	}, [paneId]);
 
+	// Prevent right-click mousedown/mouseup from reaching xterm.js.
+	// xterm in mouse-tracking mode (used by Claude Code TUI) forwards
+	// button-2 events to the PTY, causing the TUI to redraw and wipe scrollback.
+	useEffect(() => {
+		const container = terminalContainerRef.current;
+		if (!container) return;
+
+		const suppress = (e: MouseEvent) => {
+			if (e.button === 2) e.stopPropagation();
+		};
+
+		container.addEventListener("mousedown", suppress, true);
+		container.addEventListener("mouseup", suppress, true);
+
+		return () => {
+			container.removeEventListener("mousedown", suppress, true);
+			container.removeEventListener("mouseup", suppress, true);
+		};
+	}, []);
+
 	const handleClearTerminal = () => {
 		getClearCallback(paneId)?.();
 	};
@@ -128,6 +148,7 @@ export function TabPane({
 			)}
 		>
 			<TabContentContextMenu
+				modal={false}
 				onSplitHorizontal={() => splitPaneHorizontal(tabId, paneId, path)}
 				onSplitVertical={() => splitPaneVertical(tabId, paneId, path)}
 				onSplitWithNewChat={() =>
