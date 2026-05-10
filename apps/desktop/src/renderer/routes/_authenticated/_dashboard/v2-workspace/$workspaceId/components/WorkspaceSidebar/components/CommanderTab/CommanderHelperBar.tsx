@@ -1,8 +1,16 @@
 import { Button } from "@superset/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from "@superset/ui/dropdown-menu";
 import { cn } from "@superset/ui/utils";
 import { toast } from "@superset/ui/sonner";
 import { useCallback, useEffect, useState } from "react";
 import {
+	LuChevronDown,
 	LuClipboard,
 	LuDownload,
 	LuSend,
@@ -82,112 +90,93 @@ export function CommanderHelperBar({
 					onCancel={() => setPendingSend(null)}
 				/>
 			)}
-			<div className="border-t px-1.5 pt-1 pb-0.5">
-				{/* Status badges */}
-				<div className="flex items-center gap-1.5 mb-1">
-					<span
-						className={cn(
-							"text-[9px] font-medium px-1 py-0.5 rounded",
-							hasProvider
-								? "bg-primary/10 text-primary"
-								: "bg-muted text-muted-foreground",
-						)}
-					>
-						{providerLabel}
-					</span>
-					<span
-						className={cn(
-							"text-[9px] font-medium px-1 py-0.5 rounded",
-							activeTerminal
-								? "bg-green-500/10 text-green-600 dark:text-green-400"
-								: "bg-muted text-muted-foreground",
-						)}
-					>
-						{activeTerminal ? "Terminal: active" : "Terminal: none"}
-					</span>
-				</div>
-
-				{/* Prompt group */}
-				<div className="flex flex-wrap gap-1">
-					<Button
-						variant="outline"
-						size="sm"
-						className="h-6 gap-1 text-[10px] flex-1"
-						disabled={!workerPrompt}
-						onClick={() => copyToClipboard(workerPrompt)}
-					>
-						<LuClipboard className="size-2.5" />
-						Copy W
-					</Button>
-					<Button
-						variant="outline"
-						size="sm"
-						className="h-6 gap-1 text-[10px] flex-1"
-						disabled={!reviewPrompt}
-						onClick={() => copyToClipboard(reviewPrompt)}
-					>
-						<LuClipboard className="size-2.5" />
-						Copy R
-					</Button>
-				</div>
-
-				{/* Browser AI group */}
-				<div className="flex flex-wrap gap-1 mt-1">
-					<Button
-						variant={hasProvider ? "default" : "ghost"}
-						size="sm"
-						className="h-6 gap-1 text-[10px] flex-1"
-						disabled={!hasSetup}
-						onClick={() => onInject("worker")}
-					>
-						<LuZap className="size-2.5" />
-						Inject W
-					</Button>
-					<Button
-						variant={hasProvider ? "default" : "ghost"}
-						size="sm"
-						className="h-6 gap-1 text-[10px] flex-1"
-						disabled={!hasSetup}
-						onClick={() => onInject("review")}
-					>
-						<LuZap className="size-2.5" />
-						Inject R
-					</Button>
-					<Button
-						variant={hasProvider ? "secondary" : "ghost"}
-						size="sm"
-						className="h-6 gap-1 text-[10px] flex-1"
-						disabled={!hasProvider}
-						onClick={onCaptureResponse}
-					>
-						<LuDownload className="size-2.5" />
-						← AI
-					</Button>
-				</div>
-
-				{/* Terminal group */}
-				<div className="flex flex-wrap gap-1 mt-1">
-					<Button
-						variant={activeTerminal ? "secondary" : "ghost"}
-						size="sm"
-						className="h-6 gap-1 text-[10px] flex-1"
-						disabled={!hasSetup || !activeTerminal}
-						onClick={() => handleTerminalSend("worker")}
-					>
-						<LuSend className="size-2.5" />
-						→ Term
-					</Button>
-					<Button
-						variant={activeTerminal ? "secondary" : "ghost"}
-						size="sm"
-						className="h-6 gap-1 text-[10px] flex-1"
-						disabled={!activeTerminal}
-						onClick={onGrabSelection}
-					>
-						<LuTerminal className="size-2.5" />
-						← Term
-					</Button>
-				</div>
+			<div className="border-t px-1.5 py-0.5 flex items-center gap-1.5">
+				<span
+					className={cn(
+						"text-[9px] font-medium px-1 py-0.5 rounded",
+						hasProvider
+							? "bg-primary/10 text-primary"
+							: "bg-muted text-muted-foreground",
+					)}
+				>
+					{providerLabel}
+				</span>
+				<span
+					className={cn(
+						"text-[9px] font-medium px-1 py-0.5 rounded",
+						activeTerminal
+							? "bg-green-500/10 text-green-600 dark:text-green-400"
+							: "bg-muted text-muted-foreground",
+					)}
+				>
+					{activeTerminal ? "Term ✓" : "Term ✗"}
+				</span>
+				<div className="flex-1" />
+				<DropdownMenu>
+					<DropdownMenuTrigger asChild>
+						<Button
+							variant="ghost"
+							size="sm"
+							className="h-5 gap-0.5 text-[10px] px-1.5"
+						>
+							Actions
+							<LuChevronDown className="size-2.5" />
+						</Button>
+					</DropdownMenuTrigger>
+					<DropdownMenuContent align="end" className="w-44">
+						<DropdownMenuItem
+							disabled={!workerPrompt}
+							onSelect={() => copyToClipboard(workerPrompt)}
+						>
+							<LuClipboard className="size-3.5" />
+							Copy W
+						</DropdownMenuItem>
+						<DropdownMenuItem
+							disabled={!reviewPrompt}
+							onSelect={() => copyToClipboard(reviewPrompt)}
+						>
+							<LuClipboard className="size-3.5" />
+							Copy R
+						</DropdownMenuItem>
+						<DropdownMenuSeparator />
+						<DropdownMenuItem
+							disabled={!hasSetup}
+							onSelect={() => onInject("worker")}
+						>
+							<LuZap className="size-3.5" />
+							Inject W
+						</DropdownMenuItem>
+						<DropdownMenuItem
+							disabled={!hasSetup}
+							onSelect={() => onInject("review")}
+						>
+							<LuZap className="size-3.5" />
+							Inject R
+						</DropdownMenuItem>
+						<DropdownMenuItem
+							disabled={!hasProvider}
+							onSelect={onCaptureResponse}
+						>
+							<LuDownload className="size-3.5" />
+							← AI
+						</DropdownMenuItem>
+						<DropdownMenuSeparator />
+						<DropdownMenuItem
+							disabled={!hasSetup || !activeTerminal}
+							onSelect={() => handleTerminalSend("worker")}
+						>
+							<LuSend className="size-3.5" />
+							→ Term
+						</DropdownMenuItem>
+						<DropdownMenuItem
+							disabled={!activeTerminal}
+							onSelect={onGrabSelection}
+						>
+							<LuTerminal className="size-3.5" />
+							← Term
+						</DropdownMenuItem>
+					</DropdownMenuContent>
+				</DropdownMenu>
 			</div>
 		</div>
 	);

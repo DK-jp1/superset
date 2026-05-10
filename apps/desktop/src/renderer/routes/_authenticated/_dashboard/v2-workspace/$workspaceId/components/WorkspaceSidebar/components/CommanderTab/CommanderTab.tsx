@@ -14,7 +14,10 @@ import {
 import { usePromptTransfer } from "./hooks/usePromptTransfer";
 import { CommanderBrowser } from "./CommanderBrowser";
 import { CommanderHelperBar } from "./CommanderHelperBar";
-import { CapturePreview } from "./PromptPreviewPanel";
+import {
+	CapturePreview,
+	EditableTerminalPreview,
+} from "./PromptPreviewPanel";
 
 export function CommanderTab() {
 	const [view, setView] = useState<CommanderView>("browser");
@@ -75,13 +78,22 @@ export function CommanderTab() {
 					onReload={webview.reload}
 					onNavigate={webview.navigateTo}
 				/>
-				{transfer.capturePreview && (
+				{transfer.captureForTerminal && (
+					<EditableTerminalPreview
+						text={transfer.captureForTerminal}
+						onConfirm={transfer.handleConfirmCaptureToTerminal}
+						onCancel={transfer.dismissCaptureForTerminal}
+					/>
+				)}
+				{transfer.capturePreview && !transfer.captureForTerminal && (
 					<CapturePreview
 						text={transfer.capturePreview}
 						title="AI Response Preview"
 						onUse={transfer.handleUseCapture}
 						onCancel={transfer.dismissCapturePreview}
 						onUseAndInject={transfer.handleUseCaptureAndInject}
+						onSendToTerminal={transfer.handleSendCaptureToTerminal}
+						hasTerminal={!!activeTerminal}
 					/>
 				)}
 				<CommanderHelperBar

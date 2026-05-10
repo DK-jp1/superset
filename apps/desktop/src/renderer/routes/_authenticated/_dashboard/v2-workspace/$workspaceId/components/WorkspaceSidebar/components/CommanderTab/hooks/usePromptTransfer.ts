@@ -32,6 +32,30 @@ export function appendToField(
 	return existing ? `${existing}\n\n${separator}\n${addition}` : addition;
 }
 
+export function extractInstructionBlock(text: string): string {
+	const codeBlockPattern =
+		/```(?:bash|sh|text|shell|zsh|cmd|terminal)[^\n]*\n([\s\S]*?)```/gi;
+	const blocks: string[] = [];
+	let match: RegExpExecArray | null;
+	while (true) {
+		match = codeBlockPattern.exec(text);
+		if (!match) break;
+		blocks.push(match[1].trim());
+	}
+	if (blocks.length > 0) return blocks.join("\n\n");
+
+	const headingPatterns = [
+		/(?:^|\n)#+\s*(?:Worker\s*Prompt|Claude\s*Code[^\n]*指示|次に実行[^\n]*指示|実行指示)[^\n]*\n([\s\S]*?)(?=\n#+\s|\n---|\n\*\*\*|$)/i,
+		/(?:^|\n)(?:Worker\s*Prompt|Claude\s*Code[^\n]*指示|次に実行[^\n]*指示)[：:]\s*\n([\s\S]*?)(?=\n#+\s|\n---|\n\*\*\*|$)/i,
+	];
+	for (const pattern of headingPatterns) {
+		const m = pattern.exec(text);
+		if (m?.[1]?.trim()) return m[1].trim();
+	}
+
+	return text;
+}
+
 export function sendToTerminal(paneId: string, text: string): void {
 	electronTrpcClient.terminal.write
 		.mutate({ paneId, data: text })
@@ -74,16 +98,21 @@ export function usePromptTransfer({
 	} | null>(null);
 	const [selectionPreview, setSelectionPreview] = useState<string | null>(null);
 	const [capturePreview, setCapturePreview] = useState<string | null>(null);
+	const [captureForTerminal, setCaptureForTerminal] = useState<string | null>(
+		null,
+	);
 
 	useEffect(() => {
 		if (!activeTerminal) {
 			if (formSendPreview) setFormSendPreview(null);
 			if (selectionPreview) setSelectionPreview(null);
+			if (captureForTerminal) setCaptureForTerminal(null);
 		}
-	}, [activeTerminal, formSendPreview, selectionPreview]);
+	}, [activeTerminal, formSendPreview, selectionPreview, captureForTerminal]);
 
 	useEffect(() => {
 		setCapturePreview(null);
+		setCaptureForTerminal(null);
 	}, [currentUrl]);
 
 	const doInject = useCallback(
@@ -220,6 +249,26 @@ export function usePromptTransfer({
 		await doInject(prompt);
 	}, [capturePreview, state, onUpdateState, doInject]);
 
+	const handleSendCaptureToTerminal = useCallback(() => {
+		if (!capturePreview) return;
+		if (!activeTerminal) {
+			toast.error("Terminal が見つかりません — ターミナルを開いてください");
+			return;
+		}
+		const extracted = extractInstructionBlock(capturePreview);
+		setCaptureForTerminal(extracted);
+	}, [capturePreview, activeTerminal]);
+
+	const handleConfirmCaptureToTerminal = useCallback(
+		(editedText: string) => {
+			if (!activeTerminal || !editedText) return;
+			sendToTerminal(activeTerminal, editedText);
+			setCaptureForTerminal(null);
+			setCapturePreview(null);
+		},
+		[activeTerminal],
+	);
+
 	const handleFormSendToTerminal = useCallback(
 		(type: "worker" | "review") => {
 			const prompt = type === "worker" ? workerPrompt : reviewPrompt;
@@ -251,16 +300,20 @@ export function usePromptTransfer({
 		formSendPreview,
 		selectionPreview,
 		capturePreview,
+		captureForTerminal,
 		handleInject,
 		handleCaptureResponse,
 		handleGrabSelection,
 		handleUseSelection,
 		handleUseCapture,
 		handleUseCaptureAndInject,
+		handleSendCaptureToTerminal,
+		handleConfirmCaptureToTerminal,
 		handleFormSendToTerminal,
 		handleFormConfirmSend,
 		dismissFormSendPreview: () => setFormSendPreview(null),
 		dismissSelectionPreview: () => setSelectionPreview(null),
 		dismissCapturePreview: () => setCapturePreview(null),
+		dismissCaptureForTerminal: () => setCaptureForTerminal(null),
 	};
 }
