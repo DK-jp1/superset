@@ -3,14 +3,17 @@ import { Label } from "@superset/ui/label";
 import { Textarea } from "@superset/ui/textarea";
 import { toast } from "@superset/ui/sonner";
 import { cn } from "@superset/ui/utils";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
+	LuArrowLeft,
+	LuArrowRight,
 	LuClipboard,
-	LuPlus,
+	LuLoader,
 	LuPlay,
+	LuRefreshCw,
 	LuSend,
-	LuTrash2,
 } from "react-icons/lu";
+import { useCommanderWebview } from "./useCommanderWebview";
 
 interface CommanderState {
 	goal: string;
@@ -19,101 +22,13 @@ interface CommanderState {
 	currentProblem: string;
 }
 
-interface ChatMessage {
-	id: string;
-	role: "user" | "commander" | "ai-paste";
-	content: string;
-	timestamp: number;
-}
+type CommanderView = "browser" | "form";
 
-type CommanderView = "chat" | "setup";
-
-function generateMessageId(): string {
-	return crypto.randomUUID();
-}
-
-function generateCommanderReply(
-	userMessage: string,
-	state: CommanderState,
-): string {
-	const hasSetup =
-		state.goal || state.context || state.constraints || state.currentProblem;
-
-	if (!hasSetup) {
-		return "Setup タブで Goal / Context / Constraints / Current Problem を設定すると、GPT・Claude に渡す文脈が充実します。\n\nまずは何について壁打ちしますか？";
-	}
-
-	const parts: string[] = ["了解。現在のセットアップ:"];
-	if (state.goal) parts.push(`• Goal: ${state.goal}`);
-	if (state.constraints) parts.push(`• Constraints: ${state.constraints}`);
-	if (state.currentProblem)
-		parts.push(`• Current Problem: ${state.currentProblem}`);
-	parts.push(
-		"\nこの文脈 + 会話ログを「Copy for GPT」「Copy for Claude」で外部AIに渡せます。返答は「Paste AI Response」で履歴に取り込めます。",
-	);
-	return parts.join("\n");
-}
-
-function formatForGPT(
-	messages: ChatMessage[],
-	state: CommanderState,
-): string {
-	let out = "# Commander Session\n\n";
-	if (state.goal) out += `## Goal\n${state.goal}\n\n`;
-	if (state.context) out += `## Context\n${state.context}\n\n`;
-	if (state.constraints) out += `## Constraints\n${state.constraints}\n\n`;
-	if (state.currentProblem)
-		out += `## Current Problem\n${state.currentProblem}\n\n`;
-
-	if (messages.length > 0) {
-		out += "## Conversation Log\n\n";
-		for (const msg of messages) {
-			const role =
-				msg.role === "user"
-					? "Doy"
-					: msg.role === "commander"
-						? "Commander"
-						: "AI Response";
-			out += `**${role}**: ${msg.content}\n\n`;
-		}
-	}
-
-	out +=
-		"---\n上記の文脈を踏まえて、メタ認知の壁打ち相手として回答してください。具体的な提案と、見落としている観点があれば指摘してください。";
-	return out;
-}
-
-function formatForClaude(
-	messages: ChatMessage[],
-	state: CommanderState,
-): string {
-	let out = "<context>\n";
-	if (state.goal) out += `<goal>${state.goal}</goal>\n`;
-	if (state.context) out += `<background>${state.context}</background>\n`;
-	if (state.constraints)
-		out += `<constraints>${state.constraints}</constraints>\n`;
-	if (state.currentProblem)
-		out += `<current_problem>${state.currentProblem}</current_problem>\n`;
-	out += "</context>\n\n";
-
-	if (messages.length > 0) {
-		out += "<conversation_log>\n";
-		for (const msg of messages) {
-			const role =
-				msg.role === "user"
-					? "Doy"
-					: msg.role === "commander"
-						? "Commander"
-						: "AI";
-			out += `<message role="${role}">${msg.content}</message>\n`;
-		}
-		out += "</conversation_log>\n\n";
-	}
-
-	out +=
-		"上記の文脈を踏まえて、メタ認知の壁打ち相手として回答してください。具体的な提案と、見落としている観点があれば指摘してください。";
-	return out;
-}
+const AI_PRESETS = [
+	{ label: "ChatGPT", url: "https://chatgpt.com" },
+	{ label: "Claude", url: "https://claude.ai" },
+	{ label: "Gemini", url: "https://gemini.google.com" },
+] as const;
 
 function generateWorkerPrompt(state: CommanderState): string {
 	const sections: string[] = [];
@@ -148,181 +63,137 @@ async function copyToClipboard(text: string) {
 	}
 }
 
-function ChatView({
-	messages,
-	state,
-	inputValue,
-	setInputValue,
-	pasteValue,
-	setPasteValue,
-	onSend,
-	onPasteResponse,
-	onClear,
+function BrowserToolbar({
+	currentUrl,
+	isLoading,
+	canGoBack,
+	canGoForward,
+	onGoBack,
+	onGoForward,
+	onReload,
+	onNavigate,
 }: {
-	messages: ChatMessage[];
-	state: CommanderState;
-	inputValue: string;
-	setInputValue: (v: string) => void;
-	pasteValue: string;
-	setPasteValue: (v: string) => void;
-	onSend: (text: string) => void;
-	onPasteResponse: (text: string) => void;
-	onClear: () => void;
+	currentUrl: string;
+	isLoading: boolean;
+	canGoBack: boolean;
+	canGoForward: boolean;
+	onGoBack: () => void;
+	onGoForward: () => void;
+	onReload: () => void;
+	onNavigate: (url: string) => void;
 }) {
-	const scrollRef = useRef<HTMLDivElement>(null);
+	const [editingUrl, setEditingUrl] = useState(currentUrl);
+	const [isFocused, setIsFocused] = useState(false);
 
 	useEffect(() => {
-		const el = scrollRef.current;
-		if (el) el.scrollTop = el.scrollHeight;
-	}, [messages.length]);
-
-	const handleSend = useCallback(() => {
-		const trimmed = inputValue.trim();
-		if (!trimmed) return;
-		onSend(trimmed);
-		setInputValue("");
-	}, [inputValue, onSend]);
-
-	const handlePaste = useCallback(() => {
-		const trimmed = pasteValue.trim();
-		if (!trimmed) return;
-		onPasteResponse(trimmed);
-		setPasteValue("");
-	}, [pasteValue, onPasteResponse]);
-
-	const handleKeyDown = useCallback(
-		(e: React.KeyboardEvent) => {
-			if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-				e.preventDefault();
-				handleSend();
-			}
-		},
-		[handleSend],
-	);
+		if (!isFocused) setEditingUrl(currentUrl);
+	}, [currentUrl, isFocused]);
 
 	return (
-		<div className="flex flex-1 flex-col min-h-0">
-			{/* Messages area */}
-			<div ref={scrollRef} className="flex-1 overflow-y-auto p-2 space-y-2">
-				{messages.length === 0 ? (
-					<div className="flex h-full items-center justify-center">
-						<p className="text-xs text-muted-foreground text-center px-4 leading-relaxed">
-							Commander — メタ認知の壁打ち相手
-							<br />
-							<br />
-							相談を入力 → GPT/Claude にコピー → 返答を貼り付け
-							<br />
-							Setup タブで文脈を設定すると精度が上がります
-						</p>
-					</div>
+		<div className="flex items-center gap-1 px-1.5 py-1 border-b shrink-0">
+			<button
+				type="button"
+				onClick={onGoBack}
+				disabled={!canGoBack}
+				className="p-0.5 rounded hover:bg-accent disabled:opacity-30"
+			>
+				<LuArrowLeft className="size-3" />
+			</button>
+			<button
+				type="button"
+				onClick={onGoForward}
+				disabled={!canGoForward}
+				className="p-0.5 rounded hover:bg-accent disabled:opacity-30"
+			>
+				<LuArrowRight className="size-3" />
+			</button>
+			<button
+				type="button"
+				onClick={onReload}
+				className="p-0.5 rounded hover:bg-accent"
+			>
+				{isLoading ? (
+					<LuLoader className="size-3 animate-spin" />
 				) : (
-					messages.map((msg) => (
-						<div
-							key={msg.id}
-							className={cn(
-								"rounded-md px-2.5 py-1.5 text-xs",
-								msg.role === "user" && "bg-primary/10 ml-6",
-								msg.role === "commander" && "bg-muted mr-6",
-								msg.role === "ai-paste" &&
-									"bg-accent/50 mr-6 border border-border",
-							)}
-						>
-							<span className="font-medium text-[10px] uppercase tracking-wider text-muted-foreground">
-								{msg.role === "user"
-									? "You"
-									: msg.role === "commander"
-										? "Commander"
-										: "AI Response"}
-							</span>
-							<div className="whitespace-pre-wrap mt-0.5">{msg.content}</div>
-						</div>
-					))
+					<LuRefreshCw className="size-3" />
 				)}
-			</div>
-
-			{/* Input area */}
-			<div className="shrink-0 border-t p-2 space-y-1.5">
-				{/* Message input */}
-				<div className="flex gap-1.5">
-					<Textarea
-						value={inputValue}
-						onChange={(e) => setInputValue(e.target.value)}
-						onKeyDown={handleKeyDown}
-						placeholder="壁打ち・相談... (⌘+Enter)"
-						rows={2}
-						className="resize-none text-xs flex-1"
-					/>
-					<Button
-						variant="default"
-						size="sm"
-						className="h-auto px-2 self-end"
-						onClick={handleSend}
-						disabled={!inputValue.trim()}
-					>
-						<LuSend className="size-3" />
-					</Button>
-				</div>
-
-				{/* Copy for external AI */}
-				<div className="flex gap-1.5">
-					<Button
-						variant="outline"
-						size="sm"
-						className="h-6 flex-1 gap-1 text-[10px]"
-						onClick={() => copyToClipboard(formatForGPT(messages, state))}
-					>
-						<LuClipboard className="size-2.5" />
-						Copy for GPT
-					</Button>
-					<Button
-						variant="outline"
-						size="sm"
-						className="h-6 flex-1 gap-1 text-[10px]"
-						onClick={() => copyToClipboard(formatForClaude(messages, state))}
-					>
-						<LuClipboard className="size-2.5" />
-						Copy for Claude
-					</Button>
-				</div>
-
-				{/* Paste AI response */}
-				<div className="flex gap-1.5">
-					<Textarea
-						value={pasteValue}
-						onChange={(e) => setPasteValue(e.target.value)}
-						placeholder="GPT / Claude の返答を貼り付け..."
-						rows={2}
-						className="resize-none text-xs flex-1"
-					/>
-					<Button
-						variant="secondary"
-						size="sm"
-						className="h-auto px-2 self-end"
-						onClick={handlePaste}
-						disabled={!pasteValue.trim()}
-					>
-						<LuPlus className="size-3" />
-					</Button>
-				</div>
-
-				{/* Clear */}
-				{messages.length > 0 && (
-					<Button
-						variant="ghost"
-						size="sm"
-						className="h-5 w-full gap-1 text-[10px] text-muted-foreground"
-						onClick={onClear}
-					>
-						<LuTrash2 className="size-2.5" />
-						Clear conversation
-					</Button>
-				)}
-			</div>
+			</button>
+			<form
+				className="flex-1 min-w-0"
+				onSubmit={(e) => {
+					e.preventDefault();
+					const trimmed = editingUrl.trim();
+					if (trimmed) onNavigate(trimmed);
+					setIsFocused(false);
+				}}
+			>
+				<input
+					type="text"
+					value={editingUrl}
+					onChange={(e) => setEditingUrl(e.target.value)}
+					onFocus={() => {
+						setIsFocused(true);
+						setEditingUrl(currentUrl);
+					}}
+					onBlur={() => {
+						setIsFocused(false);
+						setEditingUrl(currentUrl);
+					}}
+					placeholder="URL を入力..."
+					className="w-full text-[10px] bg-muted/50 rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-ring truncate"
+				/>
+			</form>
 		</div>
 	);
 }
 
-function SetupView({
+function HelperBar({ state }: { state: CommanderState }) {
+	const hasSetup = !!state.goal;
+
+	return (
+		<div className="shrink-0 border-t p-1.5 flex flex-wrap gap-1">
+			<Button
+				variant="outline"
+				size="sm"
+				className="h-6 gap-1 text-[10px] flex-1"
+				disabled={!hasSetup}
+				onClick={() => {
+					const prompt = generateWorkerPrompt(state);
+					if (prompt) copyToClipboard(prompt);
+					else toast.error("Form で Goal を設定してください");
+				}}
+			>
+				<LuClipboard className="size-2.5" />
+				Worker
+			</Button>
+			<Button
+				variant="outline"
+				size="sm"
+				className="h-6 gap-1 text-[10px] flex-1"
+				disabled={!hasSetup}
+				onClick={() => {
+					const prompt = generateReviewPrompt(state);
+					if (prompt) copyToClipboard(prompt);
+					else toast.error("Form で Goal を設定してください");
+				}}
+			>
+				<LuClipboard className="size-2.5" />
+				Review
+			</Button>
+			<Button
+				variant="ghost"
+				size="sm"
+				className="h-6 gap-1 text-[10px] flex-1"
+				onClick={() => toast.info("Send to Terminal — Phase 4")}
+			>
+				<LuSend className="size-2.5" />
+				Terminal
+			</Button>
+		</div>
+	);
+}
+
+function FormView({
 	state,
 	updateField,
 	workerPrompt,
@@ -487,10 +358,7 @@ function SetupView({
 }
 
 export function CommanderTab() {
-	const [view, setView] = useState<CommanderView>("chat");
-	const [messages, setMessages] = useState<ChatMessage[]>([]);
-	const [chatInput, setChatInput] = useState("");
-	const [chatPaste, setChatPaste] = useState("");
+	const [view, setView] = useState<CommanderView>("browser");
 
 	const [state, setState] = useState<CommanderState>({
 		goal: "",
@@ -501,46 +369,15 @@ export function CommanderTab() {
 	const [workerPrompt, setWorkerPrompt] = useState("");
 	const [reviewPrompt, setReviewPrompt] = useState("");
 
+	const webview = useCommanderWebview();
+	const isBlank = !webview.currentUrl || webview.currentUrl === "about:blank";
+
 	const updateField = useCallback(
 		(field: keyof CommanderState, value: string) => {
 			setState((prev) => ({ ...prev, [field]: value }));
 		},
 		[],
 	);
-
-	const handleSend = useCallback(
-		(text: string) => {
-			const userMsg: ChatMessage = {
-				id: generateMessageId(),
-				role: "user",
-				content: text,
-				timestamp: Date.now(),
-			};
-			const reply: ChatMessage = {
-				id: generateMessageId(),
-				role: "commander",
-				content: generateCommanderReply(text, state),
-				timestamp: Date.now(),
-			};
-			setMessages((prev) => [...prev, userMsg, reply]);
-		},
-		[state],
-	);
-
-	const handlePasteResponse = useCallback((text: string) => {
-		const aiMsg: ChatMessage = {
-			id: generateMessageId(),
-			role: "ai-paste",
-			content: text,
-			timestamp: Date.now(),
-		};
-		setMessages((prev) => [...prev, aiMsg]);
-		toast.success("AI response added to history");
-	}, []);
-
-	const handleClear = useCallback(() => {
-		setMessages([]);
-	}, []);
 
 	const handleGenerateWorker = useCallback(() => {
 		const prompt = generateWorkerPrompt(state);
@@ -560,49 +397,109 @@ export function CommanderTab() {
 			<div className="flex items-center gap-1 border-b px-2 h-8 shrink-0">
 				<button
 					type="button"
-					onClick={() => setView("chat")}
+					onClick={() => setView("browser")}
 					className={cn(
 						"px-2 py-1 text-xs rounded-sm transition-colors",
-						view === "chat"
+						view === "browser"
 							? "bg-accent text-accent-foreground font-medium"
 							: "text-muted-foreground hover:text-foreground",
 					)}
 				>
-					Chat
+					Browser
 				</button>
 				<button
 					type="button"
-					onClick={() => setView("setup")}
+					onClick={() => setView("form")}
 					className={cn(
 						"px-2 py-1 text-xs rounded-sm transition-colors",
-						view === "setup"
+						view === "form"
 							? "bg-accent text-accent-foreground font-medium"
 							: "text-muted-foreground hover:text-foreground",
 					)}
 				>
-					Setup
+					Form
 				</button>
-				{messages.length > 0 && (
-					<span className="ml-auto text-[10px] text-muted-foreground tabular-nums">
-						{messages.length}
-					</span>
-				)}
 			</div>
 
-			{view === "chat" ? (
-				<ChatView
-					messages={messages}
-					state={state}
-					inputValue={chatInput}
-					setInputValue={setChatInput}
-					pasteValue={chatPaste}
-					setPasteValue={setChatPaste}
-					onSend={handleSend}
-					onPasteResponse={handlePasteResponse}
-					onClear={handleClear}
+			{/* Browser view — always rendered to persist webview state */}
+			<div
+				className={
+					view === "browser"
+						? "flex-1 min-h-0 flex flex-col"
+						: "hidden"
+				}
+			>
+				<BrowserToolbar
+					currentUrl={webview.currentUrl}
+					isLoading={webview.isLoading}
+					canGoBack={webview.canGoBack}
+					canGoForward={webview.canGoForward}
+					onGoBack={webview.goBack}
+					onGoForward={webview.goForward}
+					onReload={webview.reload}
+					onNavigate={webview.navigateTo}
 				/>
-			) : (
-				<SetupView
+				{/* AI presets */}
+				<div className="flex gap-1 px-1.5 py-1 border-b shrink-0">
+					{AI_PRESETS.map((p) => (
+						<Button
+							key={p.label}
+							variant="outline"
+							size="sm"
+							className="h-5 text-[10px] px-1.5"
+							onClick={() => webview.navigateTo(p.url)}
+						>
+							{p.label}
+						</Button>
+					))}
+				</div>
+				{/* Webview container */}
+				<div className="flex-1 min-h-0 relative">
+					<div
+						ref={webview.containerRef}
+						className="absolute inset-0"
+					/>
+					{isBlank && (
+						<div className="absolute inset-0 flex items-center justify-center bg-background z-10">
+							<div className="text-center space-y-3 px-4">
+								<p className="text-xs text-muted-foreground leading-relaxed">
+									AI アシスタントを選択して
+									<br />
+									壁打ちを開始
+								</p>
+								<div className="flex flex-col gap-1.5">
+									{AI_PRESETS.map((p) => (
+										<Button
+											key={p.label}
+											variant="outline"
+											size="sm"
+											className="text-xs"
+											onClick={() => webview.navigateTo(p.url)}
+										>
+											{p.label}
+										</Button>
+									))}
+								</div>
+								<p className="text-[10px] text-muted-foreground">
+									Form タブで文脈を設定 → Worker/Review をコピー
+								</p>
+							</div>
+						</div>
+					)}
+				</div>
+				{/* Helper bar */}
+				<HelperBar state={state} />
+			</div>
+
+			{/* Form view */}
+			<div
+				className={
+					view === "form"
+						? "flex-1 min-h-0 flex flex-col overflow-hidden"
+						: "hidden"
+				}
+			>
+				<FormView
 					state={state}
 					updateField={updateField}
 					workerPrompt={workerPrompt}
@@ -610,7 +507,7 @@ export function CommanderTab() {
 					onGenerateWorker={handleGenerateWorker}
 					onGenerateReview={handleGenerateReview}
 				/>
-			)}
+			</div>
 		</div>
 	);
 }
