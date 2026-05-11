@@ -66,6 +66,12 @@ interface OutputLog {
 }
 
 const outputLogs = new Map<string, OutputLog>();
+type OutputLogListener = (snapshot: {
+	paneId: string;
+	offset: number;
+	dataLength: number;
+}) => void;
+const outputLogListeners = new Map<string, Set<OutputLogListener>>();
 
 function appendOutputLog(paneId: string, data: string): void {
 	let log = outputLogs.get(paneId);
@@ -75,11 +81,16 @@ function appendOutputLog(paneId: string, data: string): void {
 	}
 
 	log.text += data;
-	if (log.text.length <= MAX_OUTPUT_LOG_LENGTH) return;
+	if (log.text.length > MAX_OUTPUT_LOG_LENGTH) {
+		const trimLength = log.text.length - MAX_OUTPUT_LOG_LENGTH;
+		log.text = log.text.slice(trimLength);
+		log.baseOffset += trimLength;
+	}
 
-	const trimLength = log.text.length - MAX_OUTPUT_LOG_LENGTH;
-	log.text = log.text.slice(trimLength);
-	log.baseOffset += trimLength;
+	const offset = log.baseOffset + log.text.length;
+	for (const listener of outputLogListeners.get(paneId) ?? []) {
+		listener({ paneId, offset, dataLength: data.length });
+	}
 }
 
 export function getOutputLogOffset(paneId: string): number {
@@ -93,6 +104,24 @@ export function getOutputLogSince(paneId: string, offset: number): string {
 	if (!log) return "";
 	const start = Math.max(0, offset - log.baseOffset);
 	return log.text.slice(start);
+}
+
+export function subscribeOutputLog(
+	paneId: string,
+	listener: OutputLogListener,
+): () => void {
+	let listeners = outputLogListeners.get(paneId);
+	if (!listeners) {
+		listeners = new Set();
+		outputLogListeners.set(paneId, listeners);
+	}
+	listeners.add(listener);
+	return () => {
+		listeners?.delete(listener);
+		if (listeners?.size === 0) {
+			outputLogListeners.delete(paneId);
+		}
+	};
 }
 
 function hostIsVisible(container: HTMLDivElement | null): boolean {
@@ -379,6 +408,7 @@ export function dispose(paneId: string): void {
 	entry.xterm.dispose();
 	cache.delete(paneId);
 	outputLogs.delete(paneId);
+	outputLogListeners.delete(paneId);
 }
 
 // Preserve cache across Vite HMR in dev so active terminals aren't orphaned.

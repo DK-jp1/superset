@@ -4,6 +4,7 @@ import { electronTrpcClient } from "renderer/lib/trpc-client";
 import {
 	getOutputLogOffset,
 	getOutputLogSince,
+	subscribeOutputLog,
 } from "renderer/screens/main/components/WorkspaceView/ContentView/TabsContent/Terminal/v1-terminal-cache";
 import type {
 	CommanderSession,
@@ -136,6 +137,7 @@ const AUTO_CAPTURE_POLL_INTERVAL_MS = 1000;
 const AUTO_CAPTURE_STABLE_POLLS = 2;
 const AUTO_CAPTURE_STABLE_MS = 2500;
 const AUTO_RELAY_POLL_INTERVAL_MS = 1000;
+const AUTO_RELAY_CAPTURE_DEBOUNCE_MS = 600;
 const AUTO_RELAY_IDLE_MS = 2500;
 const AUTO_RELAY_TIMEOUT_MS = 120000;
 const TERMINAL_ENTER_INPUT = "\r";
@@ -168,10 +170,15 @@ interface AutoCaptureStartOptions {
 interface AutoRelayTracker {
 	paneId: string;
 	markerOffset: number;
+	source: "terminal-submit" | "mode-armed";
 	intervalId?: ReturnType<typeof setInterval>;
 	timeoutId?: ReturnType<typeof setTimeout>;
+	captureDebounceId?: ReturnType<typeof setTimeout>;
+	unsubscribeOutputLog?: () => void;
+	firstOutputAt: number | null;
 	lastFingerprint: string;
 	lastChangedAt: number;
+	lastObservedOffset: number;
 }
 
 export function extractInstructionBlock(text: string): string {
@@ -409,11 +416,129 @@ function stripAnsi(text: string): string {
 		.trim();
 }
 
-function getCompletionReportCount(text: string): number {
-	const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-	return (
-		normalized.match(/(^|\n)\s*#{1,6}\s*完了報告\s*(?=\n|$)/gi)?.length ?? 0
+const WORKER_COMPLETION_EVIDENCE_PATTERNS = [
+	/やったこと/,
+	/実施内容/,
+	/修正ファイル/,
+	/変更ファイル/,
+	/確認結果/,
+	/typecheck/i,
+	/git\s+diff(?:\s+--check)?/i,
+	/未解決/,
+	/次にやること/,
+];
+
+const WORKER_INSTRUCTION_CONTEXT_PATTERNS = [
+	/Workerへ渡す指示/,
+	/Worker向け指示/,
+	/指示文/,
+	/出力形式/,
+	/完了報告フォーマット/,
+	/以下の.*完了報告/,
+	/含めてください/,
+	/記載してください/,
+];
+
+function normalizeCompletionHeadingLine(line: string): string {
+	return line
+		.trim()
+		.replace(/\*\*/g, "")
+		.replace(/^[>\s]*/, "")
+		.replace(/^#{1,6}\s*/, "")
+		.replace(
+			/^[\s>│┃┆┊╎╏╭╮╰╯┌┐└┘├┤┬┴┼─━╔╗╚╝═║⎿⏺●•・\-*+|]+/u,
+			"",
+		)
+		.replace(/[：:]\s*$/, "")
+		.trim();
+}
+
+function isWorkerCompletionHeadingLine(line: string): boolean {
+	return normalizeCompletionHeadingLine(line) === "完了報告";
+}
+
+function countWorkerCompletionEvidence(text: string): number {
+	return WORKER_COMPLETION_EVIDENCE_PATTERNS.reduce(
+		(count, pattern) => count + (pattern.test(text) ? 1 : 0),
+		0,
 	);
+}
+
+function hasInstructionOnlyContext(text: string): boolean {
+	return WORKER_INSTRUCTION_CONTEXT_PATTERNS.some((pattern) =>
+		pattern.test(text),
+	);
+}
+
+function findWorkerCompletionHeadingCandidates(text: string): Array<{
+	index: number;
+	line: string;
+	evidenceCount: number;
+	instructionContext: boolean;
+	bodyLength: number;
+}> {
+	const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	const candidates: Array<{
+		index: number;
+		line: string;
+		evidenceCount: number;
+		instructionContext: boolean;
+		bodyLength: number;
+	}> = [];
+	let offset = 0;
+	for (const line of normalized.split("\n")) {
+		if (isWorkerCompletionHeadingLine(line)) {
+			const before = normalized.slice(Math.max(0, offset - 600), offset);
+			const after = normalized.slice(offset, offset + 2000);
+			const body = after
+				.split("\n")
+				.slice(1)
+				.join("\n")
+				.trim();
+			candidates.push({
+				index: offset,
+				line: line.trim(),
+				evidenceCount: countWorkerCompletionEvidence(after),
+				instructionContext: hasInstructionOnlyContext(before),
+				bodyLength: body.length,
+			});
+		}
+		offset += line.length + 1;
+	}
+	return candidates;
+}
+
+function getWorkerCompletionCandidateReason(candidate: {
+	evidenceCount: number;
+	instructionContext: boolean;
+	bodyLength: number;
+}): string {
+	if (candidate.instructionContext) return "instruction-context";
+	if (candidate.evidenceCount > 0) return "accepted-evidence";
+	if (candidate.bodyLength >= 40) return "accepted-substantial-body";
+	return "missing-evidence-or-body";
+}
+
+function summarizeWorkerCompletionCandidates(
+	candidates: Array<{
+		index: number;
+		line: string;
+		evidenceCount: number;
+		instructionContext: boolean;
+		bodyLength: number;
+	}>,
+): Array<{
+	index: number;
+	line: string;
+	evidenceCount: number;
+	instructionContext: boolean;
+	bodyLength: number;
+	reason: string;
+}> {
+	return candidates.map((candidate) => ({
+		...candidate,
+		reason: getWorkerCompletionCandidateReason(candidate),
+	}));
 }
 
 function isTuiNoiseLine(line: string): boolean {
@@ -450,7 +575,12 @@ function normalizeWorkerCompletionReport(report: string): string {
 	for (const line of lines) {
 		if (isTuiNoiseLine(line)) break;
 		if (isDecorativeNoiseLine(line)) continue;
-		kept.push(line.replace(/[ \t]+$/g, ""));
+		const normalizedHeading = normalizeCompletionHeadingLine(line);
+		kept.push(
+			kept.length === 0 && normalizedHeading === "完了報告"
+				? normalizedHeading
+				: line.replace(/[ \t]+$/g, ""),
+		);
 	}
 	return kept
 		.join("\n")
@@ -460,16 +590,30 @@ function normalizeWorkerCompletionReport(report: string): string {
 
 function extractWorkerCompletionReport(text: string): string {
 	const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-	const headingPattern = /(^|\n)\s*#{1,6}\s*完了報告\s*(?=\n|$)/gi;
-	let headingStart = -1;
-	let match: RegExpExecArray | null;
-	while (true) {
-		match = headingPattern.exec(normalized);
-		if (!match) break;
-		headingStart = match.index + match[1].length;
-	}
-	if (headingStart < 0) return "";
-	const report = normalized.slice(headingStart).trim();
+	const candidates = findWorkerCompletionHeadingCandidates(normalized);
+	const candidatesWithEvidence = candidates.filter(
+		(candidate) => candidate.evidenceCount > 0,
+	);
+	const workerLikeCandidates = candidatesWithEvidence.filter(
+		(candidate) => !candidate.instructionContext,
+	);
+	const substantialWorkerLikeCandidates = candidates.filter(
+		(candidate) =>
+			!candidate.instructionContext &&
+			candidate.evidenceCount === 0 &&
+			candidate.bodyLength >= 40,
+	);
+	const selectedCandidates =
+		workerLikeCandidates.length > 0
+			? workerLikeCandidates
+			: substantialWorkerLikeCandidates.length > 0
+				? substantialWorkerLikeCandidates
+			: candidatesWithEvidence.length > 1
+				? candidatesWithEvidence
+				: [];
+	const selectedCandidate = selectedCandidates[selectedCandidates.length - 1];
+	if (!selectedCandidate) return "";
+	const report = normalized.slice(selectedCandidate.index).trim();
 	return normalizeWorkerCompletionReport(report);
 }
 
@@ -579,45 +723,80 @@ export function usePromptTransfer({
 			console.log("[S3.13] cancelAutoRelay:", reason ?? "unknown");
 			if (ref.intervalId) clearInterval(ref.intervalId);
 			if (ref.timeoutId) clearTimeout(ref.timeoutId);
+			if (ref.captureDebounceId) clearTimeout(ref.captureDebounceId);
+			ref.unsubscribeOutputLog?.();
+			console.log("[S3.13-stream] armed cleared reason =", reason ?? "unknown");
 			autoRelayRef.current = null;
 		}
 		setAutoRelayStatus("idle");
 	}, []);
 
 	const startAutoRelayPreview = useCallback(
-		(paneId: string, markerOffset: number) => {
+		(
+			paneId: string,
+			markerOffset: number,
+			source: AutoRelayTracker["source"] = "terminal-submit",
+		) => {
 			if (autoRelayMode !== "preview") return;
 
 			cancelAutoRelay("start-new-relay");
 			setWorkerResponsePreview({ visible: false, text: "" });
-			setAutoRelayStatus("watching");
+			setAutoRelayStatus(source === "terminal-submit" ? "watching" : "idle");
+			console.log("[S3.13-stream] auto relay mode state =", autoRelayMode);
+			console.log("[S3.13-stream] terminal output capture armed =", {
+				paneId,
+				source,
+			});
 			console.log("[S3.13-stream] marker offset =", markerOffset);
 
 			const startedAt = Date.now();
 			const relayRef: AutoRelayTracker = {
 				paneId,
 				markerOffset,
+				source,
+				firstOutputAt: source === "terminal-submit" ? startedAt : null,
 				lastFingerprint: "",
 				lastChangedAt: Date.now(),
+				lastObservedOffset: markerOffset,
 			};
 
-			relayRef.intervalId = setInterval(() => {
+			const executeCapture = (reason: string) => {
 				const rawDelta = getOutputLogSince(paneId, relayRef.markerOffset);
 				const current = stripAnsi(rawDelta);
+				const headingCandidates = findWorkerCompletionHeadingCandidates(current);
 				const report = extractWorkerCompletionReport(current);
-				const completionReportCount = getCompletionReportCount(current);
+				const completionReportCount = headingCandidates.length;
 				const now = Date.now();
+				console.log("[S3.13-stream] capture executed =", reason);
 				console.log("[S3.13-stream] raw delta length =", rawDelta.length);
 				console.log("[S3.13-stream] clean delta length =", current.length);
 				console.log(
 					"[S3.13-stream] clean delta preview =",
 					previewText(current),
 				);
+				if (current.includes("完了報告") || headingCandidates.length > 0) {
+					console.log(
+						"[S3.13-stream] captured worker text first 1000 chars =",
+						current.slice(0, 1000),
+					);
+					console.log(
+						"[S3.13-stream] captured worker text last 1000 chars =",
+						current.slice(-1000),
+					);
+					console.log(
+						"[S3.13-stream] detected report heading candidates =",
+						summarizeWorkerCompletionCandidates(headingCandidates),
+					);
+				}
 				console.log(
 					"[S3.13-stream] completion report count =",
 					completionReportCount,
 				);
 				console.log("[S3.13-stream] has completion report =", Boolean(report));
+				console.log(
+					"[S3.13-stream] final extracted worker response length =",
+					report.length,
+				);
 				if (!report) return;
 
 				const fingerprint = fingerprintText(report);
@@ -654,13 +833,81 @@ export function usePromptTransfer({
 					visible: true,
 					text: truncatedReport,
 				});
-			}, AUTO_RELAY_POLL_INTERVAL_MS);
-			relayRef.timeoutId = setTimeout(() => {
-				cancelAutoRelay("timeout");
-				console.log(
-					"[S3.13] auto relay timeout after ms:",
-					Date.now() - startedAt,
+				console.log("[S3.13-stream] workerResponsePreview state set");
+			};
+
+			const scheduleCapture = (reason: string) => {
+				const currentOffset = getOutputLogOffset(paneId);
+				const outputDeltaLength = Math.max(
+					0,
+					currentOffset - relayRef.markerOffset,
 				);
+				console.log("[S3.13-stream] capture scheduled =", {
+					reason,
+					currentOffset,
+					outputDeltaLength,
+				});
+				if (relayRef.firstOutputAt === null) {
+					relayRef.firstOutputAt = Date.now();
+					setAutoRelayStatus("watching");
+					console.log("[S3.13-stream] terminal output capture trigger fired", {
+						paneId,
+						source: relayRef.source,
+						outputDeltaLength,
+					});
+				}
+				if (relayRef.captureDebounceId) {
+					clearTimeout(relayRef.captureDebounceId);
+				}
+				relayRef.captureDebounceId = setTimeout(
+					() => executeCapture(reason),
+					AUTO_RELAY_CAPTURE_DEBOUNCE_MS,
+				);
+			};
+
+			relayRef.unsubscribeOutputLog = subscribeOutputLog(paneId, (snapshot) => {
+				console.log("[S3.13-stream] subscription fired =", snapshot);
+				if (snapshot.offset <= relayRef.markerOffset) return;
+				relayRef.lastObservedOffset = Math.max(
+					relayRef.lastObservedOffset,
+					snapshot.offset,
+				);
+				scheduleCapture("subscription");
+			});
+
+			relayRef.intervalId = setInterval(() => {
+				const currentOffset = getOutputLogOffset(paneId);
+				const outputDeltaLength = Math.max(
+					0,
+					currentOffset - relayRef.markerOffset,
+				);
+				console.log("[S3.13-stream] polling tick =", {
+					paneId,
+					source: relayRef.source,
+					markerOffset: relayRef.markerOffset,
+					currentOffset,
+					outputDeltaLength,
+				});
+				if (currentOffset <= relayRef.markerOffset) return;
+				if (currentOffset > relayRef.lastObservedOffset) {
+					relayRef.lastObservedOffset = currentOffset;
+					scheduleCapture("polling-output-increased");
+					return;
+				}
+				if (relayRef.firstOutputAt !== null) {
+					scheduleCapture("polling-stability-check");
+				}
+			}, AUTO_RELAY_POLL_INTERVAL_MS);
+
+			relayRef.timeoutId = setTimeout(() => {
+				const reason =
+					relayRef.firstOutputAt === null ? "timeout-no-output" : "timeout";
+				cancelAutoRelay(reason);
+				console.log("[S3.13] auto relay timeout after ms:", {
+					source: relayRef.source,
+					elapsedMs: Date.now() - startedAt,
+					firstOutputAt: relayRef.firstOutputAt,
+				});
 			}, AUTO_RELAY_TIMEOUT_MS);
 
 			autoRelayRef.current = relayRef;
@@ -915,6 +1162,25 @@ export function usePromptTransfer({
 	}, [autoRelayMode, cancelAutoRelay]);
 
 	useEffect(() => {
+		if (autoRelayMode !== "preview") return;
+		if (!activeTerminal) return;
+		if (workerResponsePreview.visible) return;
+		const currentRelay = autoRelayRef.current;
+		if (currentRelay?.paneId === activeTerminal) return;
+		const markerOffset = getOutputLogOffset(activeTerminal);
+		console.log("[S3.13-stream] passive auto relay armed from current offset", {
+			paneId: activeTerminal,
+			markerOffset,
+		});
+		startAutoRelayPreview(activeTerminal, markerOffset, "mode-armed");
+	}, [
+		activeTerminal,
+		autoRelayMode,
+		startAutoRelayPreview,
+		workerResponsePreview.visible,
+	]);
+
+	useEffect(() => {
 		setCapturePreview(null);
 		setCaptureForTerminalPreview({ visible: false, text: "" });
 		if (autoCaptureRef.current) {
@@ -977,7 +1243,7 @@ export function usePromptTransfer({
 			const markerOffset = getOutputLogOffset(paneId);
 			console.log("[S3.13] marker captured before send");
 			console.log("[S3.13-stream] marker offset =", markerOffset);
-			return () => startAutoRelayPreview(paneId, markerOffset);
+			return () => startAutoRelayPreview(paneId, markerOffset, "terminal-submit");
 		},
 		[autoRelayMode, startAutoRelayPreview],
 	);
