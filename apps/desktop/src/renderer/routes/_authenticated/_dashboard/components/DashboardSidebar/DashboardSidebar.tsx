@@ -24,6 +24,7 @@ import { useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { HiOutlineCog6Tooth } from "react-icons/hi2";
+import { DoyDeckExplorer } from "renderer/components/DoyDeckExplorer";
 import { V2AvailableBanner } from "renderer/components/V2AvailableBanner";
 import { useHotkeyDisplay } from "renderer/hotkeys";
 import { useDashboardSidebarState } from "renderer/routes/_authenticated/hooks/useDashboardSidebarState";
@@ -43,6 +44,8 @@ import type { DashboardSidebarProject } from "./types";
 interface DashboardSidebarProps {
 	isCollapsed?: boolean;
 }
+
+type DashboardSidebarView = "workspaces" | "explorer";
 
 interface SortableProjectWrapperProps {
 	project: DashboardSidebarProject;
@@ -120,6 +123,8 @@ export function DashboardSidebar({
 
 	const [activeProject, setActiveProject] =
 		useState<DashboardSidebarProject | null>(null);
+	const [activeView, setActiveView] =
+		useState<DashboardSidebarView>("workspaces");
 
 	// Local project order — syncs from groups, updated on drag end
 	const [projectOrder, setProjectOrder] = useState(() =>
@@ -177,58 +182,68 @@ export function DashboardSidebar({
 			<DashboardSidebarHoverProvider>
 				<DashboardSidebarHoverCardOverlay>
 					<div className="flex h-full flex-col border-r border-border bg-muted/45 dark:bg-muted/35">
-						<DashboardSidebarHeader isCollapsed={isCollapsed} />
+						<DashboardSidebarHeader
+							isCollapsed={isCollapsed}
+							activeView={activeView}
+							onViewChange={setActiveView}
+						/>
 
-						<div className="flex-1 overflow-y-auto hide-scrollbar">
-							<DndContext
-								sensors={sensors}
-								collisionDetection={closestCenter}
-								measuring={{
-									droppable: { strategy: MeasuringStrategy.Always },
-								}}
-								onDragStart={({ active }) => {
-									const project = groups.find((p) => p.id === active.id);
-									setActiveProject(project ?? null);
-								}}
-								onDragEnd={handleDragEnd}
-								onDragCancel={() => setActiveProject(null)}
-							>
-								<SortableContext
-									items={projectOrder}
-									strategy={verticalListSortingStrategy}
+						{!isCollapsed && activeView === "explorer" ? (
+							<div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+								<DoyDeckExplorer workspaceId={activeV2WorkspaceId ?? undefined} />
+							</div>
+						) : (
+							<div className="flex-1 overflow-y-auto hide-scrollbar">
+								<DndContext
+									sensors={sensors}
+									collisionDetection={closestCenter}
+									measuring={{
+										droppable: { strategy: MeasuringStrategy.Always },
+									}}
+									onDragStart={({ active }) => {
+										const project = groups.find((p) => p.id === active.id);
+										setActiveProject(project ?? null);
+									}}
+									onDragEnd={handleDragEnd}
+									onDragCancel={() => setActiveProject(null)}
 								>
-									{orderedGroups.map((project) => (
-										<SortableProjectWrapper
-											key={project.id}
-											project={project}
-											isCollapsed={isCollapsed}
-											isDraggingProject={activeProject != null}
-											workspaceShortcutLabels={workspaceShortcutLabels}
-											onWorkspaceHover={refreshWorkspacePullRequest}
-											onToggleCollapse={toggleProjectCollapsed}
-										/>
-									))}
-								</SortableContext>
+									<SortableContext
+										items={projectOrder}
+										strategy={verticalListSortingStrategy}
+									>
+										{orderedGroups.map((project) => (
+											<SortableProjectWrapper
+												key={project.id}
+												project={project}
+												isCollapsed={isCollapsed}
+												isDraggingProject={activeProject != null}
+												workspaceShortcutLabels={workspaceShortcutLabels}
+												onWorkspaceHover={refreshWorkspacePullRequest}
+												onToggleCollapse={toggleProjectCollapsed}
+											/>
+										))}
+									</SortableContext>
 
-								{createPortal(
-									<DragOverlay dropAnimation={null}>
-										{activeProject && (
-											<div className="bg-background shadow-lg border-b border-border">
-												<DashboardSidebarProjectSection
-													project={activeProject}
-													isSidebarCollapsed={isCollapsed}
-													isDraggingProject
-													workspaceShortcutLabels={workspaceShortcutLabels}
-													onWorkspaceHover={() => {}}
-													onToggleCollapse={() => {}}
-												/>
-											</div>
-										)}
-									</DragOverlay>,
-									document.body,
-								)}
-							</DndContext>
-						</div>
+									{createPortal(
+										<DragOverlay dropAnimation={null}>
+											{activeProject && (
+												<div className="bg-background shadow-lg border-b border-border">
+													<DashboardSidebarProjectSection
+														project={activeProject}
+														isSidebarCollapsed={isCollapsed}
+														isDraggingProject
+														workspaceShortcutLabels={workspaceShortcutLabels}
+														onWorkspaceHover={() => {}}
+														onToggleCollapse={() => {}}
+													/>
+												</div>
+											)}
+										</DragOverlay>,
+										document.body,
+									)}
+								</DndContext>
+							</div>
+						)}
 						{!isCollapsed && <DashboardSidebarPortsList />}
 						{!isCollapsed && activeV2Project && activeHostUrl && (
 							<V2SetupScriptCard

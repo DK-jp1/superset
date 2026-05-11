@@ -14,6 +14,7 @@ import { HiMiniPlus, HiOutlineClipboardDocumentList } from "react-icons/hi2";
 import {
 	LuClock,
 	LuFolderInput,
+	LuFolderOpen,
 	LuFolderPlus,
 	LuLayers,
 	LuPlus,
@@ -32,10 +33,14 @@ import { useOpenNewWorkspaceModal } from "renderer/stores/new-workspace-modal";
 
 interface DashboardSidebarHeaderProps {
 	isCollapsed?: boolean;
+	activeView?: "workspaces" | "explorer";
+	onViewChange?: (view: "workspaces" | "explorer") => void;
 }
 
 export function DashboardSidebarHeader({
 	isCollapsed = false,
+	activeView = "workspaces",
+	onViewChange,
 }: DashboardSidebarHeaderProps) {
 	const openModal = useOpenNewWorkspaceModal();
 	const openNewProject = useOpenNewProjectModal();
@@ -82,7 +87,12 @@ export function DashboardSidebarHeader({
 	} = useTasksFilterStore();
 
 	const handleWorkspacesClick = () => {
+		onViewChange?.("workspaces");
 		navigate({ to: "/v2-workspaces" });
+	};
+
+	const handleExplorerClick = () => {
+		onViewChange?.("explorer");
 	};
 
 	const handleAutomationsClick = () => {
@@ -93,6 +103,7 @@ export function DashboardSidebarHeader({
 
 	const handleTasksClick = () => {
 		gateFeature(GATED_FEATURES.TASKS, () => {
+			onViewChange?.("workspaces");
 			const search: Record<string, string> = {};
 			if (lastTab !== "all") search.tab = lastTab;
 			if (lastAssignee) search.assignee = lastAssignee;
@@ -113,7 +124,7 @@ export function DashboardSidebarHeader({
 							onClick={handleWorkspacesClick}
 							className={cn(
 								"flex size-8 items-center justify-center rounded-md transition-colors",
-								isWorkspacesListOpen
+								isWorkspacesListOpen && activeView === "workspaces"
 									? "bg-accent text-foreground"
 									: "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
 							)}
@@ -140,6 +151,24 @@ export function DashboardSidebarHeader({
 						</button>
 					</TooltipTrigger>
 					<TooltipContent side="right">Tasks</TooltipContent>
+				</Tooltip>
+
+				<Tooltip delayDuration={300}>
+					<TooltipTrigger asChild>
+						<button
+							type="button"
+							onClick={handleExplorerClick}
+							className={cn(
+								"flex size-8 items-center justify-center rounded-md transition-colors",
+								activeView === "explorer"
+									? "bg-accent text-foreground"
+									: "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+							)}
+						>
+							<LuFolderOpen className="size-4" />
+						</button>
+					</TooltipTrigger>
+					<TooltipContent side="right">Explorer</TooltipContent>
 				</Tooltip>
 
 				{showAutomations && (
@@ -226,7 +255,7 @@ export function DashboardSidebarHeader({
 				onClick={handleWorkspacesClick}
 				className={cn(
 					"flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium transition-colors",
-					isWorkspacesListOpen
+					isWorkspacesListOpen && activeView === "workspaces"
 						? "bg-accent text-foreground"
 						: "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
 				)}
@@ -263,6 +292,20 @@ export function DashboardSidebarHeader({
 			>
 				<HiOutlineClipboardDocumentList className="size-4 shrink-0" />
 				<span className="flex-1 text-left">Tasks</span>
+			</button>
+
+			<button
+				type="button"
+				onClick={handleExplorerClick}
+				className={cn(
+					"flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium transition-colors",
+					activeView === "explorer"
+						? "bg-accent text-foreground"
+						: "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+				)}
+			>
+				<LuFolderOpen className="size-4 shrink-0" />
+				<span className="flex-1 text-left">Explorer</span>
 			</button>
 
 			<div className="flex items-center gap-1">

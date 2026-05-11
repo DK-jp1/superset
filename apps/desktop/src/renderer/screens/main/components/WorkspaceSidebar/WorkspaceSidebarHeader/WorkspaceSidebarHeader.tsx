@@ -2,7 +2,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@superset/ui/tooltip";
 import { cn } from "@superset/ui/utils";
 import { useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { HiOutlineClipboardDocumentList } from "react-icons/hi2";
-import { LuLayers } from "react-icons/lu";
+import { LuFolderOpen, LuLayers } from "react-icons/lu";
 import { GATED_FEATURES, usePaywall } from "renderer/components/Paywall";
 import { useTasksFilterStore } from "renderer/routes/_authenticated/_dashboard/tasks/stores/tasks-filter-state";
 import { STROKE_WIDTH } from "../constants";
@@ -10,10 +10,14 @@ import { NewWorkspaceButton } from "./NewWorkspaceButton";
 
 interface WorkspaceSidebarHeaderProps {
 	isCollapsed?: boolean;
+	activeView?: "workspaces" | "explorer";
+	onViewChange?: (view: "workspaces" | "explorer") => void;
 }
 
 export function WorkspaceSidebarHeader({
 	isCollapsed = false,
+	activeView = "workspaces",
+	onViewChange,
 }: WorkspaceSidebarHeaderProps) {
 	const navigate = useNavigate();
 	const matchRoute = useMatchRoute();
@@ -23,12 +27,17 @@ export function WorkspaceSidebarHeader({
 	const isTasksOpen = !!matchRoute({ to: "/tasks", fuzzy: true });
 
 	const handleWorkspacesClick = () => {
+		onViewChange?.("workspaces");
 		if (isWorkspacesListOpen) {
 			// Navigate back to workspace view
 			navigate({ to: "/workspace" });
 		} else {
 			navigate({ to: "/workspaces" });
 		}
+	};
+
+	const handleExplorerClick = () => {
+		onViewChange?.("explorer");
 	};
 
 	const {
@@ -39,6 +48,7 @@ export function WorkspaceSidebarHeader({
 
 	const handleTasksClick = () => {
 		gateFeature(GATED_FEATURES.TASKS, () => {
+			onViewChange?.("workspaces");
 			const search: Record<string, string> = {};
 			if (lastTab !== "all") search.tab = lastTab;
 			if (lastAssignee) search.assignee = lastAssignee;
@@ -57,7 +67,7 @@ export function WorkspaceSidebarHeader({
 							onClick={handleWorkspacesClick}
 							className={cn(
 								"flex items-center justify-center size-8 rounded-md transition-colors",
-								isWorkspacesListOpen
+								isWorkspacesListOpen && activeView === "workspaces"
 									? "text-foreground bg-accent"
 									: "text-muted-foreground hover:text-foreground hover:bg-accent/50",
 							)}
@@ -89,6 +99,24 @@ export function WorkspaceSidebarHeader({
 					<TooltipContent side="right">Tasks</TooltipContent>
 				</Tooltip>
 
+				<Tooltip delayDuration={300}>
+					<TooltipTrigger asChild>
+						<button
+							type="button"
+							onClick={handleExplorerClick}
+							className={cn(
+								"flex items-center justify-center size-8 rounded-md transition-colors",
+								activeView === "explorer"
+									? "text-foreground bg-accent"
+									: "text-muted-foreground hover:text-foreground hover:bg-accent/50",
+							)}
+						>
+							<LuFolderOpen className="size-4" strokeWidth={STROKE_WIDTH} />
+						</button>
+					</TooltipTrigger>
+					<TooltipContent side="right">Explorer</TooltipContent>
+				</Tooltip>
+
 				<NewWorkspaceButton isCollapsed />
 			</div>
 		);
@@ -101,7 +129,7 @@ export function WorkspaceSidebarHeader({
 				onClick={handleWorkspacesClick}
 				className={cn(
 					"flex items-center gap-2 px-2 py-1.5 w-full rounded-md transition-colors",
-					isWorkspacesListOpen
+					isWorkspacesListOpen && activeView === "workspaces"
 						? "text-foreground bg-accent"
 						: "text-muted-foreground hover:text-foreground hover:bg-accent/50",
 				)}
@@ -129,6 +157,22 @@ export function WorkspaceSidebarHeader({
 					/>
 				</div>
 				<span className="text-sm font-medium flex-1 text-left">Tasks</span>
+			</button>
+
+			<button
+				type="button"
+				onClick={handleExplorerClick}
+				className={cn(
+					"flex items-center gap-2 px-2 py-1.5 w-full rounded-md transition-colors",
+					activeView === "explorer"
+						? "text-foreground bg-accent"
+						: "text-muted-foreground hover:text-foreground hover:bg-accent/50",
+				)}
+			>
+				<div className="flex items-center justify-center size-5">
+					<LuFolderOpen className="size-4" strokeWidth={STROKE_WIDTH} />
+				</div>
+				<span className="text-sm font-medium flex-1 text-left">Explorer</span>
 			</button>
 
 			<NewWorkspaceButton />

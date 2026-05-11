@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { DoyDeckExplorer } from "renderer/components/DoyDeckExplorer";
 import { V2AvailableBanner } from "renderer/components/V2AvailableBanner";
 import { useWorkspaceShortcuts } from "renderer/hooks/useWorkspaceShortcuts";
 import { useWorkspaceSelectionStore } from "renderer/stores/workspace-selection";
@@ -14,15 +15,20 @@ interface WorkspaceSidebarProps {
 	isCollapsed?: boolean;
 	activeProjectId: string | null;
 	activeProjectName: string | null;
+	activeWorkspaceId?: string | null;
 }
 
 export function WorkspaceSidebar({
 	isCollapsed = false,
 	activeProjectId,
 	activeProjectName,
+	activeWorkspaceId,
 }: WorkspaceSidebarProps) {
 	const { groups } = useWorkspaceShortcuts();
 	const clearSelection = useWorkspaceSelectionStore((s) => s.clearSelection);
+	const [activeView, setActiveView] = useState<"workspaces" | "explorer">(
+		"workspaces",
+	);
 
 	const projectShortcutIndices = useMemo(
 		() =>
@@ -72,41 +78,51 @@ export function WorkspaceSidebar({
 
 	return (
 		<SidebarDropZone className="flex flex-col h-full bg-muted/45 dark:bg-muted/35">
-			<WorkspaceSidebarHeader isCollapsed={isCollapsed} />
+			<WorkspaceSidebarHeader
+				isCollapsed={isCollapsed}
+				activeView={activeView}
+				onViewChange={setActiveView}
+			/>
 
-			{/* biome-ignore lint/a11y/noStaticElementInteractions: mousedown on empty sidebar space clears selection */}
-			<div
-				className="flex-1 overflow-y-auto hide-scrollbar"
-				onMouseDown={handleSidebarMouseDown}
-			>
-				{groups.map((group, index) => (
-					<ProjectSection
-						key={group.project.id}
-						projectId={group.project.id}
-						projectName={group.project.name}
-						projectColor={group.project.color}
-						githubOwner={group.project.githubOwner}
-						mainRepoPath={group.project.mainRepoPath}
-						hideImage={group.project.hideImage}
-						iconUrl={group.project.iconUrl}
-						workspaces={group.workspaces}
-						sections={group.sections ?? []}
-						topLevelItems={group.topLevelItems}
-						shortcutBaseIndex={projectShortcutIndices[index]}
-						index={index}
-						isCollapsed={isCollapsed}
-					/>
-				))}
+			{!isCollapsed && activeView === "explorer" ? (
+				<div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+					<DoyDeckExplorer workspaceId={activeWorkspaceId ?? undefined} />
+				</div>
+			) : (
+				/* biome-ignore lint/a11y/noStaticElementInteractions: mousedown on empty sidebar space clears selection */
+				<div
+					className="flex-1 overflow-y-auto hide-scrollbar"
+					onMouseDown={handleSidebarMouseDown}
+				>
+					{groups.map((group, index) => (
+						<ProjectSection
+							key={group.project.id}
+							projectId={group.project.id}
+							projectName={group.project.name}
+							projectColor={group.project.color}
+							githubOwner={group.project.githubOwner}
+							mainRepoPath={group.project.mainRepoPath}
+							hideImage={group.project.hideImage}
+							iconUrl={group.project.iconUrl}
+							workspaces={group.workspaces}
+							sections={group.sections ?? []}
+							topLevelItems={group.topLevelItems}
+							shortcutBaseIndex={projectShortcutIndices[index]}
+							index={index}
+							isCollapsed={isCollapsed}
+						/>
+					))}
 
-				{groups.length === 0 && !isCollapsed && (
-					<div className="flex flex-col items-center justify-center h-32 text-muted-foreground text-sm">
-						<span>No workspaces yet</span>
-						<span className="text-xs mt-1">
-							Add project or drag a Git repo folder here
-						</span>
-					</div>
-				)}
-			</div>
+					{groups.length === 0 && !isCollapsed && (
+						<div className="flex flex-col items-center justify-center h-32 text-muted-foreground text-sm">
+							<span>No workspaces yet</span>
+							<span className="text-xs mt-1">
+								Add project or drag a Git repo folder here
+							</span>
+						</div>
+					)}
+				</div>
+			)}
 
 			{!isCollapsed && <PortsList />}
 

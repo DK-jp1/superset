@@ -113,6 +113,7 @@ function DashboardLayout() {
 					isCollapsed={isWorkspaceSidebarCollapsed()}
 					activeProjectId={currentWorkspace?.projectId ?? null}
 					activeProjectName={currentWorkspace?.project?.name ?? null}
+					activeWorkspaceId={currentWorkspaceId}
 				/>
 			)}
 		</ResizablePanel>
