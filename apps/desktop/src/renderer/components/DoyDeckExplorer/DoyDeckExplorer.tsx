@@ -112,6 +112,10 @@ function isMediaPreview(
 	return !!preview && MEDIA_PREVIEW_KINDS.has(preview.kind);
 }
 
+function rowsToTsv(rows: string[][]): string {
+	return rows.map((row) => row.join("\t")).join("\n");
+}
+
 function buildRows({
 	entries,
 	directoryState,
@@ -279,11 +283,77 @@ function PreviewRenderer({
 		);
 	}
 
+	if (preview.kind === "unsupportedOffice") {
+		return (
+			<div className="h-full min-h-0 overflow-auto px-3 py-3 text-xs text-muted-foreground">
+				<div>Preview unavailable for this Office file.</div>
+				{"error" in preview && preview.error ? (
+					<div className="mt-2 text-[11px] text-destructive">
+						{preview.error}
+					</div>
+				) : null}
+			</div>
+		);
+	}
+
 	if (preview.kind === "text") {
 		return (
 			<pre className="h-full min-h-0 min-w-full overflow-auto whitespace-pre-wrap break-words px-3 py-3 font-mono text-[11px] leading-5 text-foreground">
 				{preview.content}
 			</pre>
+		);
+	}
+
+	if (preview.kind === "office") {
+		return (
+			<div className="h-full min-h-0 overflow-auto px-3 py-3 text-xs text-foreground">
+				<div className="mb-3 border-b pb-2">
+					<div className="font-medium">{preview.title}</div>
+					<div className="mt-1 text-[11px] text-muted-foreground">
+						Office preview: {preview.officeType.toUpperCase()} / Size:{" "}
+						{preview.byteLength} bytes
+					</div>
+				</div>
+				{preview.warnings.length > 0 ? (
+					<div className="mb-3 rounded border border-border bg-muted/30 px-2 py-2 text-[11px] text-muted-foreground">
+						{preview.warnings.map((warning) => (
+							<div key={warning}>{warning}</div>
+						))}
+					</div>
+				) : null}
+				{"sections" in preview && preview.sections
+					? preview.sections.map((section) => (
+							<section key={section.title} className="mb-4">
+								<h4 className="mb-1 text-xs font-medium">{section.title}</h4>
+								<pre className="overflow-auto whitespace-pre-wrap break-words rounded border bg-muted/20 px-2 py-2 font-mono text-[11px] leading-5">
+									{section.content}
+								</pre>
+							</section>
+						))
+					: null}
+				{"sheets" in preview && preview.sheets
+					? preview.sheets.map((sheet) => (
+							<section key={sheet.name} className="mb-4">
+								<h4 className="mb-1 text-xs font-medium">{sheet.name}</h4>
+								<pre className="overflow-auto whitespace-pre rounded border bg-muted/20 px-2 py-2 font-mono text-[11px] leading-5">
+									{sheet.rows.length > 0
+										? rowsToTsv(sheet.rows)
+										: "No preview rows."}
+								</pre>
+								{sheet.truncatedRows || sheet.truncatedColumns ? (
+									<div className="mt-1 text-[11px] text-muted-foreground">
+										Sheet preview truncated.
+									</div>
+								) : null}
+							</section>
+						))
+					: null}
+				{preview.outputTruncated ? (
+					<div className="text-[11px] text-muted-foreground">
+						Office preview output was truncated.
+					</div>
+				) : null}
+			</div>
 		);
 	}
 
