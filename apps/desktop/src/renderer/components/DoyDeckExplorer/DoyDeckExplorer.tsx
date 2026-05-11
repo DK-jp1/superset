@@ -55,8 +55,19 @@ const MEDIA_PREVIEW_KINDS = new Set(["image", "pdf", "video", "audio"]);
 const INITIAL_LIST_HEIGHT_PERCENT = 45;
 const MIN_LIST_HEIGHT_PX = 120;
 const MIN_PREVIEW_HEIGHT_PX = 160;
-const PDF_METADATA_HEIGHT_PX = 24;
+const EXPLORER_SPLITTER_HEIGHT_PX = 8;
 const MIN_PDF_FRAME_HEIGHT_PX = 80;
+
+function getElementRect(element: HTMLElement | null) {
+	if (!element) return null;
+	const rect = element.getBoundingClientRect();
+	return {
+		x: Math.round(rect.x),
+		y: Math.round(rect.y),
+		width: Math.round(rect.width),
+		height: Math.round(rect.height),
+	};
+}
 
 function getErrorMessage(error: unknown): string {
 	if (error instanceof Error) return error.message;
@@ -148,6 +159,10 @@ function PreviewRenderer({
 }) {
 	const [objectUrl, setObjectUrl] = useState<string | null>(null);
 	const [pdfFallbackVisible, setPdfFallbackVisible] = useState(false);
+	const pdfMetadataRef = useRef<HTMLDivElement>(null);
+	const pdfNoteRef = useRef<HTMLDivElement>(null);
+	const pdfFrameRef = useRef<HTMLIFrameElement>(null);
+	const [pdfChromeHeight, setPdfChromeHeight] = useState(0);
 
 	useEffect(() => {
 		if (!preview) return;
@@ -182,6 +197,43 @@ function PreviewRenderer({
 			setObjectUrl(null);
 		}
 	}, [preview]);
+
+	useEffect(() => {
+		if (preview?.kind !== "pdf") return;
+
+		const updatePdfChromeHeight = () => {
+			const metadataHeight =
+				pdfMetadataRef.current?.getBoundingClientRect().height ?? 0;
+			const noteHeight = pdfNoteRef.current?.getBoundingClientRect().height ?? 0;
+			setPdfChromeHeight(Math.ceil(metadataHeight + noteHeight));
+		};
+
+		updatePdfChromeHeight();
+		const resizeObserver = new ResizeObserver(updatePdfChromeHeight);
+		if (pdfMetadataRef.current) resizeObserver.observe(pdfMetadataRef.current);
+		if (pdfNoteRef.current) resizeObserver.observe(pdfNoteRef.current);
+		return () => resizeObserver.disconnect();
+	}, [preview?.kind]);
+
+	const computedPdfFrameHeight =
+		preview?.kind === "pdf" && previewHeight > pdfChromeHeight
+			? Math.max(previewHeight - pdfChromeHeight, MIN_PDF_FRAME_HEIGHT_PX)
+			: undefined;
+
+	useEffect(() => {
+		if (preview?.kind !== "pdf") return;
+		console.info("[S4.2-fix] Explorer PDF layout", {
+			measuredPreviewHeight: previewHeight,
+			pdfChromeHeight,
+			computedPdfHeight: computedPdfFrameHeight ?? null,
+			iframeRect: getElementRect(pdfFrameRef.current),
+		});
+	}, [
+		computedPdfFrameHeight,
+		pdfChromeHeight,
+		preview?.kind,
+		previewHeight,
+	]);
 
 	if (!filePath) {
 		return (
@@ -253,35 +305,40 @@ function PreviewRenderer({
 	}
 
 	if (preview.kind === "pdf") {
-		const pdfFrameHeight =
-			previewHeight > PDF_METADATA_HEIGHT_PX
-				? Math.max(
-						previewHeight - PDF_METADATA_HEIGHT_PX,
-						MIN_PDF_FRAME_HEIGHT_PX,
-					)
-				: undefined;
 		return (
 			<div
 				className="flex h-full min-h-0 flex-col overflow-hidden"
 				style={previewHeight > 0 ? { height: previewHeight } : undefined}
 			>
-				<div className="shrink-0 border-b px-3 py-1.5 text-[10px] text-muted-foreground">
+				<div
+					ref={pdfMetadataRef}
+					className="shrink-0 border-b px-3 py-1.5 text-[10px] text-muted-foreground"
+				>
 					Preview kind: pdf / MIME: {preview.mimeType} / Size:{" "}
 					{preview.byteLength} bytes
 				</div>
-				<div className="shrink-0 border-b px-3 py-1.5 text-[10px] leading-4 text-muted-foreground">
+				<div
+					ref={pdfNoteRef}
+					className="shrink-0 border-b px-3 py-1.5 text-[10px] leading-4 text-muted-foreground"
+				>
 					PDF preview uses the native Chromium viewer. Zoom/fit behavior may
 					be limited in the sidebar.
 				</div>
 				<iframe
+					ref={pdfFrameRef}
 					src={objectUrl}
 					title={getBaseName(filePath)}
 					className="min-h-0 w-full shrink-0 border-0 bg-background"
-					style={pdfFrameHeight ? { height: pdfFrameHeight } : undefined}
+					style={
+						computedPdfFrameHeight
+							? { height: computedPdfFrameHeight, width: "100%" }
+							: undefined
+					}
 					onLoad={() => {
 						console.info("[S4.2] Explorer PDF iframe loaded", {
 							mimeType: preview.mimeType,
 							byteLength: preview.byteLength,
+							iframeRect: getElementRect(pdfFrameRef.current),
 						});
 						setPdfFallbackVisible(false);
 					}}
@@ -296,7 +353,11 @@ function PreviewRenderer({
 				{pdfFallbackVisible && (
 					<div
 						className="min-h-0 shrink-0 border-t"
-						style={pdfFrameHeight ? { height: pdfFrameHeight } : undefined}
+						style={
+							computedPdfFrameHeight
+								? { height: computedPdfFrameHeight }
+								: undefined
+						}
 					>
 						<embed
 							src={objectUrl}
@@ -383,10 +444,13 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 	);
 	const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 	const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
-	const [listHeightPercent, setListHeightPercent] = useState(
-		INITIAL_LIST_HEIGHT_PERCENT,
-	);
+	const explorerRootRef = useRef<HTMLDivElement>(null);
+	const explorerContentRef = useRef<HTMLDivElement>(null);
+	const listRef = useRef<HTMLDivElement>(null);
+	const previewPanelRef = useRef<HTMLDivElement>(null);
 	const previewBodyRef = useRef<HTMLDivElement>(null);
+	const [explorerContentHeight, setExplorerContentHeight] = useState(0);
+	const [listHeightPx, setListHeightPx] = useState(0);
 	const [previewBodyHeight, setPreviewBodyHeight] = useState(0);
 
 	const rootsQuery = electronTrpc.doydeckExplorer.getRoots.useQuery({
@@ -458,6 +522,48 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 	}, [canLoadRoot, loadDirectory, selectedRoot?.absolutePath]);
 
 	useEffect(() => {
+		const element = explorerContentRef.current;
+		if (!element) return;
+
+		const updateHeight = () => {
+			setExplorerContentHeight(
+				Math.floor(element.getBoundingClientRect().height),
+			);
+		};
+		updateHeight();
+		const resizeObserver = new ResizeObserver(updateHeight);
+		resizeObserver.observe(element);
+		return () => resizeObserver.disconnect();
+	}, []);
+
+	useEffect(() => {
+		if (explorerContentHeight <= 0) return;
+		const maxListHeight = Math.max(
+			MIN_LIST_HEIGHT_PX,
+			explorerContentHeight -
+				EXPLORER_SPLITTER_HEIGHT_PX -
+				MIN_PREVIEW_HEIGHT_PX,
+		);
+		const initialListHeight = Math.round(
+			explorerContentHeight * (INITIAL_LIST_HEIGHT_PERCENT / 100),
+		);
+		setListHeightPx((prev) => {
+			const next = prev > 0 ? prev : initialListHeight;
+			return Math.min(Math.max(next, MIN_LIST_HEIGHT_PX), maxListHeight);
+		});
+	}, [explorerContentHeight]);
+
+	const previewPanelHeightPx =
+		explorerContentHeight > 0 && listHeightPx > 0
+			? Math.max(
+					explorerContentHeight -
+						listHeightPx -
+						EXPLORER_SPLITTER_HEIGHT_PX,
+					MIN_PREVIEW_HEIGHT_PX,
+				)
+			: 0;
+
+	useEffect(() => {
 		const element = previewBodyRef.current;
 		if (!element) return;
 
@@ -469,6 +575,26 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		resizeObserver.observe(element);
 		return () => resizeObserver.disconnect();
 	}, []);
+
+	useEffect(() => {
+		if (previewQuery.data?.kind !== "pdf") return;
+		console.info("[S4.2-fix] Explorer layout rects", {
+			explorerRootRect: getElementRect(explorerRootRef.current),
+			listRect: getElementRect(listRef.current),
+			previewPanelRect: getElementRect(previewPanelRef.current),
+			previewBodyRect: getElementRect(previewBodyRef.current),
+			explorerContentHeight,
+			listHeightPx,
+			previewPanelHeightPx,
+			measuredPreviewHeight: previewBodyHeight,
+		});
+	}, [
+		explorerContentHeight,
+		listHeightPx,
+		previewBodyHeight,
+		previewPanelHeightPx,
+		previewQuery.data?.kind,
+	]);
 
 	const selectedRootState = selectedRoot?.absolutePath
 		? directoryState[selectedRoot.absolutePath]
@@ -521,7 +647,7 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 	const handleResizePointerDown = (
 		event: React.PointerEvent<HTMLDivElement>,
 	) => {
-		const container = event.currentTarget.parentElement;
+		const container = explorerContentRef.current;
 		if (!container) return;
 		event.preventDefault();
 		event.currentTarget.setPointerCapture(event.pointerId);
@@ -529,15 +655,22 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		const updateHeight = (clientY: number) => {
 			const rect = container.getBoundingClientRect();
 			const availableHeight = rect.height;
-			if (availableHeight <= MIN_LIST_HEIGHT_PX + MIN_PREVIEW_HEIGHT_PX) {
+			if (
+				availableHeight <=
+				MIN_LIST_HEIGHT_PX +
+					EXPLORER_SPLITTER_HEIGHT_PX +
+					MIN_PREVIEW_HEIGHT_PX
+			) {
 				return;
 			}
 			const rawListHeight = clientY - rect.top;
 			const clampedListHeight = Math.min(
 				Math.max(rawListHeight, MIN_LIST_HEIGHT_PX),
-				availableHeight - MIN_PREVIEW_HEIGHT_PX,
+				availableHeight -
+					EXPLORER_SPLITTER_HEIGHT_PX -
+					MIN_PREVIEW_HEIGHT_PX,
 			);
-			setListHeightPercent((clampedListHeight / availableHeight) * 100);
+			setListHeightPx(Math.round(clampedListHeight));
 		};
 
 		const handlePointerMove = (moveEvent: PointerEvent) => {
@@ -555,8 +688,11 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		updateHeight(event.clientY);
 	};
 
-	return (
-		<div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
+		return (
+			<div
+				ref={explorerRootRef}
+				className="flex h-full min-h-0 flex-col overflow-hidden bg-background"
+			>
 			<div className="flex shrink-0 items-center gap-2 border-b px-2 py-2">
 				<Select
 					value={rootId}
@@ -587,13 +723,22 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 				</div>
 			</div>
 
-			<div className="flex min-h-0 flex-1 flex-col">
+			<div ref={explorerContentRef} className="flex min-h-0 flex-1 flex-col">
 				<div
+					ref={listRef}
 					className="overflow-auto"
-					style={{
-						flexBasis: `${listHeightPercent}%`,
-						minHeight: MIN_LIST_HEIGHT_PX,
-					}}
+					style={
+						listHeightPx > 0
+							? {
+									height: listHeightPx,
+									minHeight: MIN_LIST_HEIGHT_PX,
+									flex: "0 0 auto",
+								}
+							: {
+									flexBasis: `${INITIAL_LIST_HEIGHT_PERCENT}%`,
+									minHeight: MIN_LIST_HEIGHT_PX,
+								}
+					}
 				>
 					{rootsQuery.isLoading && (
 						<div className="px-3 py-3 text-xs text-muted-foreground">
@@ -697,13 +842,23 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 					className="group relative h-2 shrink-0 cursor-row-resize border-y bg-border/40"
 					onPointerDown={handleResizePointerDown}
 					role="separator"
+					style={{ height: EXPLORER_SPLITTER_HEIGHT_PX }}
 				>
 					<div className="absolute left-1/2 top-1/2 h-0.5 w-8 -translate-x-1/2 -translate-y-1/2 rounded bg-muted-foreground/35 group-hover:bg-muted-foreground/70" />
 				</div>
 
 				<div
+					ref={previewPanelRef}
 					className="flex min-h-0 flex-col overflow-hidden"
-					style={{ minHeight: MIN_PREVIEW_HEIGHT_PX }}
+					style={
+						previewPanelHeightPx > 0
+							? {
+									height: previewPanelHeightPx,
+									minHeight: MIN_PREVIEW_HEIGHT_PX,
+									flex: "0 0 auto",
+								}
+							: { minHeight: MIN_PREVIEW_HEIGHT_PX, flex: "1 1 auto" }
+					}
 				>
 					<div className="flex h-9 shrink-0 items-center gap-1 border-b px-2">
 						<FileQuestion className="size-3.5 shrink-0 text-muted-foreground" />
