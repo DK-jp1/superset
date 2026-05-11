@@ -10,6 +10,7 @@ import {
 import { cn } from "@superset/ui/utils";
 import { toast } from "@superset/ui/sonner";
 import { useCallback, useEffect, useState } from "react";
+import { useDoyDeckDropdownClose } from "renderer/stores/doydeck-dropdown-close-events";
 import {
 	LuChevronDown,
 	LuClipboard,
@@ -76,6 +77,13 @@ export function CommanderHelperBar({
 		text: string;
 		label: string;
 	} | null>(null);
+	const [actionsOpen, setActionsOpen] = useState(false);
+
+	const closeActions = useCallback(() => {
+		setActionsOpen(false);
+	}, []);
+
+	useDoyDeckDropdownClose(closeActions);
 
 	useEffect(() => {
 		if (!activeTerminal && pendingSend) setPendingSend(null);
@@ -160,7 +168,7 @@ export function CommanderHelperBar({
 					Auto Relay {autoRelayMode === "preview" ? "Preview" : "OFF"}
 				</Button>
 				<div className="flex-1" />
-				<DropdownMenu>
+				<DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
 					<DropdownMenuTrigger asChild>
 						<Button
 							variant="ghost"

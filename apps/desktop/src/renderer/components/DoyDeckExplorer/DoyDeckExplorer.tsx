@@ -42,6 +42,7 @@ import {
 	sendSelectedPathToBrowserAI,
 	sendSelectedPathToTerminalPreview,
 } from "renderer/stores/doydeck-commander-actions";
+import { useDoyDeckDropdownClose } from "renderer/stores/doydeck-dropdown-close-events";
 import { openDoyDeckCenterPreview } from "renderer/stores/doydeck-preview-openers";
 import type { CommanderSelectedPath } from "renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/components/WorkspaceSidebar/components/CommanderTab/commander-types";
 import { DoyDeckPreviewRenderer } from "./DoyDeckPreviewRenderer";
@@ -204,6 +205,7 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 	const [selectedKind, setSelectedKind] = useState<ExplorerEntryKind | null>(
 		null,
 	);
+	const [actionsOpen, setActionsOpen] = useState(false);
 	const explorerRootRef = useRef<HTMLDivElement>(null);
 	const explorerContentRef = useRef<HTMLDivElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
@@ -212,6 +214,12 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 	const [explorerContentHeight, setExplorerContentHeight] = useState(0);
 	const [listHeightPx, setListHeightPx] = useState(0);
 	const [previewBodyHeight, setPreviewBodyHeight] = useState(0);
+
+	const closeActions = useCallback(() => {
+		setActionsOpen(false);
+	}, []);
+
+	useDoyDeckDropdownClose(closeActions);
 
 	const rootsQuery = electronTrpc.doydeckExplorer.getRoots.useQuery({
 		workspaceId,
@@ -705,7 +713,7 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 							disabled={!selectedCommanderPath}
 							onClick={handleAddToSession}
 						/>
-						<DropdownMenu>
+						<DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
 							<Tooltip>
 								<TooltipTrigger asChild>
 									<DropdownMenuTrigger asChild>

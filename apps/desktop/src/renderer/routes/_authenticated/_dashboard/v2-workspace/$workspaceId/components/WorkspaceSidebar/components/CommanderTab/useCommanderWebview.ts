@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { requestDoyDeckDropdownClose } from "renderer/stores/doydeck-dropdown-close-events";
 
 interface WebviewState {
 	currentUrl: string;
@@ -77,6 +78,7 @@ export function useCommanderWebview() {
 		};
 
 		const onFailLoad = () => syncNav();
+		const onWebviewInteraction = () => requestDoyDeckDropdownClose();
 
 		wv.addEventListener("did-start-loading", onStart);
 		wv.addEventListener("did-stop-loading", onStop);
@@ -84,6 +86,9 @@ export function useCommanderWebview() {
 		wv.addEventListener("did-navigate", onNav);
 		wv.addEventListener("did-navigate-in-page", onNav);
 		wv.addEventListener("page-title-updated", onTitle);
+		wv.addEventListener("focus", onWebviewInteraction);
+		wv.addEventListener("pointerdown", onWebviewInteraction);
+		wv.addEventListener("mousedown", onWebviewInteraction);
 
 		return () => {
 			wv.removeEventListener("did-start-loading", onStart);
@@ -92,6 +97,9 @@ export function useCommanderWebview() {
 			wv.removeEventListener("did-navigate", onNav);
 			wv.removeEventListener("did-navigate-in-page", onNav);
 			wv.removeEventListener("page-title-updated", onTitle);
+			wv.removeEventListener("focus", onWebviewInteraction);
+			wv.removeEventListener("pointerdown", onWebviewInteraction);
+			wv.removeEventListener("mousedown", onWebviewInteraction);
 			if (container.contains(wv)) container.removeChild(wv);
 			parkedWebview = wv;
 			webviewRef.current = null;
