@@ -20,7 +20,11 @@ import {
 	generateReviewPrompt,
 	type HandoffGitSummary,
 } from "./hooks/useCommanderPrompts";
-import { createEmptyCommanderSession } from "./hooks/session-extraction";
+import {
+	commanderStateFromSession,
+	createEmptyCommanderSession,
+} from "./hooks/session-extraction";
+import { useCommanderSessionPersistence } from "./hooks/useCommanderSessionPersistence";
 import type { AssistantCaptureSnapshot } from "./hooks/usePromptTransfer";
 import type { AutoRelayMode } from "./hooks/usePromptTransfer";
 import { usePromptTransfer } from "./hooks/usePromptTransfer";
@@ -64,6 +68,37 @@ export function CommanderTab({
 
 	const activeTerminal = useActiveTerminal();
 	const webview = useCommanderWebview();
+	const sessionPersistence = useCommanderSessionPersistence(workspaceId);
+
+	useEffect(() => {
+		if (!workspaceId.trim()) return;
+		const loadedSession =
+			sessionPersistence.loadSession() ?? createEmptyCommanderSession();
+		setSession(loadedSession);
+		setState(commanderStateFromSession(loadedSession));
+	}, [workspaceId, sessionPersistence.loadSession]);
+
+	const handleSessionApplied = useCallback(
+		(appliedSession: CommanderSession) => {
+			sessionPersistence.saveSession(appliedSession);
+		},
+		[sessionPersistence],
+	);
+
+	const handleClearSession = useCallback(() => {
+		if (
+			!window.confirm(
+				"保存済みCommander Sessionを削除しますか？\nGit / Files、Auto Relay、Browser / Terminal状態には触れません。",
+			)
+		) {
+			return;
+		}
+		sessionPersistence.clearSession();
+		const emptySession = createEmptyCommanderSession();
+		setSession(emptySession);
+		setState(commanderStateFromSession(emptySession));
+		toast.success("Commander Sessionを削除しました");
+	}, [sessionPersistence]);
 
 	const transfer = usePromptTransfer({
 		workspaceId,
@@ -77,6 +112,7 @@ export function CommanderTab({
 		injectIntoPage: webview.injectIntoPage,
 		onUpdateState: setState,
 		onUpdateSession: setSession,
+		onSessionApplied: handleSessionApplied,
 		onSetView: setView,
 		workerPrompt,
 		reviewPrompt,
@@ -240,6 +276,7 @@ export function CommanderTab({
 					onExtractSessionFromAI={transfer.handleExtractSessionFromAI}
 					onExtractPlanFromWorker={transfer.handleExtractPlanFromWorker}
 					onViewEditSession={transfer.handleViewEditSession}
+					onClearSession={handleClearSession}
 					handoffPrompt={transfer.handoffPreview.text}
 					autoRelayMode={autoRelayMode}
 					onAutoRelayModeChange={setAutoRelayMode}

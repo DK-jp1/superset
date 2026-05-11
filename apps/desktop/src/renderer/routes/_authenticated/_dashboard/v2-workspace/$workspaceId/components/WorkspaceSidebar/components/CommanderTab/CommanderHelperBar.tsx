@@ -18,6 +18,7 @@ import {
 	LuPencil,
 	LuSend,
 	LuTerminal,
+	LuTrash2,
 	LuZap,
 } from "react-icons/lu";
 import type { CommanderState } from "./commander-types";
@@ -40,6 +41,7 @@ export function CommanderHelperBar({
 	onExtractSessionFromAI,
 	onExtractPlanFromWorker,
 	onViewEditSession,
+	onClearSession,
 	handoffPrompt,
 	autoRelayMode,
 	onAutoRelayModeChange,
@@ -60,6 +62,7 @@ export function CommanderHelperBar({
 	onExtractSessionFromAI: () => void;
 	onExtractPlanFromWorker: () => void;
 	onViewEditSession: () => void;
+	onClearSession: () => void;
 	handoffPrompt: string;
 	autoRelayMode: AutoRelayMode;
 	onAutoRelayModeChange: (mode: AutoRelayMode) => void;
@@ -200,6 +203,10 @@ export function CommanderHelperBar({
 						<DropdownMenuItem onSelect={onViewEditSession}>
 							<LuPencil className="size-3.5" />
 							View / Edit Session
+						</DropdownMenuItem>
+						<DropdownMenuItem onSelect={onClearSession}>
+							<LuTrash2 className="size-3.5" />
+							Clear Session
 						</DropdownMenuItem>
 						<DropdownMenuItem
 							disabled={!handoffPrompt.trim()}

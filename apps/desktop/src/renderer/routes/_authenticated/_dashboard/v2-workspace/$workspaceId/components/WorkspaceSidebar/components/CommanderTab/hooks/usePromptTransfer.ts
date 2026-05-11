@@ -431,6 +431,7 @@ interface UsePromptTransferParams {
 	onUpdateSession: (
 		updater: (prev: CommanderSession) => CommanderSession,
 	) => void;
+	onSessionApplied?: (session: CommanderSession) => void;
 	onSetView: (view: CommanderView) => void;
 	workerPrompt: string;
 	reviewPrompt: string;
@@ -448,6 +449,7 @@ export function usePromptTransfer({
 	injectIntoPage,
 	onUpdateState,
 	onUpdateSession,
+	onSessionApplied,
 	onSetView,
 	workerPrompt,
 	reviewPrompt,
@@ -1032,6 +1034,7 @@ export function usePromptTransfer({
 			onUpdateSession(() => appliedSession);
 			const nextState = commanderStateFromSession(appliedSession);
 			onUpdateState(() => nextState);
+			onSessionApplied?.(appliedSession);
 			setLatestAppliedBrowserSessionSourceText(
 				sessionDraftPreview.source === "browser-ai"
 					? sessionDraftPreview.rawText
@@ -1046,6 +1049,7 @@ export function usePromptTransfer({
 			sessionDraftPreview.rawText,
 			onUpdateSession,
 			onUpdateState,
+			onSessionApplied,
 		],
 	);
 
