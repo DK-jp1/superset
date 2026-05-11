@@ -14,6 +14,8 @@ import {
 	LuClipboard,
 	LuDownload,
 	LuFileText,
+	LuListChecks,
+	LuPencil,
 	LuSend,
 	LuTerminal,
 	LuZap,
@@ -35,6 +37,9 @@ export function CommanderHelperBar({
 	onSendSelectionToAI,
 	onGenerateHandoff,
 	onCopyHandoff,
+	onExtractSessionFromAI,
+	onExtractPlanFromWorker,
+	onViewEditSession,
 	handoffPrompt,
 	autoRelayMode,
 	onAutoRelayModeChange,
@@ -52,6 +57,9 @@ export function CommanderHelperBar({
 	onSendSelectionToAI: () => void;
 	onGenerateHandoff: () => void;
 	onCopyHandoff: () => void;
+	onExtractSessionFromAI: () => void;
+	onExtractPlanFromWorker: () => void;
+	onViewEditSession: () => void;
 	handoffPrompt: string;
 	autoRelayMode: AutoRelayMode;
 	onAutoRelayModeChange: (mode: AutoRelayMode) => void;
@@ -177,6 +185,21 @@ export function CommanderHelperBar({
 						<DropdownMenuItem onSelect={onGenerateHandoff}>
 							<LuFileText className="size-3.5" />
 							Generate Handoff
+						</DropdownMenuItem>
+						<DropdownMenuItem
+							disabled={!hasProvider}
+							onSelect={onExtractSessionFromAI}
+						>
+							<LuListChecks className="size-3.5" />
+							Extract Session from AI
+						</DropdownMenuItem>
+						<DropdownMenuItem onSelect={onExtractPlanFromWorker}>
+							<LuListChecks className="size-3.5" />
+							Extract Plan from Worker
+						</DropdownMenuItem>
+						<DropdownMenuItem onSelect={onViewEditSession}>
+							<LuPencil className="size-3.5" />
+							View / Edit Session
 						</DropdownMenuItem>
 						<DropdownMenuItem
 							disabled={!handoffPrompt.trim()}

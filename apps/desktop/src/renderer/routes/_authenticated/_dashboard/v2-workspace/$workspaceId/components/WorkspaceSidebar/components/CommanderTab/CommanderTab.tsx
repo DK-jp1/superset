@@ -2,7 +2,11 @@ import { Button } from "@superset/ui/button";
 import { toast } from "@superset/ui/sonner";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { LuLoader, LuX } from "react-icons/lu";
-import type { CommanderState, CommanderView } from "./commander-types";
+import type {
+	CommanderSession,
+	CommanderState,
+	CommanderView,
+} from "./commander-types";
 import { useActiveTerminal, getTerminalSelection } from "./useActiveTerminal";
 import { useCommanderWebview } from "./useCommanderWebview";
 import { detectProvider, getProviderLabel } from "./browser-adapters";
@@ -16,6 +20,7 @@ import {
 	generateReviewPrompt,
 	type HandoffGitSummary,
 } from "./hooks/useCommanderPrompts";
+import { createEmptyCommanderSession } from "./hooks/session-extraction";
 import type { AssistantCaptureSnapshot } from "./hooks/usePromptTransfer";
 import type { AutoRelayMode } from "./hooks/usePromptTransfer";
 import { usePromptTransfer } from "./hooks/usePromptTransfer";
@@ -25,6 +30,7 @@ import {
 	CapturePreview,
 	EditableTerminalPreview,
 	HandoffPreview,
+	SessionDraftPreviewPanel,
 	WorkerResponsePreview,
 } from "./PromptPreviewPanel";
 
@@ -42,6 +48,9 @@ export function CommanderTab({
 		constraints: "",
 		currentProblem: "",
 	});
+	const [session, setSession] = useState<CommanderSession>(
+		createEmptyCommanderSession,
+	);
 	const [autoRelayMode, setAutoRelayMode] = useState<AutoRelayMode>("off");
 
 	const workerPrompt = useMemo(
@@ -60,12 +69,14 @@ export function CommanderTab({
 		workspaceId,
 		fetchGitSummary,
 		state,
+		session,
 		activeTerminal,
 		autoRelayMode,
 		getLiveUrl: webview.getLiveUrl,
 		currentUrl: webview.currentUrl,
 		injectIntoPage: webview.injectIntoPage,
 		onUpdateState: setState,
+		onUpdateSession: setSession,
 		onSetView: setView,
 		workerPrompt,
 		reviewPrompt,
@@ -177,6 +188,14 @@ export function CommanderTab({
 						onCancel={transfer.dismissHandoffPreview}
 					/>
 				)}
+				{transfer.sessionDraftPreview.visible && (
+					<SessionDraftPreviewPanel
+						draft={transfer.sessionDraftPreview}
+						onApply={transfer.handleApplySessionDraft}
+						onCopy={transfer.handleCopySessionDraft}
+						onCancel={transfer.handleCancelSessionDraft}
+					/>
+				)}
 				{transfer.autoRelayStatus === "watching" &&
 					!transfer.workerResponsePreview.visible && (
 						<div className="flex items-center gap-1.5 px-2 py-1 border-b bg-muted/30">
@@ -218,6 +237,9 @@ export function CommanderTab({
 					onSendSelectionToAI={handleSendSelectionToAI}
 					onGenerateHandoff={transfer.handleGenerateHandoff}
 					onCopyHandoff={transfer.handleCopyHandoff}
+					onExtractSessionFromAI={transfer.handleExtractSessionFromAI}
+					onExtractPlanFromWorker={transfer.handleExtractPlanFromWorker}
+					onViewEditSession={transfer.handleViewEditSession}
 					handoffPrompt={transfer.handoffPreview.text}
 					autoRelayMode={autoRelayMode}
 					onAutoRelayModeChange={setAutoRelayMode}

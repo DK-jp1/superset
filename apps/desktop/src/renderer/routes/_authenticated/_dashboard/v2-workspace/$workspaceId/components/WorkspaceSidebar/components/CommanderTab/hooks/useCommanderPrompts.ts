@@ -1,8 +1,9 @@
 import { toast } from "@superset/ui/sonner";
-import type { CommanderState } from "../commander-types";
+import type { CommanderSession, CommanderState } from "../commander-types";
 
 interface HandoffPromptInput {
 	state: CommanderState;
+	session: CommanderSession;
 	latestWorkerReport: string;
 	latestBrowserAiDirection: string;
 	browserProviderLabel: string;
@@ -20,7 +21,10 @@ export interface HandoffGitSummary {
 	error: string | null;
 }
 
-function valueOrUnset(value: string, fallback = "未設定。必要なら追記してください"): string {
+function valueOrUnset(
+	value: string,
+	fallback = "未設定。必要なら追記してください",
+): string {
 	const trimmed = value.trim();
 	return trimmed ? trimmed : fallback;
 }
@@ -89,6 +93,7 @@ export function generateReviewPrompt(state: CommanderState): string {
 
 export function generateHandoffPrompt({
 	state,
+	session,
 	latestWorkerReport,
 	latestBrowserAiDirection,
 	browserProviderLabel,
@@ -99,33 +104,52 @@ export function generateHandoffPrompt({
 }: HandoffPromptInput): string {
 	const nextAction = latestBrowserAiDirection.trim()
 		? "Latest Browser AI Directionを確認し、制約を守って次の作業から再開してください。"
-		: state.currentProblem.trim()
+		: session.currentTask.trim() || state.currentProblem.trim()
 			? "Current State / Current Problemを確認し、次の最小作業を提案してから進めてください。"
 			: "GoalとConstraintsを確認し、必要な確認事項を整理してから作業を開始してください。";
+	const goal = session.goal || state.goal;
+	const constraints = session.constraints || state.constraints;
+	const currentTask = session.currentTask || state.currentProblem;
+	const intentNotes = session.intentNotes || state.context;
+	const targetFiles = session.targetFiles.length
+		? session.targetFiles.map((path) => `- ${path}`).join("\n")
+		: "未設定。必要なら追記してください";
 
 	return `## DoyDeck Handoff
 
 ### Goal
-${valueOrUnset(state.goal)}
+${valueOrUnset(goal)}
 
 ### Completion Criteria
-未設定。必要なら追記してください
+${valueOrUnset(session.completionCriteria)}
 
 ### Constraints
-${valueOrUnset(state.constraints)}
+${valueOrUnset(constraints)}
 
 ### Allowed Scope
-未設定。必要なら追記してください
+${valueOrUnset(session.allowedScope)}
 
 ### Forbidden Scope
-未設定。必要なら追記してください
+${valueOrUnset(session.forbiddenScope)}
 
 ### Current State
-Context:
-${valueOrUnset(state.context)}
+Intent / Notes:
+${valueOrUnset(intentNotes)}
 
-Current Problem:
-${valueOrUnset(state.currentProblem)}
+Current Task:
+${valueOrUnset(currentTask)}
+
+### Implementation Plan
+${valueOrUnset(session.implementationPlan)}
+
+### Target Files
+${targetFiles}
+
+### Test Plan
+${valueOrUnset(session.testPlan)}
+
+### Risks / Open Questions
+${valueOrUnset(session.risksOpenQuestions)}
 
 ### Latest Worker Report
 ${valueOrUnset(latestWorkerReport, "未取得。必要なら直近worker出力を確認してください")}

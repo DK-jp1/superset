@@ -5,6 +5,30 @@ export interface CommanderState {
 	currentProblem: string;
 }
 
+export interface CommanderSession {
+	goal: string;
+	intentNotes: string;
+	completionCriteria: string;
+	constraints: string;
+	allowedScope: string;
+	forbiddenScope: string;
+	currentTask: string;
+	implementationPlan: string;
+	targetFiles: string[];
+	testPlan: string;
+	risksOpenQuestions: string;
+}
+
+export type SessionDraftSource = "browser-ai" | "worker-plan" | "edit";
+
+export interface SessionDraftPreview {
+	visible: boolean;
+	source: SessionDraftSource;
+	session: CommanderSession;
+	rawText: string;
+	warnings: string[];
+}
+
 export type CommanderView = "browser" | "form";
 
 export const AI_PRESETS = [

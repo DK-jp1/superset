@@ -1,6 +1,6 @@
 import { Button } from "@superset/ui/button";
 import { Textarea } from "@superset/ui/textarea";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
 	LuCheck,
 	LuClipboard,
@@ -10,6 +10,10 @@ import {
 	LuX,
 	LuZap,
 } from "react-icons/lu";
+import type {
+	CommanderSession,
+	SessionDraftPreview as SessionDraftPreviewState,
+} from "./commander-types";
 
 export function TerminalSendPreview({
 	text,
@@ -321,5 +325,177 @@ export function HandoffPreview({
 				{text}
 			</pre>
 		</div>
+	);
+}
+
+export function SessionDraftPreviewPanel({
+	draft,
+	onApply,
+	onCopy,
+	onCancel,
+}: {
+	draft: SessionDraftPreviewState;
+	onApply: (session: CommanderSession) => void;
+	onCopy: (session: CommanderSession) => void;
+	onCancel: () => void;
+}) {
+	const [editedSession, setEditedSession] = useState(draft.session);
+	const [targetFilesText, setTargetFilesText] = useState(
+		draft.session.targetFiles.join("\n"),
+	);
+
+	useEffect(() => {
+		setEditedSession(draft.session);
+		setTargetFilesText(draft.session.targetFiles.join("\n"));
+	}, [draft.session]);
+
+	const updateField = (field: keyof CommanderSession, value: string) => {
+		if (field === "targetFiles") return;
+		setEditedSession((prev) => ({ ...prev, [field]: value }));
+	};
+
+	const toEditedSession = (): CommanderSession => ({
+		...editedSession,
+		targetFiles: targetFilesText
+			.split("\n")
+			.map((path) => path.trim())
+			.filter(Boolean),
+	});
+
+	const sourceLabel =
+		draft.source === "browser-ai"
+			? "Browser AI"
+			: draft.source === "worker-plan"
+				? "Worker Plan"
+				: "Session";
+
+	return (
+		<div className="flex flex-col gap-1.5 p-1.5 border-b bg-muted/30">
+			<div className="flex items-center justify-between">
+				<span className="text-[10px] font-medium text-muted-foreground">
+					Session Draft Preview — {sourceLabel}
+				</span>
+				<div className="flex flex-wrap justify-end gap-0.5">
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-5 w-5 p-0"
+						onClick={onCancel}
+					>
+						<LuX className="size-3" />
+					</Button>
+					<Button
+						variant="secondary"
+						size="sm"
+						className="h-5 px-1.5 gap-0.5 text-[10px]"
+						onClick={() => onCopy(toEditedSession())}
+					>
+						<LuClipboard className="size-2.5" />
+						Copy
+					</Button>
+					<Button
+						variant="default"
+						size="sm"
+						className="h-5 px-1.5 gap-0.5 text-[10px]"
+						onClick={() => onApply(toEditedSession())}
+					>
+						<LuCheck className="size-2.5" />
+						Apply to Session
+					</Button>
+				</div>
+			</div>
+			{draft.warnings.length > 0 && (
+				<div className="rounded bg-amber-500/10 px-1.5 py-1 text-[10px] text-amber-700 dark:text-amber-300">
+					{draft.warnings.map((warning) => (
+						<div key={warning}>{warning}</div>
+					))}
+				</div>
+			)}
+			<div className="grid grid-cols-1 gap-1.5 max-h-80 overflow-y-auto">
+				<SessionTextarea
+					label="Goal"
+					value={editedSession.goal}
+					onChange={(value) => updateField("goal", value)}
+				/>
+				<SessionTextarea
+					label="Intent / Notes"
+					value={editedSession.intentNotes}
+					onChange={(value) => updateField("intentNotes", value)}
+					rows={3}
+				/>
+				<SessionTextarea
+					label="Completion Criteria"
+					value={editedSession.completionCriteria}
+					onChange={(value) => updateField("completionCriteria", value)}
+				/>
+				<SessionTextarea
+					label="Constraints"
+					value={editedSession.constraints}
+					onChange={(value) => updateField("constraints", value)}
+				/>
+				<SessionTextarea
+					label="Allowed Scope"
+					value={editedSession.allowedScope}
+					onChange={(value) => updateField("allowedScope", value)}
+				/>
+				<SessionTextarea
+					label="Forbidden Scope"
+					value={editedSession.forbiddenScope}
+					onChange={(value) => updateField("forbiddenScope", value)}
+				/>
+				<SessionTextarea
+					label="Current Task"
+					value={editedSession.currentTask}
+					onChange={(value) => updateField("currentTask", value)}
+				/>
+				<SessionTextarea
+					label="Implementation Plan"
+					value={editedSession.implementationPlan}
+					onChange={(value) => updateField("implementationPlan", value)}
+					rows={3}
+				/>
+				<SessionTextarea
+					label="Target Files"
+					value={targetFilesText}
+					onChange={setTargetFilesText}
+				/>
+				<SessionTextarea
+					label="Test Plan"
+					value={editedSession.testPlan}
+					onChange={(value) => updateField("testPlan", value)}
+				/>
+				<SessionTextarea
+					label="Risks / Open Questions"
+					value={editedSession.risksOpenQuestions}
+					onChange={(value) => updateField("risksOpenQuestions", value)}
+				/>
+			</div>
+		</div>
+	);
+}
+
+function SessionTextarea({
+	label,
+	value,
+	onChange,
+	rows = 2,
+}: {
+	label: string;
+	value: string;
+	onChange: (value: string) => void;
+	rows?: number;
+}) {
+	return (
+		<label className="flex flex-col gap-0.5">
+			<span className="text-[9px] font-medium text-muted-foreground">
+				{label}
+			</span>
+			<Textarea
+				value={value}
+				onChange={(event) => onChange(event.target.value)}
+				rows={rows}
+				className="resize-y font-mono text-[10px]"
+			/>
+		</label>
 	);
 }

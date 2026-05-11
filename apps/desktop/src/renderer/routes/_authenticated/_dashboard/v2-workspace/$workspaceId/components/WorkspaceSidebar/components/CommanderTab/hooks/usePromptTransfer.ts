@@ -5,7 +5,13 @@ import {
 	getOutputLogOffset,
 	getOutputLogSince,
 } from "renderer/screens/main/components/WorkspaceView/ContentView/TabsContent/Terminal/v1-terminal-cache";
-import type { CommanderState, CommanderView } from "../commander-types";
+import type {
+	CommanderSession,
+	CommanderState,
+	CommanderView,
+	SessionDraftPreview,
+	SessionDraftSource,
+} from "../commander-types";
 import { MAX_CAPTURE_LENGTH } from "../commander-types";
 import {
 	detectProvider,
@@ -23,6 +29,13 @@ import {
 	copyToClipboard,
 	type HandoffGitSummary,
 } from "./useCommanderPrompts";
+import {
+	commanderStateFromSession,
+	extractPlanFromWorkerText,
+	extractSessionFromBrowserAI,
+	formatCommanderSessionMarkdown,
+	mergeCommanderSession,
+} from "./session-extraction";
 
 export function truncateWithWarning(text: string, label: string): string {
 	if (text.length <= MAX_CAPTURE_LENGTH) return text;
@@ -38,6 +51,11 @@ export function appendToField(
 	separator: string,
 ): string {
 	return existing ? `${existing}\n\n${separator}\n${addition}` : addition;
+}
+
+function isSameCapturedText(left: string, right: string): boolean {
+	if (!left.trim() || !right.trim()) return false;
+	return left.replace(/\s+/g, " ").trim() === right.replace(/\s+/g, " ").trim();
 }
 
 const INSTRUCTION_KEYWORDS = [
@@ -403,12 +421,16 @@ interface UsePromptTransferParams {
 	workspaceId: string;
 	fetchGitSummary?: () => Promise<HandoffGitSummary>;
 	state: CommanderState;
+	session: CommanderSession;
 	activeTerminal: string | null;
 	autoRelayMode: AutoRelayMode;
 	getLiveUrl: () => string;
 	currentUrl: string;
 	injectIntoPage: (script: string) => Promise<unknown>;
 	onUpdateState: (updater: (prev: CommanderState) => CommanderState) => void;
+	onUpdateSession: (
+		updater: (prev: CommanderSession) => CommanderSession,
+	) => void;
 	onSetView: (view: CommanderView) => void;
 	workerPrompt: string;
 	reviewPrompt: string;
@@ -418,12 +440,14 @@ export function usePromptTransfer({
 	workspaceId,
 	fetchGitSummary,
 	state,
+	session,
 	activeTerminal,
 	autoRelayMode,
 	getLiveUrl,
 	currentUrl,
 	injectIntoPage,
 	onUpdateState,
+	onUpdateSession,
 	onSetView,
 	workerPrompt,
 	reviewPrompt,
@@ -452,10 +476,21 @@ export function usePromptTransfer({
 		visible: boolean;
 		text: string;
 	}>({ visible: false, text: "" });
-	const [latestWorkerResponseText, setLatestWorkerResponseText] =
-		useState("");
+	const [sessionDraftPreview, setSessionDraftPreview] =
+		useState<SessionDraftPreview>({
+			visible: false,
+			source: "browser-ai",
+			session,
+			rawText: "",
+			warnings: [],
+		});
+	const [latestWorkerResponseText, setLatestWorkerResponseText] = useState("");
 	const [latestBrowserAiDirectionText, setLatestBrowserAiDirectionText] =
 		useState("");
+	const [
+		latestAppliedBrowserSessionSourceText,
+		setLatestAppliedBrowserSessionSourceText,
+	] = useState("");
 	const autoCaptureRef = useRef<{
 		intervalId: ReturnType<typeof setInterval>;
 		timeoutId: ReturnType<typeof setTimeout>;
@@ -897,13 +932,147 @@ export function usePromptTransfer({
 		if (ok) setWorkerResponsePreview({ visible: false, text: "" });
 	}, [workerResponsePreview]);
 
+	const showSessionDraft = useCallback(
+		(
+			source: SessionDraftSource,
+			draftSession: CommanderSession,
+			rawText: string,
+			warnings: string[],
+		) => {
+			setSessionDraftPreview({
+				visible: true,
+				source,
+				session: draftSession,
+				rawText,
+				warnings,
+			});
+			toast.success("Session Draftを生成しました");
+		},
+		[],
+	);
+
+	const handleExtractSessionFromAI = useCallback(async () => {
+		const liveUrl = getLiveUrl() || currentUrl;
+		const provider = detectProvider(liveUrl);
+		let text = capturePreview || latestBrowserAiDirectionText;
+		const warnings: string[] = [];
+
+		if (provider) {
+			try {
+				const raw = await injectIntoPage(buildExtractionScript(provider));
+				if (typeof raw === "string" && raw.trim()) text = raw;
+			} catch (error) {
+				warnings.push(
+					`Browser AI返答の取得に失敗しました: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+			}
+		} else {
+			warnings.push(
+				"未対応サイトのため、保持済みのBrowser AI返答から抽出します。",
+			);
+		}
+
+		text = truncateWithWarning(text, "Browser AI返答");
+		if (text.trim()) setLatestBrowserAiDirectionText(text);
+		const result = extractSessionFromBrowserAI(text, session);
+		showSessionDraft("browser-ai", result.session, text, [
+			...warnings,
+			...result.warnings,
+		]);
+	}, [
+		capturePreview,
+		latestBrowserAiDirectionText,
+		session,
+		getLiveUrl,
+		currentUrl,
+		injectIntoPage,
+		showSessionDraft,
+	]);
+
+	const handleExtractPlanFromWorker = useCallback(() => {
+		let text =
+			workerResponsePreview.text ||
+			latestWorkerResponseText ||
+			selectionPreview ||
+			(activeTerminal ? getTerminalSelection(activeTerminal) : "");
+		const warnings: string[] = [];
+		if (!text.trim()) {
+			warnings.push(
+				"Worker / Plan Mode出力が見つかりません。必要ならterminal上でPlan出力を選択してから再実行してください。",
+			);
+		}
+		text = truncateWithWarning(text, "Worker Plan");
+		if (text.trim()) setLatestWorkerResponseText(text);
+		const result = extractPlanFromWorkerText(text, session);
+		showSessionDraft("worker-plan", result.session, text, [
+			...warnings,
+			...result.warnings,
+		]);
+	}, [
+		workerResponsePreview.text,
+		latestWorkerResponseText,
+		selectionPreview,
+		activeTerminal,
+		session,
+		showSessionDraft,
+	]);
+
+	const handleViewEditSession = useCallback(() => {
+		showSessionDraft("edit", session, "", []);
+	}, [session, showSessionDraft]);
+
+	const handleApplySessionDraft = useCallback(
+		(editedSession: CommanderSession) => {
+			const appliedSession =
+				sessionDraftPreview.source === "edit"
+					? editedSession
+					: mergeCommanderSession(session, editedSession);
+			onUpdateSession(() => appliedSession);
+			const nextState = commanderStateFromSession(appliedSession);
+			onUpdateState(() => nextState);
+			setLatestAppliedBrowserSessionSourceText(
+				sessionDraftPreview.source === "browser-ai"
+					? sessionDraftPreview.rawText
+					: "",
+			);
+			setSessionDraftPreview((prev) => ({ ...prev, visible: false }));
+			toast.success("Sessionに反映しました");
+		},
+		[
+			session,
+			sessionDraftPreview.source,
+			sessionDraftPreview.rawText,
+			onUpdateSession,
+			onUpdateState,
+		],
+	);
+
+	const handleCopySessionDraft = useCallback(
+		(editedSession: CommanderSession) => {
+			void copyToClipboard(formatCommanderSessionMarkdown(editedSession));
+		},
+		[],
+	);
+
+	const handleCancelSessionDraft = useCallback(() => {
+		setSessionDraftPreview((prev) => ({ ...prev, visible: false }));
+	}, []);
+
 	const handleGenerateHandoff = useCallback(async () => {
 		const liveUrl = getLiveUrl() || currentUrl;
 		const provider = detectProvider(liveUrl);
-		const browserDirection =
+		const browserDirectionRaw =
 			captureForTerminalPreview.text ||
 			capturePreview ||
 			latestBrowserAiDirectionText;
+		const browserDirection = isSameCapturedText(
+			browserDirectionRaw,
+			latestAppliedBrowserSessionSourceText,
+		)
+			? "Sessionに取り込み済み。必要なら直近Browser AI返答を確認してください。"
+			: browserDirectionRaw;
 		let gitSummary: HandoffGitSummary | null = null;
 		if (!workspaceId || !fetchGitSummary) {
 			gitSummary = {
@@ -930,6 +1099,7 @@ export function usePromptTransfer({
 		}
 		const prompt = generateHandoffPrompt({
 			state,
+			session,
 			latestWorkerReport:
 				workerResponsePreview.text || latestWorkerResponseText,
 			latestBrowserAiDirection: browserDirection,
@@ -945,11 +1115,13 @@ export function usePromptTransfer({
 		workspaceId,
 		fetchGitSummary,
 		state,
+		session,
 		workerResponsePreview.text,
 		latestWorkerResponseText,
 		captureForTerminalPreview.text,
 		capturePreview,
 		latestBrowserAiDirectionText,
+		latestAppliedBrowserSessionSourceText,
 		getLiveUrl,
 		currentUrl,
 		activeTerminal,
@@ -1133,8 +1305,15 @@ export function usePromptTransfer({
 		autoRelayStatus,
 		workerResponsePreview,
 		handoffPreview,
+		sessionDraftPreview,
 		handleInject,
 		handleCaptureResponse,
+		handleExtractSessionFromAI,
+		handleExtractPlanFromWorker,
+		handleViewEditSession,
+		handleApplySessionDraft,
+		handleCopySessionDraft,
+		handleCancelSessionDraft,
 		handleGrabSelection,
 		handleUseSelection,
 		handleUseCapture,
