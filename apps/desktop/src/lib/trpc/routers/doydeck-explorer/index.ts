@@ -14,6 +14,7 @@ const rootIdSchema = z.enum([
 	"downloads",
 	"documents",
 	"developer",
+	"volumes",
 	"currentWorkspace",
 ]);
 
@@ -136,6 +137,7 @@ function buildRootDefinitions(workspaceId?: string) {
 			label: "Developer",
 			absolutePath: path.join(homePath, "Developer"),
 		},
+		{ id: "volumes" as const, label: "Volumes", absolutePath: "/Volumes" },
 		{
 			id: "currentWorkspace" as const,
 			label: "Current Workspace",
