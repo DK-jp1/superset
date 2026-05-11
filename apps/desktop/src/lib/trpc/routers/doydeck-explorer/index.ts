@@ -19,6 +19,7 @@ const rootIdSchema = z.enum([
 
 type RootId = z.infer<typeof rootIdSchema>;
 type ExplorerEntryKind = "file" | "directory" | "symlink" | "other";
+type MediaPreviewKind = "image" | "pdf" | "video" | "audio";
 
 const EXCLUDED_ENTRY_NAMES = new Set([
 	".git",
@@ -28,7 +29,47 @@ const EXCLUDED_ENTRY_NAMES = new Set([
 	"app-state.json",
 	"local.db",
 ]);
-const DEFAULT_MAX_PREVIEW_BYTES = 512 * 1024;
+const TEXT_MAX_PREVIEW_BYTES = 1024 * 1024;
+const MEDIA_MAX_PREVIEW_BYTES = 10 * 1024 * 1024;
+
+const IMAGE_MIME_TYPES: Record<string, string> = {
+	png: "image/png",
+	jpg: "image/jpeg",
+	jpeg: "image/jpeg",
+	webp: "image/webp",
+	gif: "image/gif",
+	svg: "image/svg+xml",
+};
+
+const VIDEO_MIME_TYPES: Record<string, string> = {
+	mp4: "video/mp4",
+	mov: "video/quicktime",
+	webm: "video/webm",
+};
+
+const AUDIO_MIME_TYPES: Record<string, string> = {
+	mp3: "audio/mpeg",
+	wav: "audio/wav",
+	m4a: "audio/mp4",
+};
+
+function getExtension(filePath: string): string {
+	return path.extname(filePath).slice(1).toLowerCase();
+}
+
+function getMediaPreviewInfo(
+	filePath: string,
+): { kind: MediaPreviewKind; mimeType: string } | null {
+	const extension = getExtension(filePath);
+	const imageMimeType = IMAGE_MIME_TYPES[extension];
+	if (imageMimeType) return { kind: "image", mimeType: imageMimeType };
+	if (extension === "pdf") return { kind: "pdf", mimeType: "application/pdf" };
+	const videoMimeType = VIDEO_MIME_TYPES[extension];
+	if (videoMimeType) return { kind: "video", mimeType: videoMimeType };
+	const audioMimeType = AUDIO_MIME_TYPES[extension];
+	if (audioMimeType) return { kind: "audio", mimeType: audioMimeType };
+	return null;
+}
 
 function normalizeAbsolutePath(input: string): string {
 	return path.normalize(path.resolve(input));
@@ -226,27 +267,47 @@ export const createDoyDeckExplorerRouter = () => {
 					});
 				}
 
-				const maxBytes = input.maxBytes ?? DEFAULT_MAX_PREVIEW_BYTES;
+				const mediaPreviewInfo = getMediaPreviewInfo(targetPath);
+				const defaultMaxBytes = mediaPreviewInfo
+					? MEDIA_MAX_PREVIEW_BYTES
+					: TEXT_MAX_PREVIEW_BYTES;
+				const maxBytes = Math.min(
+					input.maxBytes ?? defaultMaxBytes,
+					defaultMaxBytes,
+				);
 				if (stats.size > maxBytes) {
 					return {
 						kind: "tooLarge" as const,
 						byteLength: stats.size,
 						maxBytes,
+						mimeType: mediaPreviewInfo?.mimeType ?? null,
 					};
 				}
 
 				const buffer = await fs.readFile(targetPath);
-				if (isBinaryBuffer(buffer)) {
+				if (mediaPreviewInfo) {
 					return {
-						kind: "binary" as const,
+						kind: mediaPreviewInfo.kind,
+						content: buffer.toString("base64"),
+						mimeType: mediaPreviewInfo.mimeType,
 						byteLength: buffer.byteLength,
 						maxBytes,
+					};
+				}
+
+				if (isBinaryBuffer(buffer)) {
+					return {
+						kind: "unsupportedBinary" as const,
+						byteLength: buffer.byteLength,
+						maxBytes,
+						mimeType: null,
 					};
 				}
 
 				return {
 					kind: "text" as const,
 					content: buffer.toString("utf-8"),
+					mimeType: "text/plain",
 					byteLength: buffer.byteLength,
 					maxBytes,
 				};
