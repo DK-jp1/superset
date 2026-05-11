@@ -425,6 +425,13 @@ export const Terminal = memo(function Terminal({
 		event.dataTransfer.dropEffect = "copy";
 	};
 
+	const focusTerminalAfterDrop = () => {
+		const focusTerminal = () => xtermRef.current?.focus();
+		focusTerminal();
+		requestAnimationFrame(focusTerminal);
+		window.setTimeout(focusTerminal, 0);
+	};
+
 	const handleDrop = (event: React.DragEvent) => {
 		event.preventDefault();
 		const files = Array.from(event.dataTransfer.files);
@@ -441,6 +448,7 @@ export const Terminal = memo(function Terminal({
 		}
 		if (!isExitedRef.current) {
 			writeRef.current({ paneId, data: text });
+			focusTerminalAfterDrop();
 		}
 	};
 

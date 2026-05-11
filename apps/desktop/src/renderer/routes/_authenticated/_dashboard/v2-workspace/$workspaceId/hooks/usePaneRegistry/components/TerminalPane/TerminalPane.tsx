@@ -383,6 +383,17 @@ export function TerminalPane({
 		}
 	};
 
+	const focusTerminalAfterDrop = () => {
+		const focusTerminal = () => {
+			terminalRuntimeRegistry
+				.getTerminal(terminalId, terminalInstanceId)
+				?.focus();
+		};
+		focusTerminal();
+		requestAnimationFrame(focusTerminal);
+		window.setTimeout(focusTerminal, 0);
+	};
+
 	const handleDrop = (event: React.DragEvent) => {
 		event.preventDefault();
 		dragCounterRef.current = 0;
@@ -390,10 +401,8 @@ export function TerminalPane({
 		if (connectionState === "closed") return;
 		const text = resolveDroppedText(event.dataTransfer);
 		if (!text) return;
-		terminalRuntimeRegistry
-			.getTerminal(terminalId, terminalInstanceId)
-			?.focus();
 		terminalRuntimeRegistry.paste(terminalId, text, terminalInstanceId);
+		focusTerminalAfterDrop();
 	};
 
 	return (

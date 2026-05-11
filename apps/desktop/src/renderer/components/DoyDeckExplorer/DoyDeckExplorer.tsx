@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import type { ComponentType } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { quote } from "shell-quote";
 import { toast } from "@superset/ui/sonner";
 import { useCopyToClipboard } from "renderer/hooks/useCopyToClipboard";
 import {
@@ -32,6 +33,7 @@ type ExplorerRootId =
 	ElectronRouterOutputs["doydeckExplorer"]["getRoots"]["roots"][number]["id"];
 type ExplorerEntry =
 	ElectronRouterOutputs["doydeckExplorer"]["listDirectory"]["entries"][number];
+type ExplorerEntryKind = ExplorerEntry["kind"];
 
 interface DoyDeckExplorerProps {
 	workspaceId?: string;
@@ -57,6 +59,7 @@ const INITIAL_LIST_HEIGHT_PERCENT = 45;
 const MIN_LIST_HEIGHT_PX = 120;
 const MIN_PREVIEW_HEIGHT_PX = 160;
 const EXPLORER_SPLITTER_HEIGHT_PX = 8;
+const FILE_PATH_MIME = "application/x-superset-file-path";
 
 function getElementRect(element: HTMLElement | null) {
 	if (!element) return null;
@@ -85,6 +88,10 @@ function getRelativePath(rootPath: string | undefined, absolutePath: string) {
 		return absolutePath.slice(normalizedRoot.length + 1);
 	}
 	return absolutePath;
+}
+
+function shellQuotePath(absolutePath: string) {
+	return quote([absolutePath]);
 }
 
 function buildRows({
@@ -163,7 +170,10 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		() => new Set(),
 	);
 	const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-	const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+	const [selectedPath, setSelectedPath] = useState<string | null>(null);
+	const [selectedKind, setSelectedKind] = useState<ExplorerEntryKind | null>(
+		null,
+	);
 	const explorerRootRef = useRef<HTMLDivElement>(null);
 	const explorerContentRef = useRef<HTMLDivElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
@@ -185,9 +195,12 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		{
 			rootId,
 			workspaceId,
-			absolutePath: selectedFilePath ?? "",
+			absolutePath:
+				selectedKind === "file" || selectedKind === "symlink"
+					? (selectedPath ?? "")
+					: "",
 		},
-		{ enabled: !!selectedFilePath },
+		{ enabled: selectedKind === "file" || selectedKind === "symlink" },
 	);
 
 	const loadDirectory = useCallback(
@@ -237,7 +250,8 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		setRootPath(selectedRoot.absolutePath);
 		setDirectoryState({});
 		setExpanded(new Set());
-		setSelectedFilePath(null);
+		setSelectedPath(null);
+		setSelectedKind(null);
 		void loadDirectory(selectedRoot.absolutePath);
 	}, [canLoadRoot, loadDirectory, selectedRoot?.absolutePath]);
 
@@ -333,8 +347,12 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		[rootEntries, directoryState, expanded],
 	);
 
-	const selectedRelativePath = selectedFilePath
-		? getRelativePath(rootPath, selectedFilePath)
+	const selectedPreviewFilePath =
+		selectedKind === "file" || selectedKind === "symlink"
+			? selectedPath
+			: null;
+	const selectedRelativePath = selectedPath
+		? getRelativePath(rootPath, selectedPath)
 		: "";
 
 	const handleToggleDirectory = (absolutePath: string) => {
@@ -364,13 +382,22 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		toast.success(message);
 	};
 
+	const handleDragStart = (
+		event: React.DragEvent<HTMLElement>,
+		absolutePath: string,
+	) => {
+		event.dataTransfer.setData("text/plain", absolutePath);
+		event.dataTransfer.setData(FILE_PATH_MIME, absolutePath);
+		event.dataTransfer.effectAllowed = "copy";
+	};
+
 	const handleOpenInCenterPreview = () => {
-		if (!selectedFilePath) return;
+		if (!selectedPreviewFilePath) return;
 		const opened = openDoyDeckCenterPreview(workspaceId, {
 			rootId,
-			absolutePath: selectedFilePath,
+			absolutePath: selectedPreviewFilePath,
 			relativePath: selectedRelativePath,
-			displayName: selectedRelativePath || selectedFilePath,
+			displayName: selectedRelativePath || selectedPreviewFilePath,
 		});
 		if (!opened) {
 			toast.error("Center preview is unavailable for this workspace");
@@ -498,7 +525,7 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 							{rows.map(({ entry, level }) => {
 								const isDirectory = entry.kind === "directory";
 								const isExpanded = expanded.has(entry.absolutePath);
-								const isSelected = selectedFilePath === entry.absolutePath;
+								const isSelected = selectedPath === entry.absolutePath;
 								const isLoading = loadingDirectories.has(entry.absolutePath);
 								const state = directoryState[entry.absolutePath];
 
@@ -506,20 +533,21 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 									<div key={entry.absolutePath}>
 										<button
 											type="button"
+											draggable
 											className={cn(
 												"flex h-7 w-full min-w-0 items-center gap-1 px-2 text-left text-xs hover:bg-muted/50",
 												isSelected && "bg-muted text-foreground",
 												entry.kind === "symlink" && "text-muted-foreground",
 											)}
 											style={{ paddingLeft: 8 + level * 14 }}
+											onDragStart={(event) =>
+												handleDragStart(event, entry.absolutePath)
+											}
 											onClick={() => {
+												setSelectedPath(entry.absolutePath);
+												setSelectedKind(entry.kind);
 												if (isDirectory) {
 													handleToggleDirectory(entry.absolutePath);
-												} else if (
-													entry.kind === "file" ||
-													entry.kind === "symlink"
-												) {
-													setSelectedFilePath(entry.absolutePath);
 												}
 											}}
 										>
@@ -601,16 +629,16 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 						<IconButton
 							icon={PanelTopOpen}
 							label="Open in Center Preview"
-							disabled={!selectedFilePath}
+							disabled={!selectedPreviewFilePath}
 							onClick={handleOpenInCenterPreview}
 						/>
 						<IconButton
 							icon={Copy}
-							label="Copy Path"
-							disabled={!selectedFilePath}
+							label="Copy Absolute Path"
+							disabled={!selectedPath}
 							onClick={() => {
-								if (selectedFilePath) {
-									void handleCopy(selectedFilePath, "Path copied");
+								if (selectedPath) {
+									void handleCopy(selectedPath, "Absolute path copied");
 								}
 							}}
 						/>
@@ -624,10 +652,36 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 								}
 							}}
 						/>
+						<IconButton
+							icon={Copy}
+							label="Copy Shell-Quoted Path"
+							disabled={!selectedPath}
+							onClick={() => {
+								if (selectedPath) {
+									void handleCopy(
+										shellQuotePath(selectedPath),
+										"Shell-quoted path copied",
+									);
+								}
+							}}
+						/>
+						<IconButton
+							icon={Copy}
+							label="Copy cd Command"
+							disabled={!selectedPath || selectedKind !== "directory"}
+							onClick={() => {
+								if (selectedPath && selectedKind === "directory") {
+									void handleCopy(
+										`cd ${shellQuotePath(selectedPath)}`,
+										"cd command copied",
+									);
+								}
+							}}
+						/>
 					</div>
 					<div ref={previewBodyRef} className="min-h-0 flex-1 overflow-hidden">
 						<DoyDeckPreviewRenderer
-							filePath={selectedFilePath}
+							filePath={selectedPreviewFilePath}
 							preview={previewQuery.data}
 							isLoading={previewQuery.isLoading}
 							error={previewQuery.error}
