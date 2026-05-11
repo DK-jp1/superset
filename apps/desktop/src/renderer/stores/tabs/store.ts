@@ -20,6 +20,7 @@ import {
 	movePaneToTab,
 } from "./actions/move-pane";
 import type {
+	AddDoyDeckPreviewPaneOptions,
 	AddFileViewerPaneOptions,
 	AddTabWithMultiplePanesOptions,
 	CommentPaneData,
@@ -37,6 +38,7 @@ import {
 	createChatTabWithPane,
 	createCommentTabWithPane,
 	createDevToolsPane,
+	createDoyDeckPreviewPane,
 	createFileViewerPane,
 	createPane,
 	createTabWithPane,
@@ -1036,6 +1038,128 @@ export const useTabsStore = create<TabsStore>()(
 					});
 
 					return newPane.id;
+				},
+
+				addDoyDeckPreviewPane: (
+					workspaceId: string,
+					options: AddDoyDeckPreviewPaneOptions,
+				) => {
+					const state = get();
+					const resolvedActiveTabId = resolveActiveTabIdForWorkspace({
+						workspaceId,
+						tabs: state.tabs,
+						activeTabIds: state.activeTabIds,
+						tabHistoryStacks: state.tabHistoryStacks,
+					});
+					const activeTab = resolvedActiveTabId
+						? state.tabs.find((t) => t.id === resolvedActiveTabId)
+						: null;
+
+					if (!activeTab || options.openInNewTab) {
+						const newTabId = generateId("tab");
+						const newPane = createDoyDeckPreviewPane(newTabId, {
+							...options,
+							workspaceId: options.workspaceId ?? workspaceId,
+						});
+						const newTab = {
+							id: newTabId,
+							workspaceId,
+							name: newPane.name,
+							layout: newPane.id as MosaicNode<string>,
+							createdAt: Date.now(),
+						};
+						const currentActiveId = state.activeTabIds[workspaceId];
+						const historyStack = state.tabHistoryStacks[workspaceId] || [];
+						const newHistoryStack = currentActiveId
+							? [
+									currentActiveId,
+									...historyStack.filter((id) => id !== currentActiveId),
+								]
+							: historyStack;
+						set({
+							tabs: [...state.tabs, newTab],
+							panes: { ...state.panes, [newPane.id]: newPane },
+							activeTabIds: {
+								...state.activeTabIds,
+								[workspaceId]: newTab.id,
+							},
+							focusedPaneIds: {
+								...state.focusedPaneIds,
+								[newTab.id]: newPane.id,
+							},
+							tabHistoryStacks: {
+								...state.tabHistoryStacks,
+								[workspaceId]: newHistoryStack,
+							},
+						});
+						posthog.capture("panel_opened", {
+							panel_type: "doydeck_preview",
+							workspace_id: workspaceId,
+							pane_id: newPane.id,
+						});
+						return newPane.id;
+					}
+
+					const tabPaneIds = extractPaneIdsFromLayout(activeTab.layout);
+					const existingPreviewPane = tabPaneIds
+						.map((id) => state.panes[id])
+						.find((pane) => pane?.type === "doydeck-preview");
+					const nextPane = createDoyDeckPreviewPane(activeTab.id, {
+						...options,
+						workspaceId: options.workspaceId ?? workspaceId,
+					});
+
+					if (existingPreviewPane) {
+						const nextPanes = {
+							...state.panes,
+							[existingPreviewPane.id]: {
+								...existingPreviewPane,
+								name: nextPane.name,
+								doyDeckPreview: nextPane.doyDeckPreview,
+							},
+						};
+						set({
+							panes: nextPanes,
+							tabs: state.tabs.map((tab) =>
+								tab.id === existingPreviewPane.tabId
+									? { ...tab, name: deriveTabName(nextPanes, tab.id) }
+									: tab,
+							),
+							focusedPaneIds: {
+								...state.focusedPaneIds,
+								[activeTab.id]: existingPreviewPane.id,
+							},
+						});
+						return existingPreviewPane.id;
+					}
+
+					const newLayout: MosaicNode<string> = {
+						direction: "row",
+						first: activeTab.layout,
+						second: nextPane.id,
+						splitPercentage: 50,
+					};
+					const newPanes = { ...state.panes, [nextPane.id]: nextPane };
+					const tabName = deriveTabName(newPanes, activeTab.id);
+
+					set({
+						tabs: state.tabs.map((tab) =>
+							tab.id === activeTab.id
+								? { ...tab, layout: newLayout, name: tabName }
+								: tab,
+						),
+						panes: newPanes,
+						focusedPaneIds: {
+							...state.focusedPaneIds,
+							[activeTab.id]: nextPane.id,
+						},
+					});
+					posthog.capture("panel_opened", {
+						panel_type: "doydeck_preview",
+						workspace_id: workspaceId,
+						pane_id: nextPane.id,
+					});
+					return nextPane.id;
 				},
 
 				removePane: (paneId) => {

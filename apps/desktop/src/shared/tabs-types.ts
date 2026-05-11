@@ -12,6 +12,7 @@ export type PaneType =
 	| "terminal"
 	| "webview"
 	| "file-viewer"
+	| "doydeck-preview"
 	| "chat"
 	| "devtools"
 	| "comment";
@@ -124,6 +125,14 @@ export interface FileViewerState {
 	displayName?: string;
 }
 
+export interface DoyDeckPreviewState {
+	rootId: string;
+	absolutePath: string;
+	relativePath?: string;
+	workspaceId?: string;
+	displayName?: string;
+}
+
 /**
  * Base Pane interface - shared between main and renderer
  */
@@ -140,6 +149,7 @@ export interface Pane {
 	cwd?: string | null; // Current working directory
 	cwdConfirmed?: boolean; // True if cwd confirmed via OSC-7, false if seeded
 	fileViewer?: FileViewerState; // For file-viewer panes
+	doyDeckPreview?: DoyDeckPreviewState; // For DoyDeck read-only preview panes
 	chat?: ChatPaneState; // For chat panes
 	browser?: BrowserPaneState; // For browser (webview) panes
 	devtools?: DevToolsPaneState; // For devtools panes

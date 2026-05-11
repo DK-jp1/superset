@@ -6,6 +6,7 @@ import type {
 	BrowserLoadError,
 	ChatLaunchConfig,
 	CommentPaneState,
+	DoyDeckPreviewState,
 	FileViewerMode,
 	Pane,
 	PaneStatus,
@@ -98,6 +99,10 @@ export interface AddFileViewerPaneOptions {
 	reuseExisting?: FileViewerReuseScope;
 }
 
+export interface AddDoyDeckPreviewPaneOptions extends DoyDeckPreviewState {
+	openInNewTab?: boolean;
+}
+
 /**
  * Actions available on the tabs store
  */
@@ -137,6 +142,10 @@ export interface TabsStore extends TabsState {
 	addFileViewerPane: (
 		workspaceId: string,
 		options: AddFileViewerPaneOptions,
+	) => string;
+	addDoyDeckPreviewPane: (
+		workspaceId: string,
+		options: AddDoyDeckPreviewPaneOptions,
 	) => string;
 	removePane: (paneId: string) => void;
 	setFocusedPane: (tabId: string, paneId: string) => void;

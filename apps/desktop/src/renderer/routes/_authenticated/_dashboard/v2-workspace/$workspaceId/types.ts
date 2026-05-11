@@ -65,6 +65,14 @@ export interface CommanderPaneData {
 	reviewPrompt: string;
 }
 
+export interface DoyDeckPreviewPaneData {
+	rootId: string;
+	absolutePath: string;
+	relativePath?: string;
+	workspaceId?: string;
+	displayName?: string;
+}
+
 export type PaneViewerData =
 	| FilePaneData
 	| TerminalPaneData
@@ -73,4 +81,5 @@ export type PaneViewerData =
 	| DevtoolsPaneData
 	| DiffPaneData
 	| CommentPaneData
-	| CommanderPaneData;
+	| CommanderPaneData
+	| DoyDeckPreviewPaneData;

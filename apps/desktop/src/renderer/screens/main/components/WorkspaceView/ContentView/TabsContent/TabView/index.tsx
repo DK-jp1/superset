@@ -9,9 +9,10 @@ import {
 } from "react-mosaic-component";
 import { dragDropManager } from "renderer/lib/dnd";
 import { electronTrpc } from "renderer/lib/electron-trpc";
+import { DoyDeckPreviewPane } from "renderer/components/DoyDeckExplorer";
 import { requestPaneClose } from "renderer/stores/editor-state/editorCoordinator";
 import { useTabsStore } from "renderer/stores/tabs/store";
-import type { Tab } from "renderer/stores/tabs/types";
+import type { Pane, Tab } from "renderer/stores/tabs/types";
 import { useTabsWithPresets } from "renderer/stores/tabs/useTabsWithPresets";
 import {
 	cleanLayout,
@@ -22,7 +23,12 @@ import { useTheme } from "renderer/stores/theme";
 import { BrowserPane } from "./BrowserPane";
 import { ChatPane } from "./ChatPane";
 import { CommentPane } from "./CommentPane";
-import { MosaicSplitOverlay } from "./components";
+import {
+	BasePaneWindow,
+	MosaicSplitOverlay,
+	PaneTitle,
+	PaneToolbarActions,
+} from "./components";
 import { DevToolsPane } from "./DevToolsPane";
 import { FileViewerPane } from "./FileViewerPane";
 import { TabPane } from "./TabPane";
@@ -41,6 +47,7 @@ export function TabView({ tab }: TabViewProps) {
 	const setFocusedPane = useTabsStore((s) => s.setFocusedPane);
 	const movePaneToTab = useTabsStore((s) => s.movePaneToTab);
 	const movePaneToNewTab = useTabsStore((s) => s.movePaneToNewTab);
+	const setPaneName = useTabsStore((s) => s.setPaneName);
 	const allTabs = useTabsStore((s) => s.tabs);
 	const allPanes = useTabsStore((s) => s.panes);
 
@@ -72,7 +79,9 @@ export function TabView({ tab }: TabViewProps) {
 			{
 				tabId: string;
 				type: string;
+				name: string;
 				devtools?: { targetPaneId: string };
+				doyDeckPreview?: Pane["doyDeckPreview"];
 			}
 		> = {};
 		for (const paneId of layoutPaneIds) {
@@ -81,7 +90,9 @@ export function TabView({ tab }: TabViewProps) {
 				result[paneId] = {
 					tabId: pane.tabId,
 					type: pane.type,
+					name: pane.name,
 					devtools: pane.devtools,
+					doyDeckPreview: pane.doyDeckPreview,
 				};
 			}
 		}
@@ -198,6 +209,50 @@ export function TabView({ tab }: TabViewProps) {
 				);
 			}
 
+			if (paneInfo.type === "doydeck-preview") {
+				const data = paneInfo.doyDeckPreview;
+				if (!data) {
+					return (
+						<div className="w-full h-full flex items-center justify-center text-muted-foreground">
+							Preview data unavailable
+						</div>
+					);
+				}
+				return (
+					<BasePaneWindow
+						paneId={paneId}
+						path={path}
+						tabId={tab.id}
+						splitPaneAuto={splitPaneAuto}
+						removePane={removePane}
+						setFocusedPane={setFocusedPane}
+						renderToolbar={(handlers) => (
+							<div className="flex h-full w-full items-center justify-between px-3">
+								<PaneTitle
+									name={paneInfo.name}
+									fallback="Preview"
+									onRename={(newName) => setPaneName(paneId, newName)}
+								/>
+								<PaneToolbarActions
+									splitOrientation={handlers.splitOrientation}
+									onSplitPane={handlers.onSplitPane}
+									onClosePane={handlers.onClosePane}
+									closeHotkeyId="CLOSE_TERMINAL"
+								/>
+							</div>
+						)}
+					>
+						<DoyDeckPreviewPane
+							rootId={data.rootId}
+							absolutePath={data.absolutePath}
+							relativePath={data.relativePath}
+							workspaceId={data.workspaceId ?? tab.workspaceId}
+							displayName={data.displayName}
+						/>
+					</BasePaneWindow>
+				);
+			}
+
 			// Route chat panes to ChatPane component
 			if (paneInfo.type === "chat") {
 				return (
@@ -289,6 +344,7 @@ export function TabView({ tab }: TabViewProps) {
 			splitPaneVertical,
 			removePane,
 			setFocusedPane,
+			setPaneName,
 			workspaceTabs,
 			movePaneToTab,
 			movePaneToNewTab,

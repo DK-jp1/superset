@@ -26,6 +26,7 @@ import { useHotkeyDisplay } from "renderer/hotkeys";
 import { getBaseName } from "renderer/lib/pathBasename";
 import { consumeTerminalBackgroundIntent } from "renderer/lib/terminal/terminal-background-intents";
 import { terminalRuntimeRegistry } from "renderer/lib/terminal/terminal-runtime-registry";
+import { DoyDeckPreviewPane } from "renderer/components/DoyDeckExplorer";
 import { useWorkspace } from "renderer/routes/_authenticated/_dashboard/v2-workspace/providers/WorkspaceProvider";
 import { FileIcon } from "renderer/screens/main/components/WorkspaceView/RightSidebar/FilesView/utils";
 import {
@@ -42,6 +43,7 @@ import type {
 	ChatPaneData,
 	CommentPaneData,
 	DevtoolsPaneData,
+	DoyDeckPreviewPaneData,
 	FilePaneData,
 	PaneViewerData,
 	TerminalPaneData,
@@ -238,6 +240,33 @@ export function usePaneRegistry({
 				contextMenuActions: (_ctx, defaults) =>
 					defaults.map((d) =>
 						d.key === "close-pane" ? { ...d, label: "Close Diff" } : d,
+					),
+			},
+			"doydeck-preview": {
+				getIcon: (ctx: RendererContext<PaneViewerData>) => {
+					const data = ctx.pane.data as DoyDeckPreviewPaneData;
+					const name = data.displayName || getFileName(data.absolutePath);
+					return <FileIcon fileName={name} className="size-4" />;
+				},
+				getTitle: (pane) => {
+					const data = pane.data as DoyDeckPreviewPaneData;
+					return data.displayName || getFileName(data.absolutePath);
+				},
+				renderPane: (ctx: RendererContext<PaneViewerData>) => {
+					const data = ctx.pane.data as DoyDeckPreviewPaneData;
+					return (
+						<DoyDeckPreviewPane
+							rootId={data.rootId}
+							absolutePath={data.absolutePath}
+							relativePath={data.relativePath}
+							workspaceId={data.workspaceId ?? workspaceId}
+							displayName={data.displayName}
+						/>
+					);
+				},
+				contextMenuActions: (_ctx, defaults) =>
+					defaults.map((d) =>
+						d.key === "close-pane" ? { ...d, label: "Close Preview" } : d,
 					),
 			},
 			terminal: {

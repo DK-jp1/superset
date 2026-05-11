@@ -28,6 +28,10 @@ import {
 } from "renderer/stores/editor-state/editorCoordinator";
 import { useEditorSessionsStore } from "renderer/stores/editor-state/useEditorSessionsStore";
 import { SidebarMode, useSidebarStore } from "renderer/stores/sidebar-state";
+import {
+	type DoyDeckCenterPreviewPayload,
+	registerDoyDeckCenterPreviewOpener,
+} from "renderer/stores/doydeck-preview-openers";
 import { getPaneDimensions } from "renderer/stores/tabs/pane-refs";
 import { useTabsStore } from "renderer/stores/tabs/store";
 import type { Tab } from "renderer/stores/tabs/types";
@@ -100,6 +104,19 @@ function WorkspacePage() {
 
 	// Keep the file open mode cache warm for addFileViewerPane
 	useFileOpenMode();
+
+	useEffect(() => {
+		return registerDoyDeckCenterPreviewOpener(
+			workspaceId,
+			(payload: DoyDeckCenterPreviewPayload) => {
+				useTabsStore.getState().addDoyDeckPreviewPane(workspaceId, {
+					...payload,
+					workspaceId,
+					openInNewTab: true,
+				});
+			},
+		);
+	}, [workspaceId]);
 
 	// Handle search-param-driven tab/pane activation (e.g. from notification clicks)
 	useEffect(() => {

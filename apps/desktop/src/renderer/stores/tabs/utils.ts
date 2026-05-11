@@ -16,6 +16,7 @@ import {
 	type CommentPaneState,
 	type DevToolsPaneState,
 	type DiffLayout,
+	type DoyDeckPreviewState,
 	type FileViewerMode,
 	type FileViewerState,
 } from "shared/tabs-types";
@@ -240,6 +241,31 @@ export const createFileViewerPane = (
 		type: "file-viewer",
 		name: fileName,
 		fileViewer,
+	};
+};
+
+export interface CreateDoyDeckPreviewPaneOptions extends DoyDeckPreviewState {}
+
+export const createDoyDeckPreviewPane = (
+	tabId: string,
+	options: CreateDoyDeckPreviewPaneOptions,
+): Pane => {
+	const id = generateId("pane");
+	const name =
+		options.displayName || getPathBaseName(options.relativePath || options.absolutePath);
+
+	return {
+		id,
+		tabId,
+		type: "doydeck-preview",
+		name,
+		doyDeckPreview: {
+			rootId: options.rootId,
+			absolutePath: options.absolutePath,
+			relativePath: options.relativePath,
+			workspaceId: options.workspaceId,
+			displayName: options.displayName,
+		},
 	};
 };
 

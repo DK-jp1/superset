@@ -7,6 +7,10 @@ import { useHotkey } from "renderer/hotkeys";
 import { CommandPalette } from "renderer/screens/main/components/CommandPalette";
 import { ResizablePanel } from "renderer/screens/main/components/ResizablePanel";
 import { getV2NotificationSourcesForTab } from "renderer/stores/v2-notifications";
+import {
+	type DoyDeckCenterPreviewPayload,
+	registerDoyDeckCenterPreviewOpener,
+} from "renderer/stores/doydeck-preview-openers";
 import { useWorkspace } from "../providers/WorkspaceProvider";
 import { AddTabMenu } from "./components/AddTabMenu";
 import { V2NotificationStatusIndicator } from "./components/V2NotificationStatusIndicator";
@@ -29,7 +33,7 @@ import { useWorkspaceFileNavigation } from "./hooks/useWorkspaceFileNavigation";
 import { useWorkspaceHotkeys } from "./hooks/useWorkspaceHotkeys";
 import { useWorkspacePaneOpeners } from "./hooks/useWorkspacePaneOpeners";
 import { FileDocumentStoreProvider } from "./state/fileDocumentStore";
-import type { PaneViewerData } from "./types";
+import type { DoyDeckPreviewPaneData, PaneViewerData } from "./types";
 import type { V2WorkspaceUrlOpenTarget } from "./utils/openUrlInV2Workspace";
 
 interface WorkspaceSearch {
@@ -85,6 +89,31 @@ function V2WorkspacePage() {
 		setRightSidebarWidth,
 	} = useV2UserPreferences();
 	const { store } = useV2WorkspacePaneLayout();
+	const openDoyDeckPreviewPane = useCallback(
+		(payload: DoyDeckCenterPreviewPayload) => {
+			const data = {
+				...payload,
+				workspaceId,
+			} satisfies DoyDeckPreviewPaneData;
+			store.getState().addTab({
+				panes: [
+					{
+						kind: "doydeck-preview",
+						data,
+					},
+				],
+			});
+		},
+		[store, workspaceId],
+	);
+	useEffect(
+		() =>
+			registerDoyDeckCenterPreviewOpener(
+				workspaceId,
+				openDoyDeckPreviewPane,
+			),
+		[openDoyDeckPreviewPane, workspaceId],
+	);
 	useClearActivePaneAttention({ store });
 	const launcher = useV2TerminalLauncher();
 	const { matchedPresets, executePreset } = useV2PresetExecution({
