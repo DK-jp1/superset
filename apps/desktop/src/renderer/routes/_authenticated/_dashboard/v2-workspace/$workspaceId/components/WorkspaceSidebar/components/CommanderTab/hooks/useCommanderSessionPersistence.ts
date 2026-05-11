@@ -33,7 +33,10 @@ export function useCommanderSessionPersistence(workspaceId: string) {
 				console.warn("[S3.18] invalid persisted Commander Session ignored");
 				return null;
 			}
-			return parsed.session;
+			return {
+				...parsed.session,
+				selectedFiles: parsed.session.selectedFiles ?? [],
+			};
 		} catch (error) {
 			console.warn("[S3.18] failed to load Commander Session:", error);
 			return null;
@@ -132,7 +135,33 @@ function isCommanderSession(value: unknown): value is CommanderSession {
 			}
 			continue;
 		}
+		if (key === "selectedFiles") {
+			if (
+				session.selectedFiles !== undefined &&
+				(!Array.isArray(session.selectedFiles) ||
+					!session.selectedFiles.every(isCommanderSelectedPath))
+			) {
+				return false;
+			}
+			continue;
+		}
 		if (typeof session[key] !== "string") return false;
 	}
 	return true;
+}
+
+function isCommanderSelectedPath(value: unknown): boolean {
+	if (!value || typeof value !== "object") return false;
+	const path = value as Partial<CommanderSession["selectedFiles"][number]>;
+	return (
+		typeof path.absolutePath === "string" &&
+		typeof path.relativePath === "string" &&
+		typeof path.rootId === "string" &&
+		(path.type === "file" ||
+			path.type === "directory" ||
+			path.type === "symlink") &&
+		typeof path.displayName === "string" &&
+		(path.size === undefined || typeof path.size === "number") &&
+		(path.previewKind === undefined || typeof path.previewKind === "string")
+	);
 }

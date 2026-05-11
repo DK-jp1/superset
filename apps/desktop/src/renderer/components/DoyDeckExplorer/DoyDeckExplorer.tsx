@@ -1,5 +1,12 @@
 import { Button } from "@superset/ui/button";
 import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from "@superset/ui/dropdown-menu";
+import {
 	Select,
 	SelectContent,
 	SelectItem,
@@ -9,12 +16,16 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@superset/ui/tooltip";
 import { cn } from "@superset/ui/utils";
 import {
+	Bot,
+	ChevronsUpDown,
 	ChevronDown,
 	ChevronRight,
 	Copy,
 	FileQuestion,
+	ListPlus,
 	PanelTopOpen,
 	RefreshCw,
+	Terminal as TerminalIcon,
 } from "lucide-react";
 import type { ComponentType } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -26,7 +37,13 @@ import {
 	electronTrpc,
 } from "renderer/lib/electron-trpc";
 import { FileIcon } from "renderer/screens/main/components/WorkspaceView/RightSidebar/FilesView/utils";
+import {
+	addSelectedPathToCommanderSession,
+	sendSelectedPathToBrowserAI,
+	sendSelectedPathToTerminalPreview,
+} from "renderer/stores/doydeck-commander-actions";
 import { openDoyDeckCenterPreview } from "renderer/stores/doydeck-preview-openers";
+import type { CommanderSelectedPath } from "renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/components/WorkspaceSidebar/components/CommanderTab/commander-types";
 import { DoyDeckPreviewRenderer } from "./DoyDeckPreviewRenderer";
 
 type ExplorerRootId =
@@ -92,6 +109,19 @@ function getRelativePath(rootPath: string | undefined, absolutePath: string) {
 
 function shellQuotePath(absolutePath: string) {
 	return quote([absolutePath]);
+}
+
+function getBaseName(filePath: string): string {
+	return filePath.split(/[\\/]/).filter(Boolean).pop() ?? filePath;
+}
+
+function toCommanderSelectedPathType(
+	kind: ExplorerEntryKind | null,
+): CommanderSelectedPath["type"] | null {
+	if (kind === "file" || kind === "directory" || kind === "symlink") {
+		return kind;
+	}
+	return null;
 }
 
 function buildRows({
@@ -354,6 +384,28 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 	const selectedRelativePath = selectedPath
 		? getRelativePath(rootPath, selectedPath)
 		: "";
+	const selectedCommanderPath = useMemo((): CommanderSelectedPath | null => {
+		const selectedType = toCommanderSelectedPathType(selectedKind);
+		if (!selectedPath || !selectedType) return null;
+		const filePreview =
+			selectedPreviewFilePath === selectedPath ? previewQuery.data : undefined;
+		return {
+			absolutePath: selectedPath,
+			relativePath: selectedRelativePath,
+			rootId,
+			type: selectedType,
+			displayName: selectedRelativePath || getBaseName(selectedPath),
+			size: filePreview?.byteLength,
+			previewKind: filePreview?.kind,
+		};
+	}, [
+		previewQuery.data,
+		rootId,
+		selectedKind,
+		selectedPath,
+		selectedPreviewFilePath,
+		selectedRelativePath,
+	]);
 
 	const handleToggleDirectory = (absolutePath: string) => {
 		setExpanded((prev) => {
@@ -402,6 +454,21 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		if (!opened) {
 			toast.error("Center preview is unavailable for this workspace");
 		}
+	};
+
+	const handleAddToSession = () => {
+		if (!selectedCommanderPath) return;
+		addSelectedPathToCommanderSession(workspaceId, selectedCommanderPath);
+	};
+
+	const handleSendPathToBrowserAI = () => {
+		if (!selectedCommanderPath) return;
+		void sendSelectedPathToBrowserAI(workspaceId, selectedCommanderPath);
+	};
+
+	const handleSendPathToTerminalPreview = () => {
+		if (!selectedCommanderPath) return;
+		sendSelectedPathToTerminalPreview(workspaceId, selectedCommanderPath);
 	};
 
 	const handleResizePointerDown = (
@@ -633,51 +700,102 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 							onClick={handleOpenInCenterPreview}
 						/>
 						<IconButton
-							icon={Copy}
-							label="Copy Absolute Path"
-							disabled={!selectedPath}
-							onClick={() => {
-								if (selectedPath) {
-									void handleCopy(selectedPath, "Absolute path copied");
-								}
-							}}
+							icon={ListPlus}
+							label="Add to Session"
+							disabled={!selectedCommanderPath}
+							onClick={handleAddToSession}
 						/>
-						<IconButton
-							icon={Copy}
-							label="Copy Relative Path"
-							disabled={!selectedRelativePath}
-							onClick={() => {
-								if (selectedRelativePath) {
-									void handleCopy(selectedRelativePath, "Relative path copied");
-								}
-							}}
-						/>
-						<IconButton
-							icon={Copy}
-							label="Copy Shell-Quoted Path"
-							disabled={!selectedPath}
-							onClick={() => {
-								if (selectedPath) {
-									void handleCopy(
-										shellQuotePath(selectedPath),
-										"Shell-quoted path copied",
-									);
-								}
-							}}
-						/>
-						<IconButton
-							icon={Copy}
-							label="Copy cd Command"
-							disabled={!selectedPath || selectedKind !== "directory"}
-							onClick={() => {
-								if (selectedPath && selectedKind === "directory") {
-									void handleCopy(
-										`cd ${shellQuotePath(selectedPath)}`,
-										"cd command copied",
-									);
-								}
-							}}
-						/>
+						<DropdownMenu>
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<DropdownMenuTrigger asChild>
+										<Button
+											type="button"
+											variant="ghost"
+											size="sm"
+											className="h-7 shrink-0 gap-1 px-1.5 text-[10px]"
+											disabled={!selectedCommanderPath}
+										>
+											Actions
+											<ChevronsUpDown className="size-3" />
+										</Button>
+									</DropdownMenuTrigger>
+								</TooltipTrigger>
+								<TooltipContent side="bottom" showArrow={false}>
+									Explorer Actions
+								</TooltipContent>
+							</Tooltip>
+							<DropdownMenuContent align="end" className="w-52">
+								<DropdownMenuItem
+									disabled={!selectedCommanderPath}
+									onSelect={handleSendPathToBrowserAI}
+								>
+									<Bot className="size-3.5" />
+									Send Path to Browser AI
+								</DropdownMenuItem>
+								<DropdownMenuItem
+									disabled={!selectedCommanderPath}
+									onSelect={handleSendPathToTerminalPreview}
+								>
+									<TerminalIcon className="size-3.5" />
+									Send Path to Terminal
+								</DropdownMenuItem>
+								<DropdownMenuSeparator />
+								<DropdownMenuItem
+									disabled={!selectedPath}
+									onSelect={() => {
+										if (selectedPath) {
+											void handleCopy(selectedPath, "Absolute path copied");
+										}
+									}}
+								>
+									<Copy className="size-3.5" />
+									Copy Absolute Path
+								</DropdownMenuItem>
+								<DropdownMenuItem
+									disabled={!selectedRelativePath}
+									onSelect={() => {
+										if (selectedRelativePath) {
+											void handleCopy(
+												selectedRelativePath,
+												"Relative path copied",
+											);
+										}
+									}}
+								>
+									<Copy className="size-3.5" />
+									Copy Relative Path
+								</DropdownMenuItem>
+								<DropdownMenuItem
+									disabled={!selectedPath}
+									onSelect={() => {
+										if (selectedPath) {
+											void handleCopy(
+												shellQuotePath(selectedPath),
+												"Shell-quoted path copied",
+											);
+										}
+									}}
+								>
+									<Copy className="size-3.5" />
+									Copy Shell-Quoted Path
+								</DropdownMenuItem>
+								<DropdownMenuItem
+									disabled={!selectedPath || selectedKind !== "directory"}
+									onSelect={() => {
+										if (selectedPath && selectedKind === "directory") {
+											void handleCopy(
+												`cd ${shellQuotePath(selectedPath)}`,
+												"cd command copied",
+											);
+										}
+									}}
+								>
+									<TerminalIcon className="size-3.5" />
+									Copy cd Command
+								</DropdownMenuItem>
+							</DropdownMenuContent>
+						</DropdownMenu>
 					</div>
 					<div ref={previewBodyRef} className="min-h-0 flex-1 overflow-hidden">
 						<DoyDeckPreviewRenderer

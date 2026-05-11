@@ -1,6 +1,9 @@
 import type { CommanderSession } from "../commander-types";
 
-type SessionTextField = Exclude<keyof CommanderSession, "targetFiles">;
+type SessionTextField = Exclude<
+	keyof CommanderSession,
+	"targetFiles" | "selectedFiles"
+>;
 
 interface SessionExtractionResult {
 	session: CommanderSession;
@@ -26,6 +29,7 @@ export function createEmptyCommanderSession(): CommanderSession {
 		currentTask: "",
 		implementationPlan: "",
 		targetFiles: [],
+		selectedFiles: [],
 		testPlan: "",
 		risksOpenQuestions: "",
 	};
@@ -49,6 +53,9 @@ export function commanderStateFromSession(session: CommanderSession): {
 			: "",
 		session.targetFiles.length
 			? `Target Files:\n${session.targetFiles.map((path) => `- ${path}`).join("\n")}`
+			: "",
+		session.selectedFiles.length
+			? `Selected Files / Paths:\n${formatSelectedFiles(session.selectedFiles)}`
 			: "",
 		session.testPlan ? `Test Plan:\n${session.testPlan}` : "",
 		session.risksOpenQuestions
@@ -81,6 +88,8 @@ export function mergeCommanderSession(
 			next.implementationPlan.trim() || base.implementationPlan,
 		targetFiles:
 			next.targetFiles.length > 0 ? next.targetFiles : base.targetFiles,
+		selectedFiles:
+			next.selectedFiles.length > 0 ? next.selectedFiles : base.selectedFiles,
 		testPlan: next.testPlan.trim() || base.testPlan,
 		risksOpenQuestions:
 			next.risksOpenQuestions.trim() || base.risksOpenQuestions,
@@ -139,6 +148,9 @@ ${valueOrUnset(session.implementationPlan)}
 
 ### Target Files
 ${formatTargetFiles(session.targetFiles)}
+
+### Selected Files / Paths
+${formatSelectedFiles(session.selectedFiles)}
 
 ### Test Plan
 ${valueOrUnset(session.testPlan)}
@@ -517,6 +529,26 @@ function appendSection(
 function formatTargetFiles(files: string[]): string {
 	return files.length > 0
 		? files.map((path) => `- ${path}`).join("\n")
+		: "未設定";
+}
+
+function formatSelectedFiles(
+	files: CommanderSession["selectedFiles"],
+): string {
+	return files.length > 0
+		? files
+				.map((file) => {
+					const lines = [
+						`- ${file.type}: ${file.displayName}`,
+						`  - relativePath: ${file.relativePath || "未取得"}`,
+						`  - absolutePath: ${file.absolutePath}`,
+						`  - rootId: ${file.rootId}`,
+					];
+					if (typeof file.size === "number") lines.push(`  - size: ${file.size}`);
+					if (file.previewKind) lines.push(`  - previewKind: ${file.previewKind}`);
+					return lines.join("\n");
+				})
+				.join("\n")
 		: "未設定";
 }
 

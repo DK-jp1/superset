@@ -15,6 +15,11 @@ import type {
 	SessionDraftPreview as SessionDraftPreviewState,
 } from "./commander-types";
 
+type SessionEditableTextField = Exclude<
+	keyof CommanderSession,
+	"targetFiles" | "selectedFiles"
+>;
+
 export function TerminalSendPreview({
 	text,
 	label,
@@ -349,8 +354,7 @@ export function SessionDraftPreviewPanel({
 		setTargetFilesText(draft.session.targetFiles.join("\n"));
 	}, [draft.session]);
 
-	const updateField = (field: keyof CommanderSession, value: string) => {
-		if (field === "targetFiles") return;
+	const updateField = (field: SessionEditableTextField, value: string) => {
 		setEditedSession((prev) => ({ ...prev, [field]: value }));
 	};
 
@@ -459,6 +463,21 @@ export function SessionDraftPreviewPanel({
 					value={targetFilesText}
 					onChange={setTargetFilesText}
 				/>
+				{editedSession.selectedFiles.length > 0 && (
+					<div className="rounded border bg-background/60 px-2 py-1.5">
+						<div className="mb-1 text-[9px] font-medium text-muted-foreground">
+							Selected Files / Paths
+						</div>
+						<pre className="max-h-24 overflow-auto whitespace-pre-wrap break-all text-[10px] text-muted-foreground">
+							{editedSession.selectedFiles
+								.map(
+									(file) =>
+										`${file.type}: ${file.displayName}\n  ${file.relativePath || "未取得"}\n  ${file.absolutePath}`,
+								)
+								.join("\n")}
+						</pre>
+					</div>
+				)}
 				<SessionTextarea
 					label="Test Plan"
 					value={editedSession.testPlan}

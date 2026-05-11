@@ -3,6 +3,7 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
+	DropdownMenuLabel,
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@superset/ui/dropdown-menu";
@@ -171,19 +172,21 @@ export function CommanderHelperBar({
 						</Button>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent align="end" className="w-44">
+						<DropdownMenuLabel className="text-[10px] font-normal text-muted-foreground">
+							Main
+						</DropdownMenuLabel>
 						<DropdownMenuItem
-							disabled={!workerPrompt}
-							onSelect={() => copyToClipboard(workerPrompt)}
+							disabled={!activeTerminal || !hasProvider}
+							onSelect={onSendSelectionToAI}
 						>
-							<LuClipboard className="size-3.5" />
-							Copy W
+							<LuZap className="size-3.5" />
+							Term → AI
 						</DropdownMenuItem>
 						<DropdownMenuItem
-							disabled={!reviewPrompt}
-							onSelect={() => copyToClipboard(reviewPrompt)}
+							disabled={!hasProvider}
+							onSelect={onCaptureResponse}
 						>
-							<LuClipboard className="size-3.5" />
-							Copy R
+							<LuDownload className="size-3.5" />← AI
 						</DropdownMenuItem>
 						<DropdownMenuItem onSelect={onGenerateHandoff}>
 							<LuFileText className="size-3.5" />
@@ -208,6 +211,24 @@ export function CommanderHelperBar({
 							<LuTrash2 className="size-3.5" />
 							Clear Session
 						</DropdownMenuItem>
+						<DropdownMenuSeparator />
+						<DropdownMenuLabel className="text-[10px] font-normal text-muted-foreground">
+							Advanced / Legacy
+						</DropdownMenuLabel>
+						<DropdownMenuItem
+							disabled={!workerPrompt}
+							onSelect={() => copyToClipboard(workerPrompt)}
+						>
+							<LuClipboard className="size-3.5" />
+							Copy W
+						</DropdownMenuItem>
+						<DropdownMenuItem
+							disabled={!reviewPrompt}
+							onSelect={() => copyToClipboard(reviewPrompt)}
+						>
+							<LuClipboard className="size-3.5" />
+							Copy R
+						</DropdownMenuItem>
 						<DropdownMenuItem
 							disabled={!handoffPrompt.trim()}
 							onSelect={onCopyHandoff}
@@ -215,7 +236,6 @@ export function CommanderHelperBar({
 							<LuClipboard className="size-3.5" />
 							Copy Handoff
 						</DropdownMenuItem>
-						<DropdownMenuSeparator />
 						<DropdownMenuItem
 							disabled={!hasSetup}
 							onSelect={() => onInject("worker")}
@@ -231,13 +251,6 @@ export function CommanderHelperBar({
 							Inject R
 						</DropdownMenuItem>
 						<DropdownMenuItem
-							disabled={!hasProvider}
-							onSelect={onCaptureResponse}
-						>
-							<LuDownload className="size-3.5" />← AI
-						</DropdownMenuItem>
-						<DropdownMenuSeparator />
-						<DropdownMenuItem
 							disabled={!hasSetup || !activeTerminal}
 							onSelect={() => handleTerminalSend("worker")}
 						>
@@ -248,13 +261,6 @@ export function CommanderHelperBar({
 							onSelect={onGrabSelection}
 						>
 							<LuTerminal className="size-3.5" />← Term
-						</DropdownMenuItem>
-						<DropdownMenuItem
-							disabled={!activeTerminal || !hasProvider}
-							onSelect={onSendSelectionToAI}
-						>
-							<LuZap className="size-3.5" />
-							Term → AI
 						</DropdownMenuItem>
 					</DropdownMenuContent>
 				</DropdownMenu>

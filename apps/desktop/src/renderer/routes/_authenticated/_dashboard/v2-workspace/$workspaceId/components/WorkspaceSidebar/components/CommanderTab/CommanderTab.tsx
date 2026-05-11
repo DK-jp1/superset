@@ -2,6 +2,7 @@ import { Button } from "@superset/ui/button";
 import { toast } from "@superset/ui/sonner";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { LuLoader, LuX } from "react-icons/lu";
+import { registerDoyDeckCommanderActionBridge } from "renderer/stores/doydeck-commander-actions";
 import type {
 	CommanderSession,
 	CommanderState,
@@ -160,6 +161,20 @@ export function CommanderTab({
 		});
 		return () => unregisterCommanderBridge();
 	}, [webview.injectIntoPage, webview.getLiveUrl, handleAutoCaptureTrigger]);
+
+	useEffect(() => {
+		if (!workspaceId.trim()) return;
+		return registerDoyDeckCommanderActionBridge(workspaceId, {
+			addSelectedPathToSession: transfer.handleAddSelectedPathToSession,
+			sendPathToBrowserAI: transfer.handleSendPathToBrowserAI,
+			sendPathToTerminalPreview: transfer.handleSendPathToTerminalPreview,
+		});
+	}, [
+		workspaceId,
+		transfer.handleAddSelectedPathToSession,
+		transfer.handleSendPathToBrowserAI,
+		transfer.handleSendPathToTerminalPreview,
+	]);
 
 	const currentProvider = detectProvider(webview.currentUrl);
 	const providerLabel = getProviderLabel(currentProvider);

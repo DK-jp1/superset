@@ -5,6 +5,16 @@ export interface CommanderState {
 	currentProblem: string;
 }
 
+export interface CommanderSelectedPath {
+	absolutePath: string;
+	relativePath: string;
+	rootId: string;
+	type: "file" | "directory" | "symlink";
+	displayName: string;
+	size?: number;
+	previewKind?: string;
+}
+
 export interface CommanderSession {
 	goal: string;
 	intentNotes: string;
@@ -15,6 +25,7 @@ export interface CommanderSession {
 	currentTask: string;
 	implementationPlan: string;
 	targetFiles: string[];
+	selectedFiles: CommanderSelectedPath[];
 	testPlan: string;
 	risksOpenQuestions: string;
 }

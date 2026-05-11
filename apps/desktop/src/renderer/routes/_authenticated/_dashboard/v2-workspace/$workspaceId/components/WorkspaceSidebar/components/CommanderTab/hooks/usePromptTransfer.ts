@@ -7,6 +7,7 @@ import {
 } from "renderer/screens/main/components/WorkspaceView/ContentView/TabsContent/Terminal/v1-terminal-cache";
 import type {
 	CommanderSession,
+	CommanderSelectedPath,
 	CommanderState,
 	CommanderView,
 	SessionDraftPreview,
@@ -17,6 +18,7 @@ import {
 	detectProvider,
 	getProviderLabel,
 	buildInjectionScript,
+	buildInjectionWithSubmitScript,
 	buildAssistantSnapshotScript,
 	buildExtractionScript,
 } from "../browser-adapters";
@@ -51,6 +53,60 @@ export function appendToField(
 	separator: string,
 ): string {
 	return existing ? `${existing}\n\n${separator}\n${addition}` : addition;
+}
+
+function formatExplorerPathMetadata(pathInfo: CommanderSelectedPath): string {
+	const lines = [
+		`Path:\n${pathInfo.absolutePath}`,
+		`Relative Path:\n${pathInfo.relativePath || "未取得"}`,
+		`Type:\n${pathInfo.type}`,
+		`Root:\n${pathInfo.rootId}`,
+		`Display Name:\n${pathInfo.displayName}`,
+	];
+	if (typeof pathInfo.size === "number") {
+		lines.push(`Size:\n${pathInfo.size} bytes`);
+	}
+	if (pathInfo.previewKind) {
+		lines.push(`Preview Kind:\n${pathInfo.previewKind}`);
+	}
+	return lines.join("\n\n");
+}
+
+function buildBrowserPathPrompt(pathInfo: CommanderSelectedPath): string {
+	return `以下のファイル/フォルダを前提に、次の作業方針を整理してください。
+
+${formatExplorerPathMetadata(pathInfo)}
+
+注意:
+ファイル本文はまだ送っていません。必要なら読むべきファイルとして扱ってください。`;
+}
+
+function buildTerminalPathPrompt(pathInfo: CommanderSelectedPath): string {
+	return `対象パスを確認してください。
+
+${formatExplorerPathMetadata(pathInfo)}
+
+必要ならこのパスを使って調査してください。`;
+}
+
+function addSelectedPath(
+	session: CommanderSession,
+	pathInfo: CommanderSelectedPath,
+): { session: CommanderSession; added: boolean } {
+	if (
+		session.selectedFiles.some(
+			(file) => file.absolutePath === pathInfo.absolutePath,
+		)
+	) {
+		return { session, added: false };
+	}
+	return {
+		session: {
+			...session,
+			selectedFiles: [...session.selectedFiles, pathInfo],
+		},
+		added: true,
+	};
 }
 
 function isSameCapturedText(left: string, right: string): boolean {
@@ -1064,6 +1120,67 @@ export function usePromptTransfer({
 		setSessionDraftPreview((prev) => ({ ...prev, visible: false }));
 	}, []);
 
+	const handleAddSelectedPathToSession = useCallback(
+		(pathInfo: CommanderSelectedPath) => {
+			const result = addSelectedPath(session, pathInfo);
+			if (!result.added) {
+				toast.info("このパスはすでにSessionに追加済みです");
+				return;
+			}
+			onUpdateSession(() => result.session);
+			onSessionApplied?.(result.session);
+			toast.success("Explorer pathをSessionに追加しました");
+		},
+		[session, onUpdateSession, onSessionApplied],
+	);
+
+	const handleSendPathToBrowserAI = useCallback(
+		async (pathInfo: CommanderSelectedPath) => {
+			const prompt = buildBrowserPathPrompt(pathInfo);
+			const liveUrl = getLiveUrl() || currentUrl;
+			const provider = detectProvider(liveUrl);
+			if (!provider) {
+				await copyToClipboard(prompt);
+				toast.warning(
+					"未対応サイトです — クリップボードにコピーしました。手動 paste してください",
+				);
+				return;
+			}
+			try {
+				const result = await injectIntoPage(
+					buildInjectionWithSubmitScript(prompt, provider),
+				);
+				if (result === "submitted") {
+					toast.success(`${getProviderLabel(provider)} に送信しました`);
+					return;
+				}
+				if (result === "injected") {
+					toast.success(
+						`${getProviderLabel(provider)} に挿入しました — 手動で送信してください`,
+					);
+					return;
+				}
+				await copyToClipboard(prompt);
+				toast.warning("入力欄が見つかりません — クリップボードにコピーしました");
+			} catch {
+				await copyToClipboard(prompt);
+				toast.warning("挿入に失敗しました — クリップボードにコピーしました");
+			}
+		},
+		[getLiveUrl, currentUrl, injectIntoPage],
+	);
+
+	const handleSendPathToTerminalPreview = useCallback(
+		(pathInfo: CommanderSelectedPath) => {
+			setCaptureForTerminalPreview({
+				visible: true,
+				text: buildTerminalPathPrompt(pathInfo),
+			});
+			toast.success("Terminal Send Previewに送ります");
+		},
+		[],
+	);
+
 	const handleGenerateHandoff = useCallback(async () => {
 		const liveUrl = getLiveUrl() || currentUrl;
 		const provider = detectProvider(liveUrl);
@@ -1318,6 +1435,9 @@ export function usePromptTransfer({
 		handleApplySessionDraft,
 		handleCopySessionDraft,
 		handleCancelSessionDraft,
+		handleAddSelectedPathToSession,
+		handleSendPathToBrowserAI,
+		handleSendPathToTerminalPreview,
 		handleGrabSelection,
 		handleUseSelection,
 		handleUseCapture,

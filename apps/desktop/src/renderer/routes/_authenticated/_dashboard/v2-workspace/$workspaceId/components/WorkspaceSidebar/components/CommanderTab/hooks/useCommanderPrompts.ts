@@ -67,6 +67,26 @@ Diff stat:
 ${gitSummary.diffStat || "変更なし"}`;
 }
 
+function formatSelectedFiles(
+	files: CommanderSession["selectedFiles"],
+): string {
+	if (files.length === 0) return "未設定。必要ならExplorerから追加してください";
+	return files
+		.map((file) => {
+			const lines = [
+				`- Type: ${file.type}`,
+				`  Display Name: ${file.displayName}`,
+				`  Relative Path: ${file.relativePath || "未取得"}`,
+				`  Absolute Path: ${file.absolutePath}`,
+				`  Root: ${file.rootId}`,
+			];
+			if (typeof file.size === "number") lines.push(`  Size: ${file.size}`);
+			if (file.previewKind) lines.push(`  Preview Kind: ${file.previewKind}`);
+			return lines.join("\n");
+		})
+		.join("\n");
+}
+
 export function generateWorkerPrompt(state: CommanderState): string {
 	const sections: string[] = [];
 	if (state.goal) sections.push(`## Goal\n${state.goal}`);
@@ -144,6 +164,9 @@ ${valueOrUnset(session.implementationPlan)}
 
 ### Target Files
 ${targetFiles}
+
+### Selected Files / Paths
+${formatSelectedFiles(session.selectedFiles)}
 
 ### Test Plan
 ${valueOrUnset(session.testPlan)}
