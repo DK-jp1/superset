@@ -33,6 +33,7 @@ const config: Configuration = {
 	mac: {
 		...baseConfig.mac,
 		...(existsSync(macIconPath) ? { icon: macIconPath } : {}),
+		target: ["dir", "dmg"],
 		artifactName: `DoyDeck-\${version}-\${arch}.\${ext}`,
 		hardenedRuntime: false,
 		notarize: false,
@@ -43,6 +44,11 @@ const config: Configuration = {
 			CFBundleDisplayName: productName,
 			CFBundleIdentifier: "com.doydeck.desktop",
 		},
+	},
+	dmg: {
+		...baseConfig.dmg,
+		artifactName: `DoyDeck-\${version}-\${arch}.dmg`,
+		title: productName,
 	},
 	protocols: {
 		name: productName,

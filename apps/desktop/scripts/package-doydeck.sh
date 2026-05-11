@@ -27,4 +27,4 @@ cat <<EOF
 EOF
 
 bun run prebuild
-electron-builder --config electron-builder.doydeck.ts --mac dir --publish never
+electron-builder --config electron-builder.doydeck.ts --mac dir dmg --publish never
