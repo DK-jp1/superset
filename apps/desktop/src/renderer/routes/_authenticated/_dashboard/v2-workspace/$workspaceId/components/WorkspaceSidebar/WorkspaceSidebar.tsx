@@ -3,7 +3,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@superset/ui/tooltip";
 import { workspaceTrpc } from "@superset/workspace-client";
 import { Search, Swords } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LuFile, LuGitCompareArrows } from "react-icons/lu";
+import { LuFile, LuFolderOpen, LuGitCompareArrows } from "react-icons/lu";
+import { DoyDeckExplorer } from "renderer/components/DoyDeckExplorer";
 import { useGitStatus } from "renderer/hooks/host-service/useGitStatus";
 import { useCollections } from "renderer/routes/_authenticated/providers/CollectionsProvider";
 import type { CommentPaneData } from "../../types";
@@ -22,13 +23,14 @@ import type { SidebarTabDefinition } from "./types";
 // always renders so users can see PR state and merge once a PR exists.
 const CREATE_PR_BUTTON_ENABLED = false;
 
-type SidebarTabId = "changes" | "files" | "review" | "commander";
+type SidebarTabId = "changes" | "files" | "review" | "commander" | "explorer";
 
 const VALID_TAB_IDS: readonly SidebarTabId[] = [
 	"changes",
 	"files",
 	"review",
 	"commander",
+	"explorer",
 ];
 
 function isSidebarTabId(tab: string): tab is SidebarTabId {
@@ -112,7 +114,7 @@ export function WorkspaceSidebar({
 			const width = entry.contentRect.width;
 			// Hysteresis: expand back to labels only once we're clearly past
 			// the breakpoint, so the labels don't jitter on the edge.
-			setCompact((prev) => (prev ? width < 280 : width < 260));
+			setCompact((prev) => (prev ? width < 380 : width < 360));
 		});
 		ro.observe(el);
 		return () => ro.disconnect();
@@ -170,8 +172,16 @@ export function WorkspaceSidebar({
 		),
 	};
 
+	const explorerTab: SidebarTabDefinition = {
+		id: "explorer",
+		label: "Explorer",
+		icon: LuFolderOpen,
+		content: <DoyDeckExplorer workspaceId={workspaceId} />,
+	};
+
 	const tabs: SidebarTabDefinition[] = [
 		filesTab,
+		explorerTab,
 		changesTab,
 		reviewTab,
 		commanderTab,

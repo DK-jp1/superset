@@ -6,10 +6,12 @@ import { Swords } from "lucide-react";
 import {
 	LuExpand,
 	LuFile,
+	LuFolderOpen,
 	LuGitCompareArrows,
 	LuShrink,
 	LuX,
 } from "react-icons/lu";
+import { DoyDeckExplorer } from "renderer/components/DoyDeckExplorer";
 import { HotkeyLabel } from "renderer/hotkeys";
 import { electronTrpc } from "renderer/lib/electron-trpc";
 import {
@@ -88,7 +90,7 @@ export function RightSidebar() {
 	const setMode = useSidebarStore((s) => s.setMode);
 	const sidebarWidth = useSidebarStore((s) => s.sidebarWidth);
 	const isExpanded = currentMode === SidebarMode.Changes;
-	const compactTabs = sidebarWidth < 250;
+	const compactTabs = sidebarWidth < 340;
 	const showChangesTab = !!worktreePath;
 
 	const handleExpandToggle = () => {
@@ -194,6 +196,13 @@ export function RightSidebar() {
 						compact={compactTabs}
 					/>
 					<TabButton
+						isActive={rightSidebarTab === RightSidebarTab.Explorer}
+						onClick={() => setRightSidebarTab(RightSidebarTab.Explorer)}
+						icon={<LuFolderOpen className="size-3.5" />}
+						label="Explorer"
+						compact={compactTabs}
+					/>
+					<TabButton
 						isActive={rightSidebarTab === RightSidebarTab.Commander}
 						onClick={() => setRightSidebarTab(RightSidebarTab.Commander)}
 						icon={<Swords className="size-3.5" />}
@@ -265,6 +274,15 @@ export function RightSidebar() {
 				}
 			>
 				<FilesView />
+			</div>
+			<div
+				className={
+					rightSidebarTab === RightSidebarTab.Explorer
+						? "flex-1 min-h-0 flex flex-col overflow-hidden"
+						: "hidden"
+				}
+			>
+				<DoyDeckExplorer workspaceId={workspaceId} />
 			</div>
 			<div
 				className={

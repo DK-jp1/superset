@@ -11,6 +11,7 @@ import { createChatRuntimeServiceRouter } from "./chat-runtime-service";
 import { createChatServiceRouter } from "./chat-service";
 import { createConfigRouter } from "./config";
 import { createDeviceRouter } from "./device";
+import { createDoyDeckExplorerRouter } from "./doydeck-explorer";
 import { createExternalRouter } from "./external";
 import { createFilesystemRouter } from "./filesystem";
 import { createHostServiceCoordinatorRouter } from "./host-service-coordinator";
@@ -56,6 +57,7 @@ export const createAppRouter = (getWindow: () => BrowserWindow | null) => {
 		system: createSystemRouter(),
 		config: createConfigRouter(),
 		device: createDeviceRouter(),
+		doydeckExplorer: createDoyDeckExplorerRouter(),
 		uiState: createUiStateRouter(),
 		ringtone: createRingtoneRouter(getWindow),
 		hostServiceCoordinator: createHostServiceCoordinatorRouter(),
