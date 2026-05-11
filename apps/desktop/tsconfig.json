@@ -12,6 +12,7 @@
 		"./src",
 		"electron.vite.config.ts",
 		"electron-builder.ts",
+		"electron-builder.doydeck.ts",
 		"index.d.ts"
 	],
 	"exclude": [

@@ -44,6 +44,14 @@ function isPrereleaseBuild(): boolean {
 const IS_PRERELEASE = isPrereleaseBuild();
 const IS_AUTO_UPDATE_PLATFORM = PLATFORM.IS_MAC || PLATFORM.IS_LINUX;
 
+function isDoyDeckAutoUpdateDisabled(): boolean {
+	return (
+		process.env.DOYDECK_DEV_MODE === "1" ||
+		process.env.SUPERSET_WORKSPACE_NAME === "doydeck-dev" ||
+		app.name === "DoyDeck"
+	);
+}
+
 // Use explicit feed URLs to ensure we always fetch platform-specific manifests
 // (for example latest-mac.yml and latest-linux.yml) from the correct release.
 // - Stable: fetches from /releases/latest/download/ (latest non-prerelease)
@@ -108,6 +116,11 @@ export function getUpdateStatus(): AutoUpdateStatusEvent {
 }
 
 export function installUpdate(): void {
+	if (isDoyDeckAutoUpdateDisabled()) {
+		log.info("[auto-updater] Install skipped for DoyDeck local build");
+		emitStatus(AUTO_UPDATE_STATUS.IDLE);
+		return;
+	}
 	if (env.NODE_ENV === "development") {
 		log.info("[auto-updater] Install skipped in dev mode");
 		emitStatus(AUTO_UPDATE_STATUS.IDLE);
@@ -141,7 +154,11 @@ export function dismissUpdate(): void {
 }
 
 export function checkForUpdates(): void {
-	if (env.NODE_ENV === "development" || !IS_AUTO_UPDATE_PLATFORM) {
+	if (
+		env.NODE_ENV === "development" ||
+		isDoyDeckAutoUpdateDisabled() ||
+		!IS_AUTO_UPDATE_PLATFORM
+	) {
 		return;
 	}
 	isDismissed = false;
@@ -158,6 +175,15 @@ export function checkForUpdates(): void {
 }
 
 export function checkForUpdatesInteractive(): void {
+	if (isDoyDeckAutoUpdateDisabled()) {
+		emitStatus(AUTO_UPDATE_STATUS.IDLE);
+		dialog.showMessageBox({
+			type: "info",
+			title: "Updates",
+			message: "Auto-updates are disabled for DoyDeck local builds.",
+		});
+		return;
+	}
 	if (env.NODE_ENV === "development") {
 		dialog.showMessageBox({
 			type: "info",
@@ -239,6 +265,11 @@ export function simulateError(): void {
 }
 
 export function setupAutoUpdater(): void {
+	if (isDoyDeckAutoUpdateDisabled()) {
+		log.info("[auto-updater] Disabled for DoyDeck local build");
+		emitStatus(AUTO_UPDATE_STATUS.IDLE);
+		return;
+	}
 	if (env.NODE_ENV === "development" || !IS_AUTO_UPDATE_PLATFORM) {
 		return;
 	}

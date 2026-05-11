@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { sentryVitePlugin } from "@sentry/vite-plugin";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
@@ -19,6 +20,23 @@ import {
 
 // override: true ensures .env values take precedence over inherited env vars
 config({ path: resolve(__dirname, "../../.env"), override: true, quiet: true });
+
+if (process.env.DOYDECK_DEV_MODE === "1") {
+	process.env.SUPERSET_WORKSPACE_NAME = "doydeck-dev";
+	process.env.SUPERSET_HOME_DIR = join(homedir(), ".doydeck-superset-dev");
+	process.env.DOYDECK_SUPERSET_USER_DATA_DIR =
+		process.platform === "darwin"
+			? join(homedir(), "Library/Application Support/Superset-DoyDeck-Dev")
+			: join(homedir(), ".doydeck-superset-dev/electron-user-data");
+	process.env.SUPERSET_SKIP_AGENT_HOOKS =
+		process.env.SUPERSET_SKIP_AGENT_HOOKS || "1";
+	process.env.DOYDECK_SKIP_AGENT_HOOKS =
+		process.env.DOYDECK_SKIP_AGENT_HOOKS || "1";
+	process.env.SKIP_ENV_VALIDATION = process.env.SKIP_ENV_VALIDATION || "1";
+	process.env.NEXT_PUBLIC_POSTHOG_KEY =
+		process.env.NEXT_PUBLIC_POSTHOG_KEY || "";
+	process.env.SENTRY_DSN_DESKTOP = process.env.SENTRY_DSN_DESKTOP || "";
+}
 
 const DEV_SERVER_PORT = Number(process.env.DESKTOP_VITE_PORT);
 
@@ -103,6 +121,8 @@ export default defineConfig({
 			rollupOptions: {
 				input: {
 					index: resolve("src/main/index.ts"),
+					// DoyDeck packaged app bootstrap - fixes isolated env before loading main.
+					"doydeck-bootstrap": resolve("src/main/doydeck-bootstrap.ts"),
 					// Terminal host daemon process - runs separately for terminal persistence
 					"terminal-host": resolve("src/main/terminal-host/index.ts"),
 					// PTY subprocess - spawned by terminal-host for each terminal
