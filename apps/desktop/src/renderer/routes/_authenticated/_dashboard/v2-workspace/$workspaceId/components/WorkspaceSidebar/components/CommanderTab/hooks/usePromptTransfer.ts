@@ -161,7 +161,7 @@ const TERMINAL_ENTER_INPUT = "\r";
 const TERMINAL_ENTER_DELAY_MS = 150;
 const DEBUG_AUTO_RELAY_WATCHER = false;
 export type AutoRelayMode = "off" | "preview" | "loop";
-export type AutoLoopMaxTurns = 1 | 3 | 5 | 10;
+export type AutoLoopMaxTurns = 10 | 25 | 50 | 100;
 export type AutoLoopPhase =
 	| "idle"
 	| "waiting-browser-ai"
@@ -1195,7 +1195,7 @@ export function usePromptTransfer({
 		setLatestAppliedBrowserSessionSourceText,
 	] = useState("");
 	const [autoLoopMaxTurns, setAutoLoopMaxTurns] =
-		useState<AutoLoopMaxTurns>(3);
+		useState<AutoLoopMaxTurns>(10);
 	const [autoLoopTurn, setAutoLoopTurn] = useState(0);
 	const [autoLoopStopReason, setAutoLoopStopReason] = useState<string | null>(
 		null,

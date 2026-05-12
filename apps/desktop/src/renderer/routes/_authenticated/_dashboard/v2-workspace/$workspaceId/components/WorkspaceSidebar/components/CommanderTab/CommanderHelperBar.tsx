@@ -34,7 +34,7 @@ import type {
 } from "./hooks/usePromptTransfer";
 import { TerminalSendPreview } from "./PromptPreviewPanel";
 
-const AUTO_LOOP_MAX_TURN_OPTIONS: AutoLoopMaxTurns[] = [1, 3, 5, 10];
+const AUTO_LOOP_MAX_TURN_OPTIONS: AutoLoopMaxTurns[] = [10, 25, 50, 100];
 const AUTO_LOOP_PHASE_LABELS: Record<AutoLoopPhase, string> = {
 	idle: "idle",
 	"waiting-browser-ai": "waiting for Browser AI",
