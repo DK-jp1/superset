@@ -88,8 +88,16 @@ function appendOutputLog(paneId: string, data: string): void {
 	}
 
 	const offset = log.baseOffset + log.text.length;
-	for (const listener of outputLogListeners.get(paneId) ?? []) {
-		listener({ paneId, offset, dataLength: data.length });
+	const listeners = Array.from(outputLogListeners.get(paneId) ?? []);
+	if (listeners.length > 0) {
+		queueMicrotask(() => {
+			const activeListeners = outputLogListeners.get(paneId);
+			if (!activeListeners) return;
+			for (const listener of listeners) {
+				if (!activeListeners.has(listener)) continue;
+				listener({ paneId, offset, dataLength: data.length });
+			}
+		});
 	}
 }
 

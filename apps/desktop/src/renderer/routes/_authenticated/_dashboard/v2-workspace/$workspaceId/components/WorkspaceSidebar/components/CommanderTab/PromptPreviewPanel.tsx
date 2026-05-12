@@ -215,23 +215,40 @@ export function EditableTerminalPreview({
 
 export function WorkerResponsePreview({
 	text,
+	confidence,
+	reasons,
 	hasProvider,
 	onSendToBrowserAI,
 	onCancel,
 }: {
 	text: string;
+	confidence: "high" | "medium" | "low";
+	reasons: string[];
 	hasProvider: boolean;
 	onSendToBrowserAI: () => void;
 	onCancel: () => void;
 }) {
 	const canSend = hasProvider && text.trim().length > 0;
+	const confidenceLabel =
+		confidence === "high"
+			? "High confidence"
+			: confidence === "medium"
+				? "Medium confidence"
+				: "Low confidence";
+	const reasonText = reasons.length > 0 ? reasons.join(", ") : "no reason";
 
 	return (
 		<div className="flex flex-col gap-1.5 p-1.5 border-b bg-muted/30">
 			<div className="flex items-center justify-between">
-				<span className="text-[10px] font-medium text-muted-foreground">
-					Worker Response Preview
-				</span>
+				<div className="flex flex-col">
+					<span className="text-[10px] font-medium text-muted-foreground">
+						Worker Response Preview
+					</span>
+					<span className="text-[9px] text-muted-foreground">
+						{confidenceLabel}
+						{confidence === "low" ? " · 確認推奨" : ""} · {reasonText}
+					</span>
+				</div>
 				<div className="flex flex-wrap justify-end gap-0.5">
 					<Button
 						variant="ghost"

@@ -139,9 +139,15 @@ const AUTO_CAPTURE_STABLE_MS = 2500;
 const AUTO_RELAY_POLL_INTERVAL_MS = 1000;
 const AUTO_RELAY_CAPTURE_DEBOUNCE_MS = 600;
 const AUTO_RELAY_IDLE_MS = 2500;
+const AUTO_RELAY_OUTPUT_STABLE_MS = 2000;
+const AUTO_RELAY_PROMPT_RETURNED_STABLE_MS = 2000;
+const AUTO_RELAY_MAX_DETECTION_WAIT_MS = 10000;
 const AUTO_RELAY_TIMEOUT_MS = 120000;
 const TERMINAL_ENTER_INPUT = "\r";
 const TERMINAL_ENTER_DELAY_MS = 150;
+export type AutoRelayMode = "off" | "preview";
+export type WorkerResponseConfidence = "high" | "medium" | "low";
+
 const TRANSIENT_RESPONSE_PATTERNS = [
 	/^thought for\b/i,
 	/^thinking\b/i,
@@ -153,13 +159,29 @@ const TRANSIENT_RESPONSE_PATTERNS = [
 	/^処理中/,
 ];
 
+const EMPTY_WORKER_RESPONSE_PREVIEW: {
+	visible: boolean;
+	text: string;
+	confidence: WorkerResponseConfidence;
+	reasons: string[];
+} = {
+	visible: false,
+	text: "",
+	confidence: "low",
+	reasons: [],
+};
+
 export interface AssistantCaptureSnapshot {
 	assistantCount: number;
 	latestText: string;
 	latestFingerprint: string;
 }
 
-export type AutoRelayMode = "off" | "preview";
+type WorkerResponseDetection = {
+	text: string;
+	confidence: WorkerResponseConfidence;
+	reasons: string[];
+};
 
 interface AutoCaptureStartOptions {
 	baseline?: AssistantCaptureSnapshot | null;
@@ -179,6 +201,9 @@ interface AutoRelayTracker {
 	lastFingerprint: string;
 	lastChangedAt: number;
 	lastObservedOffset: number;
+	lastOutputChangedAt: number;
+	detectionFirstSeenAt: number | null;
+	lastDetection: WorkerResponseDetection | null;
 }
 
 export function extractInstructionBlock(text: string): string {
@@ -422,6 +447,7 @@ const WORKER_COMPLETION_EVIDENCE_PATTERNS = [
 	/修正ファイル/,
 	/変更ファイル/,
 	/確認結果/,
+	/\bPASS\b/i,
 	/typecheck/i,
 	/git\s+diff(?:\s+--check)?/i,
 	/未解決/,
@@ -439,6 +465,49 @@ const WORKER_INSTRUCTION_CONTEXT_PATTERNS = [
 	/記載してください/,
 ];
 
+const WORKER_RESPONSE_FALLBACK_EXCLUSION_PATTERNS = [
+	/Workerへ渡す指示/,
+	/Worker向け指示/,
+	/完了報告フォーマット/,
+	/以下の形式/,
+	/含めてください/,
+	/返答してください/,
+	/^禁止[：:]/m,
+	/^制約[：:]/m,
+	/実装してください/,
+	/修正してください/,
+	/確認してください/,
+];
+
+const WORKER_RESPONSE_MEDIUM_COMPLETION_PATTERNS = [
+	/タスク完了/,
+	/完了しました/,
+	/対応しました/,
+	/修正しました/,
+	/実装しました/,
+	/\bDone\b/i,
+];
+
+const WORKER_RESPONSE_LOW_COMPLETION_PATTERNS = [
+	/確認しました/,
+	/問題ありません/,
+	/完了です/,
+	/終了しました/,
+];
+
+const WORKER_PROMPT_RETURNED_PATTERNS = [
+	/(?:^|\n)\s*❯\s/m,
+	/(?:^|\n)\s*\[[^\]]+\]\s*│/m,
+	/bypass permissions/i,
+	/(?:^|\n)\s*(?:Context|Usage)\b/im,
+	/paste again to expand/i,
+];
+
+const WORKER_COMPLETION_HEADING_LINE_PATTERN =
+	/^\s*(?:[>│┃┆┊╎╏╭╮╰╯┌┐└┘├┤┬┴┼─━╔╗╚╝═║|]\s*)*(?:#{1,6}\s*)?(?:(?:⎿|⏺|●|•|・|-|\*|\+)\s*)*完了報告[：:]?\s*$/u;
+const WORKER_COMPLETION_HEADING_TEXT_PATTERN =
+	/(?:^|\n)([^\n]{0,120}完了報告[：:]?(?:\s|$)[^\n]*)/gu;
+
 function normalizeCompletionHeadingLine(line: string): string {
 	return line
 		.trim()
@@ -454,7 +523,10 @@ function normalizeCompletionHeadingLine(line: string): string {
 }
 
 function isWorkerCompletionHeadingLine(line: string): boolean {
-	return normalizeCompletionHeadingLine(line) === "完了報告";
+	return (
+		WORKER_COMPLETION_HEADING_LINE_PATTERN.test(line) ||
+		normalizeCompletionHeadingLine(line) === "完了報告"
+	);
 }
 
 function countWorkerCompletionEvidence(text: string): number {
@@ -505,6 +577,44 @@ function findWorkerCompletionHeadingCandidates(text: string): Array<{
 		}
 		offset += line.length + 1;
 	}
+	WORKER_COMPLETION_HEADING_TEXT_PATTERN.lastIndex = 0;
+	let match: RegExpExecArray | null;
+	while (true) {
+		match = WORKER_COMPLETION_HEADING_TEXT_PATTERN.exec(normalized);
+		if (!match) break;
+		const line = match[1];
+		if (isWorkerCompletionHeadingLine(line)) continue;
+		const lineStart = match.index + (match[0].startsWith("\n") ? 1 : 0);
+		const headingIndex = line.indexOf("完了報告");
+		let reportStartInLine = headingIndex;
+		const markerPattern = /[⎿⏺●•・#]/gu;
+		let markerMatch: RegExpExecArray | null;
+		while (true) {
+			markerMatch = markerPattern.exec(line);
+			if (!markerMatch) break;
+			if ((markerMatch.index ?? 0) <= headingIndex) {
+				reportStartInLine = markerMatch.index ?? reportStartInLine;
+			}
+		}
+		const index = lineStart + reportStartInLine;
+		if (candidates.some((candidate) => Math.abs(candidate.index - index) < 3)) {
+			continue;
+		}
+		const before = normalized.slice(Math.max(0, index - 600), index);
+		const after = normalized.slice(index, index + 2000);
+		const body = after
+			.split("\n")
+			.slice(1)
+			.join("\n")
+			.trim();
+		candidates.push({
+			index,
+			line: line.slice(reportStartInLine).trim(),
+			evidenceCount: countWorkerCompletionEvidence(after),
+			instructionContext: hasInstructionOnlyContext(before),
+			bodyLength: body.length,
+		});
+	}
 	return candidates;
 }
 
@@ -552,8 +662,31 @@ function isTuiNoiseLine(line: string): boolean {
 		/esc to interrupt/i.test(trimmed) ||
 		/^Working(?:\b|\()/i.test(trimmed) ||
 		/•\s*Working/i.test(trimmed) ||
-		/ctrl\+g to edit/i.test(trimmed)
+		/ctrl\+g to edit/i.test(trimmed) ||
+		/^[-─━]{6,}.*[-─━]{2,}$/.test(trimmed) ||
+		/^❯\s/.test(trimmed) ||
+		/^\[[^\]]+\]\s*│/.test(trimmed) ||
+		/^⏵⏵\s/.test(trimmed) ||
+		/bypass permissions/i.test(trimmed) ||
+		/\bDoyDeck\s+git:/.test(trimmed) ||
+		/^\+?\s*Doing\b/i.test(trimmed) ||
+		/^running stop hooks/i.test(trimmed) ||
+		/^\+?\s*running\s+\/?\s*stop hooks/i.test(trimmed) ||
+		/stop hooks/i.test(trimmed) ||
+		/^Hulla/i.test(trimmed) ||
+		/Hullabaloo/i.test(trimmed) ||
+		/^Misting/i.test(trimmed) ||
+		/^\+?\s*Tip:/i.test(trimmed) ||
+		/Use\s+\/(?:memory|config)/i.test(trimmed) ||
+		/permission mode/i.test(trimmed) ||
+		/default permission/i.test(trimmed) ||
+		/^(?:Context|Usage)\b/i.test(trimmed) ||
+		/paste again to expand/i.test(trimmed)
 	);
+}
+
+function hasWorkerPromptReturned(text: string): boolean {
+	return WORKER_PROMPT_RETURNED_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 function isDecorativeNoiseLine(line: string): boolean {
@@ -617,6 +750,120 @@ function extractWorkerCompletionReport(text: string): string {
 	return normalizeWorkerCompletionReport(report);
 }
 
+function buildWorkerResponseFallbackBlocks(text: string): string[] {
+	const blocks: string[] = [];
+	let current: string[] = [];
+	const pushCurrent = () => {
+		const block = current
+			.join("\n")
+			.replace(/\n{3,}/g, "\n\n")
+			.trim();
+		if (block.length >= 12) blocks.push(block);
+		current = [];
+	};
+
+	for (const line of text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n")) {
+		if (isTuiNoiseLine(line) || isDecorativeNoiseLine(line)) {
+			pushCurrent();
+			continue;
+		}
+
+		const trimmed = line.trim();
+		if (!trimmed) {
+			if (current.length > 0 && current[current.length - 1] !== "") {
+				current.push("");
+			}
+			continue;
+		}
+
+		current.push(line.replace(/[ \t]+$/g, ""));
+	}
+	pushCurrent();
+
+	return blocks;
+}
+
+function isInstructionLikeFallbackBlock(text: string): boolean {
+	return WORKER_RESPONSE_FALLBACK_EXCLUSION_PATTERNS.some((pattern) =>
+		pattern.test(text),
+	);
+}
+
+function isTuiNoiseOnlyFallbackBlock(text: string): boolean {
+	const lines = text
+		.replace(/\r\n/g, "\n")
+		.replace(/\r/g, "\n")
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean);
+	if (lines.length === 0) return true;
+	const noiseLines = lines.filter(
+		(line) => isTuiNoiseLine(line) || isDecorativeNoiseLine(line),
+	);
+	return noiseLines.length / lines.length >= 0.6;
+}
+
+function hasWorkerResponseMediumCompletionSignal(text: string): boolean {
+	return WORKER_RESPONSE_MEDIUM_COMPLETION_PATTERNS.some((pattern) =>
+		pattern.test(text),
+	);
+}
+
+function hasWorkerResponseLowCompletionSignal(text: string): boolean {
+	return WORKER_RESPONSE_LOW_COMPLETION_PATTERNS.some((pattern) =>
+		pattern.test(text),
+	);
+}
+
+function detectWorkerResponseFallback(text: string): WorkerResponseDetection | null {
+	const blocks = buildWorkerResponseFallbackBlocks(text);
+	for (let i = blocks.length - 1; i >= 0; i--) {
+		const candidate = normalizeWorkerCompletionReport(blocks[i]);
+		if (!candidate) continue;
+		if (isInstructionLikeFallbackBlock(candidate)) continue;
+		if (isTuiNoiseOnlyFallbackBlock(candidate)) continue;
+		if (!/[\p{L}\p{N}]/u.test(candidate)) continue;
+
+		const evidenceCount = countWorkerCompletionEvidence(candidate);
+		const hasMediumCompletion =
+			hasWorkerResponseMediumCompletionSignal(candidate);
+		if (evidenceCount > 0 || hasMediumCompletion) {
+			const reasons: string[] = [];
+			if (evidenceCount > 0) reasons.push("report keywords detected");
+			if (hasMediumCompletion) reasons.push("completion phrase detected");
+			return {
+				text: candidate,
+				confidence: "medium",
+				reasons,
+			};
+		}
+
+		if (hasWorkerResponseLowCompletionSignal(candidate)) {
+			return {
+				text: candidate,
+				confidence: "low",
+				reasons: ["terminal idle fallback"],
+			};
+		}
+	}
+	return null;
+}
+
+function detectWorkerResponse(text: string): WorkerResponseDetection | null {
+	const headingReport = extractWorkerCompletionReport(text);
+	if (headingReport) {
+		return {
+			text: headingReport,
+			confidence: "high",
+			reasons: ["heading matched"],
+		};
+	}
+	if (text.includes("完了報告")) {
+		return null;
+	}
+	return detectWorkerResponseFallback(text);
+}
+
 interface UsePromptTransferParams {
 	workspaceId: string;
 	fetchGitSummary?: () => Promise<HandoffGitSummary>;
@@ -673,7 +920,9 @@ export function usePromptTransfer({
 	const [workerResponsePreview, setWorkerResponsePreview] = useState<{
 		visible: boolean;
 		text: string;
-	}>({ visible: false, text: "" });
+		confidence: WorkerResponseConfidence;
+		reasons: string[];
+	}>(EMPTY_WORKER_RESPONSE_PREVIEW);
 	const [handoffPreview, setHandoffPreview] = useState<{
 		visible: boolean;
 		text: string;
@@ -740,7 +989,7 @@ export function usePromptTransfer({
 			if (autoRelayMode !== "preview") return;
 
 			cancelAutoRelay("start-new-relay");
-			setWorkerResponsePreview({ visible: false, text: "" });
+			setWorkerResponsePreview(EMPTY_WORKER_RESPONSE_PREVIEW);
 			setAutoRelayStatus(source === "terminal-submit" ? "watching" : "idle");
 			console.log("[S3.13-stream] auto relay mode state =", autoRelayMode);
 			console.log("[S3.13-stream] terminal output capture armed =", {
@@ -758,15 +1007,22 @@ export function usePromptTransfer({
 				lastFingerprint: "",
 				lastChangedAt: Date.now(),
 				lastObservedOffset: markerOffset,
+				lastOutputChangedAt: startedAt,
+				detectionFirstSeenAt: null,
+				lastDetection: null,
 			};
 
 			const executeCapture = (reason: string) => {
 				const rawDelta = getOutputLogSince(paneId, relayRef.markerOffset);
 				const current = stripAnsi(rawDelta);
 				const headingCandidates = findWorkerCompletionHeadingCandidates(current);
-				const report = extractWorkerCompletionReport(current);
+				const detection = detectWorkerResponse(current);
+				const report = detection?.text ?? "";
 				const completionReportCount = headingCandidates.length;
 				const now = Date.now();
+				const currentOffset = getOutputLogOffset(paneId);
+				const outputStableMs = now - relayRef.lastOutputChangedAt;
+				const promptReturned = hasWorkerPromptReturned(current);
 				console.log("[S3.13-stream] capture executed =", reason);
 				console.log("[S3.13-stream] raw delta length =", rawDelta.length);
 				console.log("[S3.13-stream] clean delta length =", current.length);
@@ -797,12 +1053,21 @@ export function usePromptTransfer({
 					"[S3.13-stream] final extracted worker response length =",
 					report.length,
 				);
+				console.log("[S3.13-stream] worker response detection =", detection);
+				console.log("[S3.13-stream] output settled state =", {
+					currentOffset,
+					lastObservedOffset: relayRef.lastObservedOffset,
+					outputStableMs,
+					promptReturned,
+				});
 				if (!report) return;
 
 				const fingerprint = fingerprintText(report);
 				if (fingerprint !== relayRef.lastFingerprint) {
 					relayRef.lastFingerprint = fingerprint;
 					relayRef.lastChangedAt = now;
+					relayRef.detectionFirstSeenAt = now;
+					relayRef.lastDetection = detection;
 					console.log(
 						"[S3.13-stream] selected completion report preview =",
 						previewText(report),
@@ -811,8 +1076,28 @@ export function usePromptTransfer({
 				}
 
 				const idleMs = now - relayRef.lastChangedAt;
+				const detectionWaitMs =
+					relayRef.detectionFirstSeenAt === null
+						? 0
+						: now - relayRef.detectionFirstSeenAt;
+				const readyByPromptReturned =
+					promptReturned && outputStableMs >= AUTO_RELAY_PROMPT_RETURNED_STABLE_MS;
+				const readyByOutputStable =
+					outputStableMs >= AUTO_RELAY_OUTPUT_STABLE_MS;
+				const readyByMaxWait =
+					detectionWaitMs >= AUTO_RELAY_MAX_DETECTION_WAIT_MS &&
+					outputStableMs >= AUTO_RELAY_PROMPT_RETURNED_STABLE_MS;
 				console.log("[S3.13-stream] idle ms =", idleMs);
+				console.log("[S3.13-stream] preview readiness =", {
+					detectionWaitMs,
+					readyByPromptReturned,
+					readyByOutputStable,
+					readyByMaxWait,
+				});
 				if (idleMs < AUTO_RELAY_IDLE_MS) return;
+				if (!readyByPromptReturned && !readyByOutputStable && !readyByMaxWait) {
+					return;
+				}
 
 				console.log(
 					"[S3.13] worker response idle; showing preview:",
@@ -832,6 +1117,8 @@ export function usePromptTransfer({
 				setWorkerResponsePreview({
 					visible: true,
 					text: truncatedReport,
+					confidence: detection?.confidence ?? "low",
+					reasons: detection?.reasons ?? ["terminal idle fallback"],
 				});
 				console.log("[S3.13-stream] workerResponsePreview state set");
 			};
@@ -868,10 +1155,10 @@ export function usePromptTransfer({
 			relayRef.unsubscribeOutputLog = subscribeOutputLog(paneId, (snapshot) => {
 				console.log("[S3.13-stream] subscription fired =", snapshot);
 				if (snapshot.offset <= relayRef.markerOffset) return;
-				relayRef.lastObservedOffset = Math.max(
-					relayRef.lastObservedOffset,
-					snapshot.offset,
-				);
+				if (snapshot.offset > relayRef.lastObservedOffset) {
+					relayRef.lastObservedOffset = snapshot.offset;
+					relayRef.lastOutputChangedAt = Date.now();
+				}
 				scheduleCapture("subscription");
 			});
 
@@ -891,6 +1178,7 @@ export function usePromptTransfer({
 				if (currentOffset <= relayRef.markerOffset) return;
 				if (currentOffset > relayRef.lastObservedOffset) {
 					relayRef.lastObservedOffset = currentOffset;
+					relayRef.lastOutputChangedAt = Date.now();
 					scheduleCapture("polling-output-increased");
 					return;
 				}
@@ -1253,7 +1541,7 @@ export function usePromptTransfer({
 			return;
 		}
 		const ok = await sendWorkerResponseToBrowserAI(workerResponsePreview.text);
-		if (ok) setWorkerResponsePreview({ visible: false, text: "" });
+		if (ok) setWorkerResponsePreview(EMPTY_WORKER_RESPONSE_PREVIEW);
 	}, [workerResponsePreview]);
 
 	const showSessionDraft = useCallback(
@@ -1727,7 +2015,7 @@ export function usePromptTransfer({
 		dismissCaptureForTerminal: () =>
 			setCaptureForTerminalPreview({ visible: false, text: "" }),
 		dismissWorkerResponsePreview: () =>
-			setWorkerResponsePreview({ visible: false, text: "" }),
+			setWorkerResponsePreview(EMPTY_WORKER_RESPONSE_PREVIEW),
 		dismissHandoffPreview: () =>
 			setHandoffPreview((prev) => ({ ...prev, visible: false })),
 	};

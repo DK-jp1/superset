@@ -223,6 +223,8 @@ export function CommanderTab({
 				{transfer.workerResponsePreview.visible && (
 					<WorkerResponsePreview
 						text={transfer.workerResponsePreview.text}
+						confidence={transfer.workerResponsePreview.confidence}
+						reasons={transfer.workerResponsePreview.reasons}
 						hasProvider={!!currentProvider}
 						onSendToBrowserAI={transfer.handleSendWorkerResponseToBrowserAI}
 						onCancel={transfer.dismissWorkerResponsePreview}
