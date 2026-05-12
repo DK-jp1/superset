@@ -26,6 +26,7 @@ import {
 import { sendWorkerResponseToBrowserAI } from "../commander-bridge";
 import { getTerminalSelection } from "../useActiveTerminal";
 import {
+	BROWSER_AI_STARTER_PROMPT,
 	generateWorkerPrompt,
 	generateReviewPrompt,
 	generateHandoffPrompt,
@@ -2199,6 +2200,42 @@ export function usePromptTransfer({
 		[workerPrompt, reviewPrompt, doInject],
 	);
 
+	const handleCopyBrowserAiStarterPrompt = useCallback(() => {
+		void copyToClipboard(BROWSER_AI_STARTER_PROMPT);
+	}, []);
+
+	const handleSendBrowserAiStarterPrompt = useCallback(async () => {
+		const liveUrl = getLiveUrl() || currentUrl;
+		const provider = detectProvider(liveUrl);
+		if (!provider) {
+			await copyToClipboard(BROWSER_AI_STARTER_PROMPT);
+			toast.warning(
+				"未対応サイトです — クリップボードにコピーしました。手動 paste してください",
+			);
+			return;
+		}
+		try {
+			const result = await injectIntoPage(
+				buildInjectionWithSubmitScript(BROWSER_AI_STARTER_PROMPT, provider),
+			);
+			if (result === "submitted") {
+				toast.success(`${getProviderLabel(provider)} にStarter Promptを送信しました`);
+				return;
+			}
+			if (result === "injected") {
+				toast.success(
+					`${getProviderLabel(provider)} に挿入しました — 手動で送信してください`,
+				);
+				return;
+			}
+			await copyToClipboard(BROWSER_AI_STARTER_PROMPT);
+			toast.warning("入力欄が見つかりません — クリップボードにコピーしました");
+		} catch {
+			await copyToClipboard(BROWSER_AI_STARTER_PROMPT);
+			toast.warning("送信に失敗しました — クリップボードにコピーしました");
+		}
+	}, [getLiveUrl, currentUrl, injectIntoPage]);
+
 	const handleTerminalSubmitBeforeSend = useCallback(
 		(paneId: string): (() => void) | null => {
 			if (autoRelayMode !== "preview" && autoRelayMode !== "loop") return null;
@@ -2799,6 +2836,8 @@ export function usePromptTransfer({
 		handoffPreview,
 		sessionDraftPreview,
 		handleInject,
+		handleCopyBrowserAiStarterPrompt,
+		handleSendBrowserAiStarterPrompt,
 		handleCaptureResponse,
 		handleExtractSessionFromAI,
 		handleExtractPlanFromWorker,

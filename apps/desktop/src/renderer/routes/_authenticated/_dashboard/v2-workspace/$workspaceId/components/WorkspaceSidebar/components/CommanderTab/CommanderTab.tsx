@@ -290,6 +290,12 @@ export function CommanderTab({
 					reviewPrompt={reviewPrompt}
 					onGrabSelection={transfer.handleGrabSelection}
 					onInject={transfer.handleInject}
+					onCopyBrowserAiStarterPrompt={
+						transfer.handleCopyBrowserAiStarterPrompt
+					}
+					onSendBrowserAiStarterPrompt={
+						transfer.handleSendBrowserAiStarterPrompt
+					}
 					onCaptureResponse={transfer.handleCaptureResponse}
 					onSendSelectionToAI={handleSendSelectionToAI}
 					onGenerateHandoff={transfer.handleGenerateHandoff}

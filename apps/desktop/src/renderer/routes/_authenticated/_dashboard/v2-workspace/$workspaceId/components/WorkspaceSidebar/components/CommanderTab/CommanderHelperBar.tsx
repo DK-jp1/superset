@@ -51,6 +51,8 @@ export function CommanderHelperBar({
 	reviewPrompt,
 	onGrabSelection,
 	onInject,
+	onCopyBrowserAiStarterPrompt,
+	onSendBrowserAiStarterPrompt,
 	onCaptureResponse,
 	onSendSelectionToAI,
 	onGenerateHandoff,
@@ -81,6 +83,8 @@ export function CommanderHelperBar({
 	reviewPrompt: string;
 	onGrabSelection: () => void;
 	onInject: (type: "worker" | "review") => void;
+	onCopyBrowserAiStarterPrompt: () => void;
+	onSendBrowserAiStarterPrompt: () => void;
 	onCaptureResponse: () => void;
 	onSendSelectionToAI: () => void;
 	onGenerateHandoff: () => void;
@@ -268,6 +272,21 @@ export function CommanderHelperBar({
 						</Button>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent align="end" className="w-44">
+						<DropdownMenuLabel className="text-[10px] font-normal text-muted-foreground">
+							Setup
+						</DropdownMenuLabel>
+						<DropdownMenuItem
+							disabled={!hasProvider}
+							onSelect={onSendBrowserAiStarterPrompt}
+						>
+							<LuZap className="size-3.5" />
+							Send Starter Prompt
+						</DropdownMenuItem>
+						<DropdownMenuItem onSelect={onCopyBrowserAiStarterPrompt}>
+							<LuClipboard className="size-3.5" />
+							Copy Starter Prompt
+						</DropdownMenuItem>
+						<DropdownMenuSeparator />
 						<DropdownMenuLabel className="text-[10px] font-normal text-muted-foreground">
 							Main
 						</DropdownMenuLabel>
