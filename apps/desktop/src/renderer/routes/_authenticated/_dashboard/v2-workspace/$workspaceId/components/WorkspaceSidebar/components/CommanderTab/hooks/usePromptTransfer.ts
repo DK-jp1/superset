@@ -267,9 +267,51 @@ const DANGEROUS_TERMINAL_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
 	},
 ];
 
+const SAFE_NEGATED_COMMAND_CONTEXT_PATTERN =
+	/禁止|しない|しないで|しないでください|しないこと|やらない|実行しない|実行禁止|使わない|避ける|不要|触らない|触れない|no\s+(?:git\s+)?commit|do\s+not|don't|never/i;
+const SAFE_GIT_DIFF_CHECK_PATTERN =
+	/\bgit\s+diff(?:\s+--check)?\b|git diff \/ git diff --check|git diff.*確認|git diff --check.*確認/i;
+const COMMAND_LINE_PREFIX_PATTERN =
+	/^\s*(?:[-*+・•]\s+|\d+[.)]\s+|>\s+|`{1,3}\s*|\$\s*|❯\s*|>\s*)*/;
+const SHELL_COMMAND_START_PATTERN =
+	/^(?:env\s+)?(?:git|rm|sudo|chmod|chown|mv|delete|trash)\b/i;
+const COMMAND_INTENT_PATTERN =
+	/実行|走らせ|叩い|コマンド|command|run|execute/i;
+
+function normalizePotentialCommandLine(line: string): string {
+	return line.replace(COMMAND_LINE_PREFIX_PATTERN, "").trim();
+}
+
+function isNegatedCommandContext(line: string): boolean {
+	return SAFE_NEGATED_COMMAND_CONTEXT_PATTERN.test(line);
+}
+
+function isAllowedGitDiffContext(line: string): boolean {
+	return SAFE_GIT_DIFF_CHECK_PATTERN.test(line) && !/\bgit\s+(?:commit|push|reset|clean)\b/i.test(line);
+}
+
+function isExecutableCommandLine(rawLine: string): boolean {
+	const line = normalizePotentialCommandLine(rawLine);
+	if (!line) return false;
+	if (isNegatedCommandContext(line)) return false;
+	if (isAllowedGitDiffContext(line)) return false;
+	if (SHELL_COMMAND_START_PATTERN.test(line)) return true;
+	if (
+		COMMAND_INTENT_PATTERN.test(line) &&
+		/\b(?:git\s+(?:commit|push|reset|clean)|rm|sudo|chmod|chown|mv|delete|trash)\b/i.test(line)
+	) {
+		return true;
+	}
+	return false;
+}
+
 function findDangerousTerminalPattern(text: string): string | null {
-	for (const { label, pattern } of DANGEROUS_TERMINAL_PATTERNS) {
-		if (pattern.test(text)) return label;
+	for (const rawLine of text.split(/\r?\n/)) {
+		const line = normalizePotentialCommandLine(rawLine);
+		if (!isExecutableCommandLine(rawLine)) continue;
+		for (const { label, pattern } of DANGEROUS_TERMINAL_PATTERNS) {
+			if (pattern.test(line)) return label;
+		}
 	}
 	return null;
 }
