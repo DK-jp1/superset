@@ -306,6 +306,8 @@ export function CommanderTab({
 					autoLoopTurn={transfer.autoLoopTurn}
 					autoLoopPhase={transfer.autoLoopPhase}
 					autoLoopLastAction={transfer.autoLoopLastAction}
+					autoLoopLastActivityAt={transfer.autoLoopLastActivityAt}
+					autoLoopDiagnostics={transfer.autoLoopDiagnostics}
 					autoLoopStopReason={transfer.autoLoopStopReason}
 					onStopAutoLoop={transfer.stopAutoLoop}
 					onTerminalSubmitBeforeSend={transfer.handleTerminalSubmitBeforeSend}

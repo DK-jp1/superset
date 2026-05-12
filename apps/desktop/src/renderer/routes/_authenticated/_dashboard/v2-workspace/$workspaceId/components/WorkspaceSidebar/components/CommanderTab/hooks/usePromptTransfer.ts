@@ -154,6 +154,8 @@ const AUTO_RELAY_OUTPUT_STABLE_MS = 2000;
 const AUTO_RELAY_PROMPT_RETURNED_STABLE_MS = 2000;
 const AUTO_RELAY_MAX_DETECTION_WAIT_MS = 10000;
 const AUTO_RELAY_TIMEOUT_MS = 120000;
+const AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS = 180000;
+const AUTO_LOOP_HARD_MAX_WAIT_MS = 600000;
 const TERMINAL_ENTER_INPUT = "\r";
 const TERMINAL_ENTER_DELAY_MS = 150;
 const DEBUG_AUTO_RELAY_WATCHER = false;
@@ -167,6 +169,24 @@ export type AutoLoopPhase =
 	| "sending-browser-ai"
 	| "stopped";
 export type WorkerResponseConfidence = "high" | "medium" | "low";
+export type AutoLoopDiagnosticEvent = {
+	at: number;
+	label: string;
+};
+export type AutoLoopDiagnostics = {
+	browserWatcherActive: boolean;
+	workerWatcherActive: boolean;
+	browserActivityAt: number | null;
+	workerActivityAt: number | null;
+	currentOutputOffset: number | null;
+	markerOffset: number | null;
+	activeTimeoutType: string;
+	noActivityRemainingMs: number | null;
+	hardMaxRemainingMs: number | null;
+	noActivityDeadlineAt: number | null;
+	hardMaxDeadlineAt: number | null;
+	recentEvents: AutoLoopDiagnosticEvent[];
+};
 
 type CaptureForTerminalPreviewSource =
 	| "browser-ai"
@@ -207,6 +227,21 @@ const EMPTY_WORKER_RESPONSE_PREVIEW: {
 	text: "",
 	confidence: "low",
 	reasons: [],
+};
+
+const EMPTY_AUTO_LOOP_DIAGNOSTICS: AutoLoopDiagnostics = {
+	browserWatcherActive: false,
+	workerWatcherActive: false,
+	browserActivityAt: null,
+	workerActivityAt: null,
+	currentOutputOffset: null,
+	markerOffset: null,
+	activeTimeoutType: "none",
+	noActivityRemainingMs: null,
+	hardMaxRemainingMs: null,
+	noActivityDeadlineAt: null,
+	hardMaxDeadlineAt: null,
+	recentEvents: [],
 };
 
 const DANGEROUS_TERMINAL_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
@@ -330,6 +365,7 @@ interface AutoRelayTracker {
 	timeoutId?: ReturnType<typeof setTimeout>;
 	captureDebounceId?: ReturnType<typeof setTimeout>;
 	unsubscribeOutputLog?: () => void;
+	startedAt: number;
 	firstOutputAt: number | null;
 	lastFingerprint: string;
 	lastChangedAt: number;
@@ -1121,9 +1157,14 @@ export function usePromptTransfer({
 	const [autoLoopStopReason, setAutoLoopStopReason] = useState<string | null>(
 		null,
 	);
-	const [autoLoopPhase, setAutoLoopPhase] =
+	const [autoLoopPhase, setAutoLoopPhaseState] =
 		useState<AutoLoopPhase>("idle");
 	const [autoLoopLastAction, setAutoLoopLastAction] = useState("");
+	const [autoLoopLastActivityAt, setAutoLoopLastActivityAt] =
+		useState<number | null>(null);
+	const [autoLoopDiagnostics, setAutoLoopDiagnostics] =
+		useState<AutoLoopDiagnostics>(EMPTY_AUTO_LOOP_DIAGNOSTICS);
+	const autoLoopPhaseRef = useRef<AutoLoopPhase>("idle");
 	const autoCaptureRef = useRef<{
 		intervalId: ReturnType<typeof setInterval>;
 		timeoutId: ReturnType<typeof setTimeout>;
@@ -1134,10 +1175,32 @@ export function usePromptTransfer({
 		candidateFingerprint: string;
 		candidateStableCount: number;
 		candidateFirstSeenAt: number;
+		startedAt: number;
+		lastActivityAt: number;
+		lastObservedAssistantCount: number;
+		lastObservedFingerprint: string;
 	} | null>(null);
 	const autoRelayRef = useRef<AutoRelayTracker | null>(null);
 	const autoLoopTerminalFingerprintRef = useRef("");
 	const autoLoopWorkerFingerprintRef = useRef("");
+
+	const appendAutoLoopEvent = useCallback((label: string) => {
+		const at = Date.now();
+		setAutoLoopDiagnostics((prev) => ({
+			...prev,
+			recentEvents: [{ at, label }, ...prev.recentEvents].slice(0, 10),
+		}));
+	}, []);
+
+	const setAutoLoopPhase = useCallback((nextPhase: AutoLoopPhase) => {
+		const prevPhase = autoLoopPhaseRef.current;
+		if (prevPhase !== nextPhase) {
+			console.log("[S5.2] phase changed:", prevPhase, "->", nextPhase);
+			appendAutoLoopEvent(`phase changed: ${prevPhase} -> ${nextPhase}`);
+		}
+		autoLoopPhaseRef.current = nextPhase;
+		setAutoLoopPhaseState(nextPhase);
+	}, [appendAutoLoopEvent]);
 
 	const cancelAutoCapture = useCallback((reason?: string) => {
 		const ref = autoCaptureRef.current;
@@ -1147,8 +1210,28 @@ export function usePromptTransfer({
 			clearTimeout(ref.timeoutId);
 			autoCaptureRef.current = null;
 		}
+		if (ref) {
+			appendAutoLoopEvent(`browser watcher cleared: ${reason ?? "unknown"}`);
+		}
+		setAutoLoopDiagnostics((prev) => {
+			const workerStillActive =
+				prev.workerWatcherActive && autoLoopPhaseRef.current === "waiting-worker";
+			return {
+				...prev,
+				browserWatcherActive: false,
+				activeTimeoutType: workerStillActive ? "worker no activity" : "none",
+				noActivityRemainingMs: workerStillActive
+					? prev.noActivityRemainingMs
+					: null,
+				hardMaxRemainingMs: workerStillActive ? prev.hardMaxRemainingMs : null,
+				noActivityDeadlineAt: workerStillActive
+					? prev.noActivityDeadlineAt
+					: null,
+				hardMaxDeadlineAt: workerStillActive ? prev.hardMaxDeadlineAt : null,
+			};
+		});
 		setAutoCaptureStatus("idle");
-	}, []);
+	}, [appendAutoLoopEvent]);
 
 	const cancelAutoRelay = useCallback((reason?: string) => {
 		const ref = autoRelayRef.current;
@@ -1161,30 +1244,73 @@ export function usePromptTransfer({
 			console.log("[S3.13-stream] armed cleared reason =", reason ?? "unknown");
 			autoRelayRef.current = null;
 		}
+		if (ref) {
+			appendAutoLoopEvent(`worker watcher cleared: ${reason ?? "unknown"}`);
+		}
+		setAutoLoopDiagnostics((prev) => {
+			const browserStillActive =
+				prev.browserWatcherActive &&
+				autoLoopPhaseRef.current === "waiting-browser-ai";
+			return {
+				...prev,
+				workerWatcherActive: false,
+				activeTimeoutType: browserStillActive ? "browser no activity" : "none",
+				noActivityRemainingMs: browserStillActive
+					? prev.noActivityRemainingMs
+					: null,
+				hardMaxRemainingMs: browserStillActive ? prev.hardMaxRemainingMs : null,
+				noActivityDeadlineAt: browserStillActive
+					? prev.noActivityDeadlineAt
+					: null,
+				hardMaxDeadlineAt: browserStillActive ? prev.hardMaxDeadlineAt : null,
+				currentOutputOffset: prev.currentOutputOffset,
+				markerOffset: ref ? null : prev.markerOffset,
+			};
+		});
 		setAutoRelayStatus("idle");
-	}, []);
+	}, [appendAutoLoopEvent]);
 
 	const stopAutoLoop = useCallback(
 		(reason: string) => {
 			if (autoRelayMode !== "loop") return;
+			console.log("[S5.2] stop reason =", reason);
+			appendAutoLoopEvent(`stopped: ${reason}`);
 			setAutoLoopStopReason(reason);
 			setAutoLoopPhase("stopped");
 			setAutoLoopLastAction(reason);
+			cancelAutoCapture(`auto-loop-stopped:${reason}`);
 			cancelAutoRelay(`auto-loop-stopped:${reason}`);
 			console.warn("[S5.2] Auto Loop stopped:", reason);
 			toast.warning(`Auto Loop stopped: ${reason}`);
 		},
-		[autoRelayMode, cancelAutoRelay],
+		[
+			appendAutoLoopEvent,
+			autoRelayMode,
+			cancelAutoCapture,
+			cancelAutoRelay,
+			setAutoLoopPhase,
+		],
 	);
 
 	const resetAutoLoopState = useCallback(() => {
+		const now = Date.now();
 		setAutoLoopTurn(0);
 		setAutoLoopStopReason(null);
 		setAutoLoopPhase("waiting-browser-ai");
 		setAutoLoopLastAction("Auto Loop armed");
+		setAutoLoopLastActivityAt(null);
+		setAutoLoopDiagnostics({
+			...EMPTY_AUTO_LOOP_DIAGNOSTICS,
+			activeTimeoutType: "browser no activity",
+			noActivityRemainingMs: AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
+			hardMaxRemainingMs: AUTO_LOOP_HARD_MAX_WAIT_MS,
+			noActivityDeadlineAt: now + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
+			hardMaxDeadlineAt: now + AUTO_LOOP_HARD_MAX_WAIT_MS,
+			recentEvents: [{ at: now, label: "auto loop armed" }],
+		});
 		autoLoopTerminalFingerprintRef.current = "";
 		autoLoopWorkerFingerprintRef.current = "";
-	}, []);
+	}, [setAutoLoopPhase]);
 
 	const startAutoRelayPreview = useCallback(
 		(
@@ -1200,6 +1326,8 @@ export function usePromptTransfer({
 			if (autoRelayMode === "loop" && source === "terminal-submit") {
 				setAutoLoopPhase("waiting-worker");
 				setAutoLoopLastAction("Waiting for Worker response");
+				setAutoLoopLastActivityAt(Date.now());
+				cancelAutoCapture("worker-phase-started");
 			}
 			console.log("[S3.13-stream] auto relay mode state =", autoRelayMode);
 			console.log("[S3.13-stream] terminal output capture armed =", {
@@ -1209,10 +1337,27 @@ export function usePromptTransfer({
 			console.log("[S3.13-stream] marker offset =", markerOffset);
 
 			const startedAt = Date.now();
+			if (autoRelayMode === "loop") {
+				appendAutoLoopEvent("worker watcher armed");
+				setAutoLoopDiagnostics((prev) => ({
+					...prev,
+					workerWatcherActive: true,
+					browserWatcherActive: false,
+					workerActivityAt: startedAt,
+					currentOutputOffset: markerOffset,
+					markerOffset,
+					activeTimeoutType: "worker no activity",
+					noActivityRemainingMs: AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
+					hardMaxRemainingMs: AUTO_LOOP_HARD_MAX_WAIT_MS,
+					noActivityDeadlineAt: startedAt + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
+					hardMaxDeadlineAt: startedAt + AUTO_LOOP_HARD_MAX_WAIT_MS,
+				}));
+			}
 			const relayRef: AutoRelayTracker = {
 				paneId,
 				markerOffset,
 				source,
+				startedAt,
 				firstOutputAt: source === "terminal-submit" ? startedAt : null,
 				lastFingerprint: "",
 				lastChangedAt: Date.now(),
@@ -1332,6 +1477,7 @@ export function usePromptTransfer({
 					setAutoLoopLastAction(
 						`Worker response captured (${detection?.confidence ?? "low"} confidence)`,
 					);
+					appendAutoLoopEvent("capture succeeded: worker response");
 				}
 				setWorkerResponsePreview({
 					visible: true,
@@ -1348,6 +1494,9 @@ export function usePromptTransfer({
 					0,
 					currentOffset - relayRef.markerOffset,
 				);
+				if (autoRelayMode === "loop" && reason !== "polling-stability-check") {
+					appendAutoLoopEvent(`capture scheduled: ${reason}`);
+				}
 				debugAutoRelayWatcher("[S3.13-stream] capture scheduled =", {
 					reason,
 					currentOffset,
@@ -1371,18 +1520,67 @@ export function usePromptTransfer({
 				);
 			};
 
-				relayRef.unsubscribeOutputLog = subscribeOutputLog(paneId, (snapshot) => {
+			relayRef.unsubscribeOutputLog = subscribeOutputLog(paneId, (snapshot) => {
 				debugAutoRelayWatcher("[S3.13-stream] subscription fired =", snapshot);
+				if (
+					autoRelayMode === "loop" &&
+					autoLoopPhaseRef.current !== "waiting-worker"
+				) {
+					appendAutoLoopEvent("worker watcher cleared: phase mismatch");
+					console.log("[S5.2] worker watcher cleared outside worker phase", {
+						phase: autoLoopPhaseRef.current,
+					});
+					cancelAutoRelay("worker-phase-mismatch");
+					return;
+				}
 				if (snapshot.offset <= relayRef.markerOffset) return;
 				if (snapshot.offset > relayRef.lastObservedOffset) {
+					const before = relayRef.lastObservedOffset;
 					relayRef.lastObservedOffset = snapshot.offset;
-					relayRef.lastOutputChangedAt = Date.now();
+					const now = Date.now();
+					relayRef.lastOutputChangedAt = now;
+					if (autoRelayMode === "loop") {
+						setAutoLoopLastActivityAt(now);
+						setAutoLoopLastAction("Worker output activity detected");
+						setAutoLoopDiagnostics((prev) => ({
+							...prev,
+							workerActivityAt: now,
+							currentOutputOffset: snapshot.offset,
+							markerOffset: relayRef.markerOffset,
+							noActivityRemainingMs: AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
+							hardMaxRemainingMs: Math.max(
+								0,
+								AUTO_LOOP_HARD_MAX_WAIT_MS - (now - relayRef.startedAt),
+							),
+							noActivityDeadlineAt:
+								now + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
+							hardMaxDeadlineAt:
+								relayRef.startedAt + AUTO_LOOP_HARD_MAX_WAIT_MS,
+						}));
+						appendAutoLoopEvent("worker activity updated");
+						console.log("[S5.2] worker activity updated", {
+							before,
+							after: snapshot.offset,
+						});
+					}
 				}
 				scheduleCapture("subscription");
 			});
 
 			relayRef.intervalId = setInterval(() => {
 				const currentOffset = getOutputLogOffset(paneId);
+				const now = Date.now();
+				if (
+					autoRelayMode === "loop" &&
+					autoLoopPhaseRef.current !== "waiting-worker"
+				) {
+					appendAutoLoopEvent("worker timeout ignored: phase mismatch");
+					console.log("[S5.2] worker timeout ignored because phase mismatch", {
+						phase: autoLoopPhaseRef.current,
+					});
+					cancelAutoRelay("worker-phase-mismatch");
+					return;
+				}
 				const outputDeltaLength = Math.max(
 					0,
 					currentOffset - relayRef.markerOffset,
@@ -1394,11 +1592,56 @@ export function usePromptTransfer({
 					currentOffset,
 					outputDeltaLength,
 				});
-				if (currentOffset <= relayRef.markerOffset) return;
+				if (currentOffset <= relayRef.markerOffset) {
+					if (
+						autoRelayMode === "loop" &&
+						now - relayRef.lastOutputChangedAt >= AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS
+					) {
+						stopAutoLoop("worker no activity timeout");
+					}
+					return;
+				}
 				if (currentOffset > relayRef.lastObservedOffset) {
+					const before = relayRef.lastObservedOffset;
 					relayRef.lastObservedOffset = currentOffset;
-					relayRef.lastOutputChangedAt = Date.now();
+					relayRef.lastOutputChangedAt = now;
+					if (autoRelayMode === "loop") {
+						setAutoLoopLastActivityAt(now);
+						setAutoLoopLastAction("Worker output activity detected");
+						setAutoLoopDiagnostics((prev) => ({
+							...prev,
+							workerActivityAt: now,
+							currentOutputOffset: currentOffset,
+							markerOffset: relayRef.markerOffset,
+							noActivityRemainingMs: AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
+							hardMaxRemainingMs: Math.max(
+								0,
+								AUTO_LOOP_HARD_MAX_WAIT_MS - (now - relayRef.startedAt),
+							),
+							noActivityDeadlineAt:
+								now + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
+							hardMaxDeadlineAt:
+								relayRef.startedAt + AUTO_LOOP_HARD_MAX_WAIT_MS,
+						}));
+						appendAutoLoopEvent("worker activity updated");
+						console.log("[S5.2] worker activity updated", {
+							before,
+							after: currentOffset,
+						});
+					}
 					scheduleCapture("polling-output-increased");
+					return;
+				}
+				if (
+					autoRelayMode === "loop" &&
+					now - relayRef.lastOutputChangedAt >= AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS
+				) {
+					appendAutoLoopEvent("timeout fired: worker no activity");
+					console.log("[S5.2] timeout fired with current phase", {
+						type: "worker no activity timeout",
+						phase: autoLoopPhaseRef.current,
+					});
+					stopAutoLoop("worker no activity timeout");
 					return;
 				}
 				if (relayRef.firstOutputAt !== null) {
@@ -1408,28 +1651,53 @@ export function usePromptTransfer({
 
 			relayRef.timeoutId = setTimeout(() => {
 				const reason =
-					relayRef.firstOutputAt === null ? "timeout-no-output" : "timeout";
+					autoRelayMode === "loop"
+						? "hard-max-wait-timeout"
+						: relayRef.firstOutputAt === null
+							? "timeout-no-output"
+							: "timeout";
 				cancelAutoRelay(reason);
 				if (autoRelayMode === "loop") {
-					setAutoLoopStopReason("auto relay timeout");
-					setAutoLoopPhase("stopped");
-					setAutoLoopLastAction("auto relay timeout");
+					if (autoLoopPhaseRef.current === "waiting-worker") {
+						appendAutoLoopEvent("timeout fired: hard max wait");
+						console.log("[S5.2] timeout fired with current phase", {
+							type: "hard max wait timeout",
+							phase: autoLoopPhaseRef.current,
+						});
+						stopAutoLoop("hard max wait timeout");
+					} else {
+						appendAutoLoopEvent("timeout ignored: worker phase mismatch");
+						console.log(
+							"[S5.2] hard max worker timeout ignored because phase mismatch",
+							{ phase: autoLoopPhaseRef.current },
+						);
+					}
 				}
 				console.log("[S3.13] auto relay timeout after ms:", {
 					source: relayRef.source,
 					elapsedMs: Date.now() - startedAt,
 					firstOutputAt: relayRef.firstOutputAt,
 				});
-			}, AUTO_RELAY_TIMEOUT_MS);
+			}, autoRelayMode === "loop" ? AUTO_LOOP_HARD_MAX_WAIT_MS : AUTO_RELAY_TIMEOUT_MS);
 
 			autoRelayRef.current = relayRef;
 		},
-		[autoRelayMode, cancelAutoRelay],
+		[autoRelayMode, cancelAutoCapture, cancelAutoRelay, stopAutoLoop],
 	);
 
 	const startAutoCapture = useCallback(
 		async (options?: AutoCaptureStartOptions) => {
 			console.log("[S3.11] startAutoCapture called");
+			if (
+				autoRelayMode === "loop" &&
+				autoLoopPhaseRef.current !== "waiting-browser-ai" &&
+				autoLoopPhaseRef.current !== "sending-browser-ai"
+			) {
+				console.log("[S5.2] browser watcher not armed outside browser phase", {
+					phase: autoLoopPhaseRef.current,
+				});
+				return;
+			}
 			cancelAutoCapture("start-new-capture");
 			setCaptureForTerminalPreview(EMPTY_CAPTURE_FOR_TERMINAL_PREVIEW);
 			setCapturePreview(null);
@@ -1482,6 +1750,23 @@ export function usePromptTransfer({
 			if (autoRelayMode === "loop") {
 				setAutoLoopPhase("waiting-browser-ai");
 				setAutoLoopLastAction("Waiting for Browser AI response");
+				setAutoLoopLastActivityAt(triggeredAt);
+				appendAutoLoopEvent("browser watcher armed");
+				setAutoLoopDiagnostics((prev) => ({
+					...prev,
+					browserWatcherActive: true,
+					workerWatcherActive: false,
+					browserActivityAt: triggeredAt,
+					activeTimeoutType: "browser no activity",
+					noActivityRemainingMs: AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
+					hardMaxRemainingMs: AUTO_LOOP_HARD_MAX_WAIT_MS,
+					noActivityDeadlineAt:
+						triggeredAt + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
+					hardMaxDeadlineAt: triggeredAt + AUTO_LOOP_HARD_MAX_WAIT_MS,
+				}));
+				console.log("[S5.2] browser watcher armed", {
+					phase: autoLoopPhaseRef.current,
+				});
 			}
 
 			const intervalId = setInterval(async () => {
@@ -1495,6 +1780,63 @@ export function usePromptTransfer({
 					const text = snapshot.latestText;
 					const reason = getCaptureReason(safeBaseline, snapshot);
 					const ref = autoCaptureRef.current;
+					if (!ref) return;
+					if (
+						autoRelayMode === "loop" &&
+						autoLoopPhaseRef.current !== "waiting-browser-ai"
+					) {
+						console.log(
+							"[S5.2] browser timeout ignored because phase mismatch",
+							{ phase: autoLoopPhaseRef.current },
+						);
+						cancelAutoCapture("browser-phase-mismatch");
+						return;
+					}
+					const now = Date.now();
+					const snapshotFingerprint =
+						snapshot.latestFingerprint || fingerprintText(snapshot.latestText);
+					if (
+						snapshot.assistantCount !== ref.lastObservedAssistantCount ||
+						snapshotFingerprint !== ref.lastObservedFingerprint
+					) {
+						ref.lastObservedAssistantCount = snapshot.assistantCount;
+						ref.lastObservedFingerprint = snapshotFingerprint;
+						ref.lastActivityAt = now;
+						if (autoRelayMode === "loop") {
+							setAutoLoopLastActivityAt(now);
+							setAutoLoopLastAction("Browser AI response activity detected");
+							setAutoLoopDiagnostics((prev) => ({
+								...prev,
+								browserActivityAt: now,
+								noActivityRemainingMs: AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
+								hardMaxRemainingMs: Math.max(
+									0,
+									AUTO_LOOP_HARD_MAX_WAIT_MS - (now - ref.startedAt),
+								),
+								noActivityDeadlineAt:
+									now + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
+								hardMaxDeadlineAt:
+									ref.startedAt + AUTO_LOOP_HARD_MAX_WAIT_MS,
+							}));
+							appendAutoLoopEvent("browser activity updated");
+							console.log("[S5.2] browser activity updated", {
+								assistantCount: snapshot.assistantCount,
+							});
+						}
+					}
+					if (
+						autoRelayMode === "loop" &&
+						now - ref.lastActivityAt >= AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS
+					) {
+						appendAutoLoopEvent("timeout fired: browser no activity");
+						console.log("[S5.2] timeout fired with current phase", {
+							type: "browser ai no activity timeout",
+							phase: autoLoopPhaseRef.current,
+						});
+						cancelAutoCapture("browser-ai-no-activity-timeout");
+						stopAutoLoop("browser ai no activity timeout");
+						return;
+					}
 					console.log(
 						"[S3.11] auto-capture poll current assistant count =",
 						snapshot.assistantCount,
@@ -1506,11 +1848,8 @@ export function usePromptTransfer({
 					if (!reason) return;
 					if (!text || text.trim().length < MIN_CAPTURE_TEXT_LENGTH) return;
 					if (isTransientAssistantText(text)) return;
-					if (!ref) return;
 
-					const fingerprint =
-						snapshot.latestFingerprint || fingerprintText(text);
-					const now = Date.now();
+					const fingerprint = snapshotFingerprint;
 					if (fingerprint !== ref.candidateFingerprint) {
 						ref.candidateText = text;
 						ref.candidateFingerprint = fingerprint;
@@ -1621,6 +1960,7 @@ export function usePromptTransfer({
 					if (autoRelayMode === "loop") {
 						setAutoLoopPhase("sending-worker");
 						setAutoLoopLastAction("Browser AI worker instruction captured");
+						appendAutoLoopEvent("capture succeeded: browser instruction");
 					}
 					setCaptureForTerminalPreview({
 						visible: true,
@@ -1635,14 +1975,26 @@ export function usePromptTransfer({
 			const timeoutId = setTimeout(() => {
 				cancelAutoCapture("timeout");
 				if (autoRelayMode === "loop") {
-					setAutoLoopStopReason("auto capture timeout");
-					setAutoLoopPhase("stopped");
-					setAutoLoopLastAction("auto capture timeout");
+					if (autoLoopPhaseRef.current === "waiting-browser-ai") {
+						appendAutoLoopEvent("timeout fired: hard max wait");
+						console.log("[S5.2] timeout fired with current phase", {
+							type: "hard max wait timeout",
+							phase: autoLoopPhaseRef.current,
+						});
+						stopAutoLoop("hard max wait timeout");
+					} else {
+						appendAutoLoopEvent("timeout ignored: browser phase mismatch");
+						console.log(
+							"[S5.2] hard max browser timeout ignored because phase mismatch",
+							{ phase: autoLoopPhaseRef.current },
+						);
+					}
+				} else {
+					toast.warning(
+						"AI返答の自動取得がタイムアウトしました — 手動で ← AI → Term を使ってください",
+					);
 				}
-				toast.warning(
-					"AI返答の自動取得がタイムアウトしました — 手動で ← AI → Term を使ってください",
-				);
-			}, 60000);
+			}, autoRelayMode === "loop" ? AUTO_LOOP_HARD_MAX_WAIT_MS : 60000);
 
 			autoCaptureRef.current = {
 				intervalId,
@@ -1654,6 +2006,10 @@ export function usePromptTransfer({
 				candidateFingerprint: "",
 				candidateStableCount: 0,
 				candidateFirstSeenAt: 0,
+				startedAt: triggeredAt,
+				lastActivityAt: triggeredAt,
+				lastObservedAssistantCount: safeBaseline.assistantCount,
+				lastObservedFingerprint: safeBaseline.latestFingerprint,
 			};
 		},
 		[
@@ -1730,6 +2086,7 @@ export function usePromptTransfer({
 	useEffect(() => {
 		if (autoRelayMode !== "preview" && autoRelayMode !== "loop") return;
 		if (autoRelayMode === "loop" && autoLoopStopReason) return;
+		if (autoRelayMode === "loop" && autoLoopPhase !== "waiting-worker") return;
 		if (!activeTerminal) return;
 		if (workerResponsePreview.visible) return;
 		const currentRelay = autoRelayRef.current;
@@ -1742,6 +2099,7 @@ export function usePromptTransfer({
 		startAutoRelayPreview(activeTerminal, markerOffset, "mode-armed");
 	}, [
 		activeTerminal,
+		autoLoopPhase,
 		autoRelayMode,
 		autoLoopStopReason,
 		startAutoRelayPreview,
@@ -1765,6 +2123,7 @@ export function usePromptTransfer({
 	useEffect(() => {
 		if (autoRelayMode !== "loop") return;
 		if (autoLoopStopReason) return;
+		if (autoLoopPhase !== "waiting-browser-ai") return;
 		if (autoCaptureStatus !== "idle") return;
 		if (captureForTerminalPreview.visible) return;
 		if (workerResponsePreview.visible) return;
@@ -1786,6 +2145,7 @@ export function usePromptTransfer({
 		});
 	}, [
 		autoCaptureStatus,
+		autoLoopPhase,
 		autoLoopStopReason,
 		autoRelayMode,
 		captureForTerminalPreview.visible,
@@ -1899,6 +2259,7 @@ export function usePromptTransfer({
 		setAutoLoopTurn(nextTurn);
 		setAutoLoopPhase("sending-worker");
 		setAutoLoopLastAction(`Sending turn ${nextTurn}/${autoLoopMaxTurns} to Worker`);
+		cancelAutoCapture("sending-to-worker");
 		const startRelay = handleTerminalSubmitBeforeSend(activeTerminal);
 		void (async () => {
 			const ok = await sendToTerminal(activeTerminal, text, { submit: true });
@@ -1961,7 +2322,7 @@ export function usePromptTransfer({
 		setAutoLoopPhase("sending-browser-ai");
 		setAutoLoopLastAction("Sending Worker response to Browser AI");
 		void (async () => {
-			const ok = await sendWorkerResponseToBrowserAI(text);
+			const ok = await sendWorkerResponseToBrowserAI(text, { autoLoop: true });
 			if (!ok) {
 				stopAutoLoop("browser injection failed");
 				return;
@@ -2430,6 +2791,8 @@ export function usePromptTransfer({
 		autoLoopStopReason,
 		autoLoopPhase,
 		autoLoopLastAction,
+		autoLoopLastActivityAt,
+		autoLoopDiagnostics,
 		setAutoLoopMaxTurns,
 		stopAutoLoop,
 		workerResponsePreview,

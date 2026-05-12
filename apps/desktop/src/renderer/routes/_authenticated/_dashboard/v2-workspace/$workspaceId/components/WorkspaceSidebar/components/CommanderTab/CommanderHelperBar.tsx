@@ -27,6 +27,7 @@ import type { CommanderState } from "./commander-types";
 import { copyToClipboard } from "./hooks/useCommanderPrompts";
 import { sendToTerminal } from "./hooks/usePromptTransfer";
 import type {
+	AutoLoopDiagnostics,
 	AutoLoopPhase,
 	AutoLoopMaxTurns,
 	AutoRelayMode,
@@ -66,6 +67,8 @@ export function CommanderHelperBar({
 	autoLoopTurn,
 	autoLoopPhase,
 	autoLoopLastAction,
+	autoLoopLastActivityAt,
+	autoLoopDiagnostics,
 	autoLoopStopReason,
 	onStopAutoLoop,
 	onTerminalSubmitBeforeSend,
@@ -94,6 +97,8 @@ export function CommanderHelperBar({
 	autoLoopTurn: number;
 	autoLoopPhase: AutoLoopPhase;
 	autoLoopLastAction: string;
+	autoLoopLastActivityAt: number | null;
+	autoLoopDiagnostics: AutoLoopDiagnostics;
 	autoLoopStopReason: string | null;
 	onStopAutoLoop: (reason: string) => void;
 	onTerminalSubmitBeforeSend: (paneId: string) => (() => void) | null;
@@ -106,6 +111,8 @@ export function CommanderHelperBar({
 		label: string;
 	} | null>(null);
 	const [actionsOpen, setActionsOpen] = useState(false);
+	const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+	const [now, setNow] = useState(() => Date.now());
 
 	const closeActions = useCallback(() => {
 		setActionsOpen(false);
@@ -116,6 +123,25 @@ export function CommanderHelperBar({
 	useEffect(() => {
 		if (!activeTerminal && pendingSend) setPendingSend(null);
 	}, [activeTerminal, pendingSend]);
+
+	useEffect(() => {
+		if (autoRelayMode !== "loop") return;
+		const id = window.setInterval(() => setNow(Date.now()), 1000);
+		return () => window.clearInterval(id);
+	}, [autoRelayMode]);
+
+	const lastActivityLabel =
+		autoLoopLastActivityAt && autoRelayMode === "loop"
+			? `${Math.max(0, Math.floor((now - autoLoopLastActivityAt) / 1000))}s ago`
+			: null;
+	const formatAgo = (at: number | null) =>
+		at ? `${Math.max(0, Math.floor((now - at) / 1000))}s ago` : "-";
+	const formatRemaining = (deadlineAt: number | null) =>
+		deadlineAt
+			? `${Math.max(0, Math.ceil((deadlineAt - now) / 1000))}s`
+			: "-";
+	const formatOffset = (offset: number | null) =>
+		typeof offset === "number" ? offset.toString() : "-";
 
 	const handleTerminalSend = useCallback(
 		(type: "worker" | "review") => {
@@ -281,6 +307,14 @@ export function CommanderHelperBar({
 							<LuTrash2 className="size-3.5" />
 							Clear Session
 						</DropdownMenuItem>
+						{autoRelayMode === "loop" && (
+							<DropdownMenuItem
+								onSelect={() => setDiagnosticsOpen((open) => !open)}
+							>
+								<LuListChecks className="size-3.5" />
+								Diagnostics
+							</DropdownMenuItem>
+						)}
 						<DropdownMenuSeparator />
 						<DropdownMenuLabel className="text-[10px] font-normal text-muted-foreground">
 							Advanced / Legacy
@@ -337,16 +371,91 @@ export function CommanderHelperBar({
 			</div>
 			{autoRelayMode === "loop" && (
 				<div className="border-t bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground">
+					<Button
+						variant="ghost"
+						size="sm"
+						className="mr-1 h-5 px-1 text-[9px]"
+						onClick={() => setDiagnosticsOpen((open) => !open)}
+					>
+						Diag
+					</Button>
 					<span>
 						Phase: {AUTO_LOOP_PHASE_LABELS[autoLoopPhase]}
 					</span>
 					{autoLoopLastAction && (
 						<span className="ml-2">Last: {autoLoopLastAction}</span>
 					)}
+					{lastActivityLabel && (
+						<span className="ml-2">Activity: {lastActivityLabel}</span>
+					)}
 					{autoLoopStopReason && (
 						<span className="ml-2 text-amber-600 dark:text-amber-400">
 							Stopped: {autoLoopStopReason}
 						</span>
+					)}
+					{diagnosticsOpen && (
+						<div className="mt-1 max-h-36 overflow-y-auto rounded border bg-background/80 p-1.5 text-[9px] leading-4">
+							<div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+								<span>
+									Phase: {AUTO_LOOP_PHASE_LABELS[autoLoopPhase]}
+								</span>
+								<span>
+									Turn: {autoLoopTurn}/{autoLoopMaxTurns}
+								</span>
+								<span>
+									Browser watcher:{" "}
+									{autoLoopDiagnostics.browserWatcherActive ? "on" : "off"}
+								</span>
+								<span>
+									Worker watcher:{" "}
+									{autoLoopDiagnostics.workerWatcherActive ? "on" : "off"}
+								</span>
+								<span>
+									Browser activity:{" "}
+									{formatAgo(autoLoopDiagnostics.browserActivityAt)}
+								</span>
+								<span>
+									Worker activity:{" "}
+									{formatAgo(autoLoopDiagnostics.workerActivityAt)}
+								</span>
+								<span>
+									Current offset:{" "}
+									{formatOffset(autoLoopDiagnostics.currentOutputOffset)}
+								</span>
+								<span>
+									Marker offset:{" "}
+									{formatOffset(autoLoopDiagnostics.markerOffset)}
+								</span>
+								<span>
+									Timeout: {autoLoopDiagnostics.activeTimeoutType}
+								</span>
+								<span>
+									No activity:{" "}
+									{formatRemaining(autoLoopDiagnostics.noActivityDeadlineAt)}
+								</span>
+								<span>
+									Hard max:{" "}
+									{formatRemaining(autoLoopDiagnostics.hardMaxDeadlineAt)}
+								</span>
+								<span className="col-span-2">
+									Stop reason: {autoLoopStopReason || "-"}
+								</span>
+							</div>
+							{autoLoopDiagnostics.recentEvents.length > 0 && (
+								<div className="mt-1 border-t pt-1">
+									<div className="font-medium text-foreground/80">
+										Recent events
+									</div>
+									<ul className="space-y-0.5">
+										{autoLoopDiagnostics.recentEvents.map((event) => (
+											<li key={`${event.at}-${event.label}`}>
+												{formatAgo(event.at)} · {event.label}
+											</li>
+										))}
+									</ul>
+								</div>
+							)}
+						</div>
 					)}
 				</div>
 			)}
