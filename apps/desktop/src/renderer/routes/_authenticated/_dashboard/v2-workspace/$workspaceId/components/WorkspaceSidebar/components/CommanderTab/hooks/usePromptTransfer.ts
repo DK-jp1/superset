@@ -353,30 +353,65 @@ function isNegativeStatusText(text: string): boolean {
 	return !/(なし|無し|ありません|特になし|none|no\b|問題なし|PASS)/i.test(text);
 }
 
+function isPositiveStatusText(text: string): boolean {
+	return /(なし|無し|ありません|特になし|none|no\b|問題なし|PASS|OK|成功|完了|危険操作なし|外部参照なし|外部アクセスなし|Git操作なし|ツール使用なし|既存DoyDeck本体への変更なし)/i.test(
+		text,
+	);
+}
+
+function extractStatusDetail(line: string, labelPattern: RegExp): string {
+	return line
+		.replace(/^[-*・•\s]*/u, "")
+		.replace(labelPattern, "")
+		.trim();
+}
+
+function isExplicitFailureStatus(line: string): string | null {
+	const normalized = line.replace(/^[-*・•\s]*/u, "").trim();
+	if (!normalized || isPositiveStatusText(normalized)) return null;
+	if (/^(git diff --check|typecheck|確認結果|検証結果|テスト結果)[：:\s-]+.*(?:\bFAIL\b|\bERROR\b|エラー|失敗)/i.test(normalized)) {
+		return normalized;
+	}
+	if (/^(?:\bERROR\b|\bFAIL\b|エラー)[：:\s-]+/i.test(normalized)) {
+		return normalized;
+	}
+	if (/^(コマンド|実装|実行|検証|確認).*(失敗しました|失敗|エラーが発生しました|エラー発生)/u.test(normalized)) {
+		return normalized;
+	}
+	if (/^((想定外の)?ファイル変更|外部アクセス|Git操作|ツール使用)/u.test(normalized) && isNegativeStatusText(normalized)) {
+		return normalized;
+	}
+	return null;
+}
+
 function hasWorkerFailureOrUnresolved(text: string): string | null {
 	const lines = text.split(/\r?\n/).map((line) => line.trim());
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i];
 		if (!line) continue;
-		if (/未解決/.test(line)) {
-			const sameLineDetail = line.replace(/^[-*・\s]*未解決[：:]?\s*/u, "");
+		if (/^(?:[-*・•]\s*)?(未解決|制約違反|不明点・危険・制約違反)[：:]?/u.test(line)) {
+			const sameLineDetail = extractStatusDetail(
+				line,
+				/^(未解決|制約違反|不明点・危険・制約違反)[：:]?\s*/u,
+			);
 			const detailLines =
 				sameLineDetail.trim().length > 0 ? [sameLineDetail] : [];
 			for (let j = i + 1; j < lines.length && detailLines.length < 4; j++) {
 				const next = lines[j];
 				if (!next) continue;
-				if (/^(やったこと|実施内容|変更ファイル|確認結果|次にやること)[：:]?/u.test(next)) {
+				if (/^(やったこと|実施内容|変更ファイル|確認結果|検証結果|次にやること|セルフレビュー)[：:]?/u.test(next)) {
 					break;
 				}
 				detailLines.push(next);
 			}
 			const detail = detailLines.join("\n").trim();
 			if (detail && isNegativeStatusText(detail)) {
-				return "worker unresolved item detected";
+				return `worker failure keyword detected: ${line}`;
 			}
 		}
-		if (/\b(ERROR|FAIL)\b|エラー|失敗/i.test(line) && isNegativeStatusText(line)) {
-			return "worker failure keyword detected";
+		const explicitFailure = isExplicitFailureStatus(line);
+		if (explicitFailure) {
+			return `worker failure keyword detected: ${explicitFailure}`;
 		}
 	}
 	return null;
@@ -552,7 +587,17 @@ export async function sendToTerminal(
 	options?: { submit?: boolean },
 ): Promise<boolean> {
 	try {
-		await electronTrpcClient.terminal.write.mutate({ paneId, data: text });
+		console.log("[S5.2] terminal send start", {
+			paneId,
+			submit: !!options?.submit,
+			textLength: text.length,
+			method: "terminal.write",
+		});
+		await electronTrpcClient.terminal.write.mutate({
+			paneId,
+			data: text,
+			throwOnError: true,
+		});
 		if (options?.submit) {
 			await new Promise((resolve) =>
 				setTimeout(resolve, TERMINAL_ENTER_DELAY_MS),
@@ -560,13 +605,21 @@ export async function sendToTerminal(
 			await electronTrpcClient.terminal.write.mutate({
 				paneId,
 				data: TERMINAL_ENTER_INPUT,
+				throwOnError: true,
 			});
+			console.log("[S5.2] terminal enter/carriage return sent", { paneId });
+			console.log("[S5.2] terminal submit success", { paneId });
 			toast.success("ターミナルに送信して実行しました");
 			return true;
 		}
+		console.log("[S5.2] terminal send success", { paneId });
 		toast.success("ターミナルに送信しました");
 		return true;
-	} catch {
+	} catch (error) {
+		console.warn("[S5.2] terminal submit failure", {
+			paneId,
+			error: error instanceof Error ? error.message : String(error),
+		});
 		toast.error(
 			"ターミナル送信に失敗しました — セッションが終了している可能性があります",
 		);
@@ -2341,9 +2394,15 @@ export function usePromptTransfer({
 		cancelAutoCapture("sending-to-worker");
 		const startRelay = handleTerminalSubmitBeforeSend(activeTerminal);
 		void (async () => {
+			console.log("[S5.2] auto loop terminal send start", {
+				turn: nextTurn,
+				maxTurns: autoLoopMaxTurns,
+				paneId: activeTerminal,
+				textLength: text.length,
+			});
 			const ok = await sendToTerminal(activeTerminal, text, { submit: true });
 			if (!ok) {
-				stopAutoLoop("terminal send failed");
+				stopAutoLoop("terminal submit failed");
 				return;
 			}
 			startRelay?.();
