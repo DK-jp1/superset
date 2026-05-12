@@ -26,8 +26,22 @@ import {
 import type { CommanderState } from "./commander-types";
 import { copyToClipboard } from "./hooks/useCommanderPrompts";
 import { sendToTerminal } from "./hooks/usePromptTransfer";
-import type { AutoRelayMode } from "./hooks/usePromptTransfer";
+import type {
+	AutoLoopPhase,
+	AutoLoopMaxTurns,
+	AutoRelayMode,
+} from "./hooks/usePromptTransfer";
 import { TerminalSendPreview } from "./PromptPreviewPanel";
+
+const AUTO_LOOP_MAX_TURN_OPTIONS: AutoLoopMaxTurns[] = [1, 3, 5, 10];
+const AUTO_LOOP_PHASE_LABELS: Record<AutoLoopPhase, string> = {
+	idle: "idle",
+	"waiting-browser-ai": "waiting for Browser AI",
+	"sending-worker": "sending to Worker",
+	"waiting-worker": "waiting for Worker",
+	"sending-browser-ai": "sending to Browser AI",
+	stopped: "stopped",
+};
 
 export function CommanderHelperBar({
 	state,
@@ -47,6 +61,13 @@ export function CommanderHelperBar({
 	handoffPrompt,
 	autoRelayMode,
 	onAutoRelayModeChange,
+	autoLoopMaxTurns,
+	onAutoLoopMaxTurnsChange,
+	autoLoopTurn,
+	autoLoopPhase,
+	autoLoopLastAction,
+	autoLoopStopReason,
+	onStopAutoLoop,
 	onTerminalSubmitBeforeSend,
 	providerLabel,
 	hasProvider,
@@ -68,6 +89,13 @@ export function CommanderHelperBar({
 	handoffPrompt: string;
 	autoRelayMode: AutoRelayMode;
 	onAutoRelayModeChange: (mode: AutoRelayMode) => void;
+	autoLoopMaxTurns: AutoLoopMaxTurns;
+	onAutoLoopMaxTurnsChange: (maxTurns: AutoLoopMaxTurns) => void;
+	autoLoopTurn: number;
+	autoLoopPhase: AutoLoopPhase;
+	autoLoopLastAction: string;
+	autoLoopStopReason: string | null;
+	onStopAutoLoop: (reason: string) => void;
 	onTerminalSubmitBeforeSend: (paneId: string) => (() => void) | null;
 	providerLabel: string;
 	hasProvider: boolean;
@@ -155,18 +183,52 @@ export function CommanderHelperBar({
 				>
 					{activeTerminal ? "Term ✓" : "Term ✗"}
 				</span>
-				<Button
-					variant={autoRelayMode === "preview" ? "secondary" : "ghost"}
-					size="sm"
-					className="h-5 px-1 text-[9px]"
-					onClick={() =>
-						onAutoRelayModeChange(
-							autoRelayMode === "preview" ? "off" : "preview",
-						)
+				<select
+					value={autoRelayMode}
+					onChange={(event) =>
+						onAutoRelayModeChange(event.target.value as AutoRelayMode)
 					}
+					className="h-5 max-w-28 rounded border border-border bg-background px-1 text-[9px]"
+					title="Auto Mode"
 				>
-					Auto Relay {autoRelayMode === "preview" ? "Preview" : "OFF"}
-				</Button>
+					<option value="off">Manual</option>
+					<option value="preview">Auto Relay Preview</option>
+					<option value="loop">Auto Loop Preview</option>
+				</select>
+				{autoRelayMode === "loop" && (
+					<>
+						<select
+							value={autoLoopMaxTurns}
+							onChange={(event) =>
+								onAutoLoopMaxTurnsChange(
+									Number(event.target.value) as AutoLoopMaxTurns,
+								)
+							}
+							className="h-5 w-14 rounded border border-border bg-background px-1 text-[9px]"
+							title="Max Turns"
+						>
+							{AUTO_LOOP_MAX_TURN_OPTIONS.map((option) => (
+								<option key={option} value={option}>
+									{option} turns
+								</option>
+							))}
+						</select>
+						<span className="whitespace-nowrap rounded bg-muted px-1 py-0.5 text-[9px] text-muted-foreground">
+							{autoLoopTurn}/{autoLoopMaxTurns}
+						</span>
+						<span className="max-w-32 truncate rounded bg-primary/10 px-1 py-0.5 text-[9px] text-primary">
+							{AUTO_LOOP_PHASE_LABELS[autoLoopPhase]}
+						</span>
+						<Button
+							variant="secondary"
+							size="sm"
+							className="h-5 px-1 text-[9px]"
+							onClick={() => onStopAutoLoop("Stopped by Doy")}
+						>
+							Stop
+						</Button>
+					</>
+				)}
 				<div className="flex-1" />
 				<DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
 					<DropdownMenuTrigger asChild>
@@ -273,6 +335,21 @@ export function CommanderHelperBar({
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
+			{autoRelayMode === "loop" && (
+				<div className="border-t bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground">
+					<span>
+						Phase: {AUTO_LOOP_PHASE_LABELS[autoLoopPhase]}
+					</span>
+					{autoLoopLastAction && (
+						<span className="ml-2">Last: {autoLoopLastAction}</span>
+					)}
+					{autoLoopStopReason && (
+						<span className="ml-2 text-amber-600 dark:text-amber-400">
+							Stopped: {autoLoopStopReason}
+						</span>
+					)}
+				</div>
+			)}
 		</div>
 	);
 }

@@ -129,6 +129,17 @@ const INSTRUCTION_KEYWORDS = [
 ];
 
 const HEADING_KEYWORD_PATTERN = INSTRUCTION_KEYWORDS.join("|");
+const AUTO_LOOP_WORKER_INSTRUCTION_KEYWORDS = [
+	"Worker\\s*Prompt",
+	"Worker[へに]渡す指示",
+	"Worker指示",
+	"Claude\\s*Code[へに]渡す指示",
+	"Claude\\s*Code[へに]投げる指示",
+	"Codex[へに]渡す指示",
+	"Codex[へに]投げる指示",
+];
+const AUTO_LOOP_WORKER_INSTRUCTION_HEADING_PATTERN =
+	AUTO_LOOP_WORKER_INSTRUCTION_KEYWORDS.join("|");
 const WORKER_INSTRUCTION_META_BOUNDARY_PATTERN =
 	/^(?:#{1,6}\s*)?(?:\*\*)?(?:補足|判断|解説|理由|参考)(?:\*\*)?[：:]?\s*$|^もし必要なら\b|^以上[。.\s]*$/i;
 const MIN_CAPTURE_TEXT_LENGTH = 30;
@@ -145,8 +156,35 @@ const AUTO_RELAY_MAX_DETECTION_WAIT_MS = 10000;
 const AUTO_RELAY_TIMEOUT_MS = 120000;
 const TERMINAL_ENTER_INPUT = "\r";
 const TERMINAL_ENTER_DELAY_MS = 150;
-export type AutoRelayMode = "off" | "preview";
+const DEBUG_AUTO_RELAY_WATCHER = false;
+export type AutoRelayMode = "off" | "preview" | "loop";
+export type AutoLoopMaxTurns = 1 | 3 | 5 | 10;
+export type AutoLoopPhase =
+	| "idle"
+	| "waiting-browser-ai"
+	| "sending-worker"
+	| "waiting-worker"
+	| "sending-browser-ai"
+	| "stopped";
 export type WorkerResponseConfidence = "high" | "medium" | "low";
+
+type CaptureForTerminalPreviewSource =
+	| "browser-ai"
+	| "manual"
+	| "path"
+	| "handoff";
+
+type CaptureForTerminalPreviewState = {
+	visible: boolean;
+	text: string;
+	source: CaptureForTerminalPreviewSource;
+};
+
+const EMPTY_CAPTURE_FOR_TERMINAL_PREVIEW: CaptureForTerminalPreviewState = {
+	visible: false,
+	text: "",
+	source: "manual",
+};
 
 const TRANSIENT_RESPONSE_PATTERNS = [
 	/^thought for\b/i,
@@ -170,6 +208,101 @@ const EMPTY_WORKER_RESPONSE_PREVIEW: {
 	confidence: "low",
 	reasons: [],
 };
+
+const DANGEROUS_TERMINAL_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
+	{ label: "rm -rf", pattern: /\brm\s+-[^\n;&|]*r[^\n;&|]*f\b/i },
+	{ label: "sudo", pattern: /\bsudo\b/i },
+	{ label: "chmod -R", pattern: /\bchmod\s+-R\b/i },
+	{ label: "chown -R", pattern: /\bchown\s+-R\b/i },
+	{ label: "git reset --hard", pattern: /\bgit\s+reset\s+--hard\b/i },
+	{ label: "git clean", pattern: /\bgit\s+clean\b/i },
+	{ label: "git push", pattern: /\bgit\s+push\b/i },
+	{ label: "git commit", pattern: /\bgit\s+commit\b/i },
+	{ label: "rm", pattern: /(?:^|[\s;&|])rm(?:\s|$)/i },
+	{ label: "mv", pattern: /(?:^|[\s;&|])mv(?:\s|$)/i },
+	{ label: "delete", pattern: /\bdelete\b/i },
+	{ label: "trash", pattern: /\btrash\b/i },
+	{ label: "local.db", pattern: /local\.db/i },
+	{ label: "app-state.json", pattern: /app-state\.json/i },
+	{ label: "~/.superset", pattern: /~\/\.superset\b/i },
+	{
+		label: "~/.doydeck-superset-dev",
+		pattern: /~\/\.doydeck-superset-dev\b/i,
+	},
+];
+
+function findDangerousTerminalPattern(text: string): string | null {
+	for (const { label, pattern } of DANGEROUS_TERMINAL_PATTERNS) {
+		if (pattern.test(text)) return label;
+	}
+	return null;
+}
+
+function debugAutoRelayWatcher(...args: unknown[]): void {
+	if (DEBUG_AUTO_RELAY_WATCHER) console.log(...args);
+}
+
+function hasWorkerInstructionSignal(text: string): boolean {
+	return /Workerへ渡す指示|Worker指示|作業内容|実装方針|確認方法|完了条件|完了後|## 完了報告|DoyDeck|Terminal Send Preview/i.test(
+		text,
+	);
+}
+
+function isBrowserCompletionStop(text: string): boolean {
+	const normalized = text.trim();
+	if (!normalized) return false;
+	if (hasWorkerInstructionSignal(normalized)) return false;
+	if (/^\s*STOP\s*[。.!！]?\s*$/im.test(normalized)) return true;
+	if (
+		/次のWorker指示(?:は|が)?不要|Worker(?:へ渡す)?指示(?:は|が)?不要|修正不要|これ以上(?:の)?修正は不要/.test(
+			normalized,
+		)
+	) {
+		return true;
+	}
+	if (
+		/(?:^|\n)\s*(?:このタスク|作業|レビュー)?(?:は)?完了(?:です|しました|。|$)|これで完了/.test(
+			normalized,
+		) &&
+		!/完了(?:報告|条件|後)/.test(normalized)
+	) {
+		return true;
+	}
+	return false;
+}
+
+function isNegativeStatusText(text: string): boolean {
+	return !/(なし|無し|ありません|特になし|none|no\b|問題なし|PASS)/i.test(text);
+}
+
+function hasWorkerFailureOrUnresolved(text: string): string | null {
+	const lines = text.split(/\r?\n/).map((line) => line.trim());
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i];
+		if (!line) continue;
+		if (/未解決/.test(line)) {
+			const sameLineDetail = line.replace(/^[-*・\s]*未解決[：:]?\s*/u, "");
+			const detailLines =
+				sameLineDetail.trim().length > 0 ? [sameLineDetail] : [];
+			for (let j = i + 1; j < lines.length && detailLines.length < 4; j++) {
+				const next = lines[j];
+				if (!next) continue;
+				if (/^(やったこと|実施内容|変更ファイル|確認結果|次にやること)[：:]?/u.test(next)) {
+					break;
+				}
+				detailLines.push(next);
+			}
+			const detail = detailLines.join("\n").trim();
+			if (detail && isNegativeStatusText(detail)) {
+				return "worker unresolved item detected";
+			}
+		}
+		if (/\b(ERROR|FAIL)\b|エラー|失敗/i.test(line) && isNegativeStatusText(line)) {
+			return "worker failure keyword detected";
+		}
+	}
+	return null;
+}
 
 export interface AssistantCaptureSnapshot {
 	assistantCount: number;
@@ -296,11 +429,49 @@ function extractWorkerInstructionFromHeading(text: string): string {
 	return "";
 }
 
+function extractAutoLoopWorkerInstructionBlock(text: string): string {
+	const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+	const headingPattern = new RegExp(
+		`^\\s*(?:#{1,6}\\s*)?(?:\\*\\*)?(?:${AUTO_LOOP_WORKER_INSTRUCTION_HEADING_PATTERN})(?:[：:]?\\*\\*|\\*\\*[：:]|[：:]|\\*\\*)?\\s*$`,
+		"i",
+	);
+	const inlineHeadingPattern = new RegExp(
+		`^\\s*(?:#{1,6}\\s*)?(?:\\*\\*)?(?:${AUTO_LOOP_WORKER_INSTRUCTION_HEADING_PATTERN})(?:[：:]?\\*\\*|\\*\\*[：:]|[：:]|\\*\\*)?\\s+(.+)$`,
+		"i",
+	);
+
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i];
+		const inlineMatch = inlineHeadingPattern.exec(line);
+		const isHeading = headingPattern.test(line);
+		if (!inlineMatch && !isHeading) continue;
+
+		const bodyLines: string[] = [];
+		if (inlineMatch?.[1]?.trim()) bodyLines.push(inlineMatch[1]);
+
+		for (let j = i + 1; j < lines.length; j++) {
+			const next = lines[j].trim();
+			if (
+				bodyLines.some((bodyLine) => bodyLine.trim().length > 0) &&
+				WORKER_INSTRUCTION_META_BOUNDARY_PATTERN.test(next)
+			) {
+				break;
+			}
+			bodyLines.push(lines[j]);
+		}
+
+		const body = bodyLines.join("\n").trim();
+		if (body) return body;
+	}
+
+	return "";
+}
+
 export async function sendToTerminal(
 	paneId: string,
 	text: string,
 	options?: { submit?: boolean },
-): Promise<void> {
+): Promise<boolean> {
 	try {
 		await electronTrpcClient.terminal.write.mutate({ paneId, data: text });
 		if (options?.submit) {
@@ -312,13 +483,15 @@ export async function sendToTerminal(
 				data: TERMINAL_ENTER_INPUT,
 			});
 			toast.success("ターミナルに送信して実行しました");
-			return;
+			return true;
 		}
 		toast.success("ターミナルに送信しました");
+		return true;
 	} catch {
 		toast.error(
 			"ターミナル送信に失敗しました — セッションが終了している可能性があります",
 		);
+		return false;
 	}
 }
 
@@ -907,10 +1080,10 @@ export function usePromptTransfer({
 	} | null>(null);
 	const [selectionPreview, setSelectionPreview] = useState<string | null>(null);
 	const [capturePreview, setCapturePreview] = useState<string | null>(null);
-	const [captureForTerminalPreview, setCaptureForTerminalPreview] = useState<{
-		visible: boolean;
-		text: string;
-	}>({ visible: false, text: "" });
+	const [captureForTerminalPreview, setCaptureForTerminalPreview] =
+		useState<CaptureForTerminalPreviewState>(
+			EMPTY_CAPTURE_FOR_TERMINAL_PREVIEW,
+		);
 	const [autoCaptureStatus, setAutoCaptureStatus] = useState<
 		"idle" | "waiting"
 	>("idle");
@@ -942,6 +1115,15 @@ export function usePromptTransfer({
 		latestAppliedBrowserSessionSourceText,
 		setLatestAppliedBrowserSessionSourceText,
 	] = useState("");
+	const [autoLoopMaxTurns, setAutoLoopMaxTurns] =
+		useState<AutoLoopMaxTurns>(3);
+	const [autoLoopTurn, setAutoLoopTurn] = useState(0);
+	const [autoLoopStopReason, setAutoLoopStopReason] = useState<string | null>(
+		null,
+	);
+	const [autoLoopPhase, setAutoLoopPhase] =
+		useState<AutoLoopPhase>("idle");
+	const [autoLoopLastAction, setAutoLoopLastAction] = useState("");
 	const autoCaptureRef = useRef<{
 		intervalId: ReturnType<typeof setInterval>;
 		timeoutId: ReturnType<typeof setTimeout>;
@@ -954,6 +1136,8 @@ export function usePromptTransfer({
 		candidateFirstSeenAt: number;
 	} | null>(null);
 	const autoRelayRef = useRef<AutoRelayTracker | null>(null);
+	const autoLoopTerminalFingerprintRef = useRef("");
+	const autoLoopWorkerFingerprintRef = useRef("");
 
 	const cancelAutoCapture = useCallback((reason?: string) => {
 		const ref = autoCaptureRef.current;
@@ -980,17 +1164,43 @@ export function usePromptTransfer({
 		setAutoRelayStatus("idle");
 	}, []);
 
+	const stopAutoLoop = useCallback(
+		(reason: string) => {
+			if (autoRelayMode !== "loop") return;
+			setAutoLoopStopReason(reason);
+			setAutoLoopPhase("stopped");
+			setAutoLoopLastAction(reason);
+			cancelAutoRelay(`auto-loop-stopped:${reason}`);
+			console.warn("[S5.2] Auto Loop stopped:", reason);
+			toast.warning(`Auto Loop stopped: ${reason}`);
+		},
+		[autoRelayMode, cancelAutoRelay],
+	);
+
+	const resetAutoLoopState = useCallback(() => {
+		setAutoLoopTurn(0);
+		setAutoLoopStopReason(null);
+		setAutoLoopPhase("waiting-browser-ai");
+		setAutoLoopLastAction("Auto Loop armed");
+		autoLoopTerminalFingerprintRef.current = "";
+		autoLoopWorkerFingerprintRef.current = "";
+	}, []);
+
 	const startAutoRelayPreview = useCallback(
 		(
 			paneId: string,
 			markerOffset: number,
 			source: AutoRelayTracker["source"] = "terminal-submit",
 		) => {
-			if (autoRelayMode !== "preview") return;
+			if (autoRelayMode !== "preview" && autoRelayMode !== "loop") return;
 
 			cancelAutoRelay("start-new-relay");
 			setWorkerResponsePreview(EMPTY_WORKER_RESPONSE_PREVIEW);
 			setAutoRelayStatus(source === "terminal-submit" ? "watching" : "idle");
+			if (autoRelayMode === "loop" && source === "terminal-submit") {
+				setAutoLoopPhase("waiting-worker");
+				setAutoLoopLastAction("Waiting for Worker response");
+			}
 			console.log("[S3.13-stream] auto relay mode state =", autoRelayMode);
 			console.log("[S3.13-stream] terminal output capture armed =", {
 				paneId,
@@ -1023,38 +1233,41 @@ export function usePromptTransfer({
 				const currentOffset = getOutputLogOffset(paneId);
 				const outputStableMs = now - relayRef.lastOutputChangedAt;
 				const promptReturned = hasWorkerPromptReturned(current);
-				console.log("[S3.13-stream] capture executed =", reason);
-				console.log("[S3.13-stream] raw delta length =", rawDelta.length);
-				console.log("[S3.13-stream] clean delta length =", current.length);
-				console.log(
+				debugAutoRelayWatcher("[S3.13-stream] capture executed =", reason);
+				debugAutoRelayWatcher("[S3.13-stream] raw delta length =", rawDelta.length);
+				debugAutoRelayWatcher("[S3.13-stream] clean delta length =", current.length);
+				debugAutoRelayWatcher(
 					"[S3.13-stream] clean delta preview =",
 					previewText(current),
 				);
-				if (current.includes("完了報告") || headingCandidates.length > 0) {
-					console.log(
+				if (
+					DEBUG_AUTO_RELAY_WATCHER &&
+					(current.includes("完了報告") || headingCandidates.length > 0)
+				) {
+					debugAutoRelayWatcher(
 						"[S3.13-stream] captured worker text first 1000 chars =",
 						current.slice(0, 1000),
 					);
-					console.log(
+					debugAutoRelayWatcher(
 						"[S3.13-stream] captured worker text last 1000 chars =",
 						current.slice(-1000),
 					);
-					console.log(
+					debugAutoRelayWatcher(
 						"[S3.13-stream] detected report heading candidates =",
 						summarizeWorkerCompletionCandidates(headingCandidates),
 					);
 				}
-				console.log(
+				debugAutoRelayWatcher(
 					"[S3.13-stream] completion report count =",
 					completionReportCount,
 				);
-				console.log("[S3.13-stream] has completion report =", Boolean(report));
-				console.log(
+				debugAutoRelayWatcher("[S3.13-stream] has completion report =", Boolean(report));
+				debugAutoRelayWatcher(
 					"[S3.13-stream] final extracted worker response length =",
 					report.length,
 				);
-				console.log("[S3.13-stream] worker response detection =", detection);
-				console.log("[S3.13-stream] output settled state =", {
+				debugAutoRelayWatcher("[S3.13-stream] worker response detection =", detection);
+				debugAutoRelayWatcher("[S3.13-stream] output settled state =", {
 					currentOffset,
 					lastObservedOffset: relayRef.lastObservedOffset,
 					outputStableMs,
@@ -1068,7 +1281,7 @@ export function usePromptTransfer({
 					relayRef.lastChangedAt = now;
 					relayRef.detectionFirstSeenAt = now;
 					relayRef.lastDetection = detection;
-					console.log(
+					debugAutoRelayWatcher(
 						"[S3.13-stream] selected completion report preview =",
 						previewText(report),
 					);
@@ -1087,8 +1300,8 @@ export function usePromptTransfer({
 				const readyByMaxWait =
 					detectionWaitMs >= AUTO_RELAY_MAX_DETECTION_WAIT_MS &&
 					outputStableMs >= AUTO_RELAY_PROMPT_RETURNED_STABLE_MS;
-				console.log("[S3.13-stream] idle ms =", idleMs);
-				console.log("[S3.13-stream] preview readiness =", {
+				debugAutoRelayWatcher("[S3.13-stream] idle ms =", idleMs);
+				debugAutoRelayWatcher("[S3.13-stream] preview readiness =", {
 					detectionWaitMs,
 					readyByPromptReturned,
 					readyByOutputStable,
@@ -1114,6 +1327,12 @@ export function usePromptTransfer({
 				);
 				const truncatedReport = truncateWithWarning(report, "Worker返答");
 				setLatestWorkerResponseText(truncatedReport);
+				if (autoRelayMode === "loop") {
+					setAutoLoopPhase("sending-browser-ai");
+					setAutoLoopLastAction(
+						`Worker response captured (${detection?.confidence ?? "low"} confidence)`,
+					);
+				}
 				setWorkerResponsePreview({
 					visible: true,
 					text: truncatedReport,
@@ -1129,7 +1348,7 @@ export function usePromptTransfer({
 					0,
 					currentOffset - relayRef.markerOffset,
 				);
-				console.log("[S3.13-stream] capture scheduled =", {
+				debugAutoRelayWatcher("[S3.13-stream] capture scheduled =", {
 					reason,
 					currentOffset,
 					outputDeltaLength,
@@ -1152,8 +1371,8 @@ export function usePromptTransfer({
 				);
 			};
 
-			relayRef.unsubscribeOutputLog = subscribeOutputLog(paneId, (snapshot) => {
-				console.log("[S3.13-stream] subscription fired =", snapshot);
+				relayRef.unsubscribeOutputLog = subscribeOutputLog(paneId, (snapshot) => {
+				debugAutoRelayWatcher("[S3.13-stream] subscription fired =", snapshot);
 				if (snapshot.offset <= relayRef.markerOffset) return;
 				if (snapshot.offset > relayRef.lastObservedOffset) {
 					relayRef.lastObservedOffset = snapshot.offset;
@@ -1168,7 +1387,7 @@ export function usePromptTransfer({
 					0,
 					currentOffset - relayRef.markerOffset,
 				);
-				console.log("[S3.13-stream] polling tick =", {
+				debugAutoRelayWatcher("[S3.13-stream] polling tick =", {
 					paneId,
 					source: relayRef.source,
 					markerOffset: relayRef.markerOffset,
@@ -1191,6 +1410,11 @@ export function usePromptTransfer({
 				const reason =
 					relayRef.firstOutputAt === null ? "timeout-no-output" : "timeout";
 				cancelAutoRelay(reason);
+				if (autoRelayMode === "loop") {
+					setAutoLoopStopReason("auto relay timeout");
+					setAutoLoopPhase("stopped");
+					setAutoLoopLastAction("auto relay timeout");
+				}
 				console.log("[S3.13] auto relay timeout after ms:", {
 					source: relayRef.source,
 					elapsedMs: Date.now() - startedAt,
@@ -1207,7 +1431,7 @@ export function usePromptTransfer({
 		async (options?: AutoCaptureStartOptions) => {
 			console.log("[S3.11] startAutoCapture called");
 			cancelAutoCapture("start-new-capture");
-			setCaptureForTerminalPreview({ visible: false, text: "" });
+			setCaptureForTerminalPreview(EMPTY_CAPTURE_FOR_TERMINAL_PREVIEW);
 			setCapturePreview(null);
 
 			const liveUrl = getLiveUrl() || currentUrl;
@@ -1255,6 +1479,10 @@ export function usePromptTransfer({
 				"[S3.11] startAutoCapture: setting autoCaptureStatus = waiting",
 			);
 			setAutoCaptureStatus("waiting");
+			if (autoRelayMode === "loop") {
+				setAutoLoopPhase("waiting-browser-ai");
+				setAutoLoopLastAction("Waiting for Browser AI response");
+			}
 
 			const intervalId = setInterval(async () => {
 				const url = getLiveUrl() || currentUrl;
@@ -1370,15 +1598,35 @@ export function usePromptTransfer({
 						previewText(prompt),
 					);
 					console.log("[S3.11] final raw preview:", previewText(truncated));
-					const extracted = extractInstructionBlock(truncated);
+					const extracted =
+						autoRelayMode === "loop"
+							? extractAutoLoopWorkerInstructionBlock(truncated)
+							: extractInstructionBlock(truncated);
 					logWorkerInstructionExtraction(truncated, extracted);
 					console.log("[S3.11] final extracted length:", extracted.length);
+					setLatestBrowserAiDirectionText(extracted || truncated);
+					if (autoRelayMode === "loop" && !extracted.trim()) {
+						setCapturePreview(truncated);
+						stopAutoLoop(
+							isBrowserCompletionStop(truncated)
+								? "Browser AI requested completion/stop"
+								: "no worker instruction block found",
+						);
+						return;
+					}
 					console.log(
 						"[S3.11] setting captureForTerminalPreview, length =",
 						extracted.length,
 					);
-					setLatestBrowserAiDirectionText(extracted || truncated);
-					setCaptureForTerminalPreview({ visible: true, text: extracted });
+					if (autoRelayMode === "loop") {
+						setAutoLoopPhase("sending-worker");
+						setAutoLoopLastAction("Browser AI worker instruction captured");
+					}
+					setCaptureForTerminalPreview({
+						visible: true,
+						text: extracted,
+						source: "browser-ai",
+					});
 				} catch {
 					// extraction失敗は無視、次回retry
 				}
@@ -1386,6 +1634,11 @@ export function usePromptTransfer({
 
 			const timeoutId = setTimeout(() => {
 				cancelAutoCapture("timeout");
+				if (autoRelayMode === "loop") {
+					setAutoLoopStopReason("auto capture timeout");
+					setAutoLoopPhase("stopped");
+					setAutoLoopLastAction("auto capture timeout");
+				}
 				toast.warning(
 					"AI返答の自動取得がタイムアウトしました — 手動で ← AI → Term を使ってください",
 				);
@@ -1403,7 +1656,14 @@ export function usePromptTransfer({
 				candidateFirstSeenAt: 0,
 			};
 		},
-		[getLiveUrl, currentUrl, injectIntoPage, cancelAutoCapture],
+		[
+			getLiveUrl,
+			currentUrl,
+			injectIntoPage,
+			cancelAutoCapture,
+			autoRelayMode,
+			stopAutoLoop,
+		],
 	);
 
 	useEffect(() => {
@@ -1429,13 +1689,19 @@ export function usePromptTransfer({
 			if (formSendPreview) setFormSendPreview(null);
 			if (selectionPreview) setSelectionPreview(null);
 			if (captureForTerminalPreview.visible) {
-				setCaptureForTerminalPreview({ visible: false, text: "" });
+				setCaptureForTerminalPreview(EMPTY_CAPTURE_FOR_TERMINAL_PREVIEW);
 			}
 			cancelAutoCapture("active-terminal-lost");
 			cancelAutoRelay("active-terminal-lost");
+			if (autoRelayMode === "loop") {
+				setAutoLoopStopReason("no active terminal");
+				setAutoLoopPhase("stopped");
+				setAutoLoopLastAction("no active terminal");
+			}
 		}
 	}, [
 		activeTerminal,
+		autoRelayMode,
 		formSendPreview,
 		selectionPreview,
 		captureForTerminalPreview.visible,
@@ -1450,7 +1716,20 @@ export function usePromptTransfer({
 	}, [autoRelayMode, cancelAutoRelay]);
 
 	useEffect(() => {
-		if (autoRelayMode !== "preview") return;
+		if (autoRelayMode === "loop") {
+			resetAutoLoopState();
+			return;
+		}
+		setAutoLoopPhase("idle");
+		setAutoLoopLastAction("");
+		setAutoLoopStopReason(null);
+		autoLoopTerminalFingerprintRef.current = "";
+		autoLoopWorkerFingerprintRef.current = "";
+	}, [autoRelayMode, resetAutoLoopState]);
+
+	useEffect(() => {
+		if (autoRelayMode !== "preview" && autoRelayMode !== "loop") return;
+		if (autoRelayMode === "loop" && autoLoopStopReason) return;
 		if (!activeTerminal) return;
 		if (workerResponsePreview.visible) return;
 		const currentRelay = autoRelayRef.current;
@@ -1464,13 +1743,14 @@ export function usePromptTransfer({
 	}, [
 		activeTerminal,
 		autoRelayMode,
+		autoLoopStopReason,
 		startAutoRelayPreview,
 		workerResponsePreview.visible,
 	]);
 
 	useEffect(() => {
 		setCapturePreview(null);
-		setCaptureForTerminalPreview({ visible: false, text: "" });
+		setCaptureForTerminalPreview(EMPTY_CAPTURE_FOR_TERMINAL_PREVIEW);
 		if (autoCaptureRef.current) {
 			console.log(
 				"[S3.11] currentUrl changed to:",
@@ -1481,6 +1761,40 @@ export function usePromptTransfer({
 			cancelAutoCapture("url-changed");
 		}
 	}, [currentUrl, cancelAutoCapture]);
+
+	useEffect(() => {
+		if (autoRelayMode !== "loop") return;
+		if (autoLoopStopReason) return;
+		if (autoCaptureStatus !== "idle") return;
+		if (captureForTerminalPreview.visible) return;
+		if (workerResponsePreview.visible) return;
+		const liveUrl = getLiveUrl() || currentUrl;
+		const provider = detectProvider(liveUrl);
+		if (!provider) {
+			stopAutoLoop("no Browser AI provider");
+			return;
+		}
+		setAutoLoopPhase("waiting-browser-ai");
+		setAutoLoopLastAction("Waiting for Browser AI response");
+		console.log("[S5.2] passive Browser AI response watcher armed", {
+			provider,
+			liveUrl,
+		});
+		void startAutoCapture({
+			prompt: "auto-loop-passive-browser-ai-watch",
+			triggeredAt: Date.now(),
+		});
+	}, [
+		autoCaptureStatus,
+		autoLoopStopReason,
+		autoRelayMode,
+		captureForTerminalPreview.visible,
+		currentUrl,
+		getLiveUrl,
+		startAutoCapture,
+		stopAutoLoop,
+		workerResponsePreview.visible,
+	]);
 
 	const doInject = useCallback(
 		async (prompt: string) => {
@@ -1527,7 +1841,7 @@ export function usePromptTransfer({
 
 	const handleTerminalSubmitBeforeSend = useCallback(
 		(paneId: string): (() => void) | null => {
-			if (autoRelayMode !== "preview") return null;
+			if (autoRelayMode !== "preview" && autoRelayMode !== "loop") return null;
 			const markerOffset = getOutputLogOffset(paneId);
 			console.log("[S3.13] marker captured before send");
 			console.log("[S3.13-stream] marker offset =", markerOffset);
@@ -1543,6 +1857,133 @@ export function usePromptTransfer({
 		const ok = await sendWorkerResponseToBrowserAI(workerResponsePreview.text);
 		if (ok) setWorkerResponsePreview(EMPTY_WORKER_RESPONSE_PREVIEW);
 	}, [workerResponsePreview]);
+
+	useEffect(() => {
+		if (autoRelayMode !== "loop") return;
+		if (autoLoopStopReason) return;
+		if (!captureForTerminalPreview.visible) return;
+		if (captureForTerminalPreview.source !== "browser-ai") return;
+
+		const text = captureForTerminalPreview.text;
+		const fingerprint = fingerprintText(`terminal:${text}`);
+		if (autoLoopTerminalFingerprintRef.current === fingerprint) return;
+
+		if (!activeTerminal) {
+			stopAutoLoop("no active terminal");
+			return;
+		}
+		if (!detectProvider(getLiveUrl() || currentUrl)) {
+			stopAutoLoop("no Browser AI provider");
+			return;
+		}
+		if (!text.trim()) {
+			stopAutoLoop("Terminal Send Preview is empty");
+			return;
+		}
+		if (isBrowserCompletionStop(latestBrowserAiDirectionText || text)) {
+			stopAutoLoop("Browser AI requested completion/stop");
+			return;
+		}
+		const dangerousPattern = findDangerousTerminalPattern(text);
+		if (dangerousPattern) {
+			stopAutoLoop(`dangerous command detected: ${dangerousPattern}`);
+			return;
+		}
+		if (autoLoopTurn >= autoLoopMaxTurns) {
+			stopAutoLoop("max turns reached");
+			return;
+		}
+
+		autoLoopTerminalFingerprintRef.current = fingerprint;
+		const nextTurn = autoLoopTurn + 1;
+		setAutoLoopTurn(nextTurn);
+		setAutoLoopPhase("sending-worker");
+		setAutoLoopLastAction(`Sending turn ${nextTurn}/${autoLoopMaxTurns} to Worker`);
+		const startRelay = handleTerminalSubmitBeforeSend(activeTerminal);
+		void (async () => {
+			const ok = await sendToTerminal(activeTerminal, text, { submit: true });
+			if (!ok) {
+				stopAutoLoop("terminal send failed");
+				return;
+			}
+			startRelay?.();
+			setCaptureForTerminalPreview(EMPTY_CAPTURE_FOR_TERMINAL_PREVIEW);
+			setCapturePreview(null);
+			setAutoLoopPhase("waiting-worker");
+			setAutoLoopLastAction(`Sent turn ${nextTurn}/${autoLoopMaxTurns} to Worker`);
+			console.log("[S5.2] Auto Loop sent Terminal turn", {
+				turn: nextTurn,
+				maxTurns: autoLoopMaxTurns,
+			});
+		})();
+	}, [
+		activeTerminal,
+		autoLoopMaxTurns,
+		autoLoopStopReason,
+		autoLoopTurn,
+		autoRelayMode,
+		captureForTerminalPreview,
+		currentUrl,
+		getLiveUrl,
+		handleTerminalSubmitBeforeSend,
+		latestBrowserAiDirectionText,
+		stopAutoLoop,
+	]);
+
+	useEffect(() => {
+		if (autoRelayMode !== "loop") return;
+		if (autoLoopStopReason) return;
+		if (!workerResponsePreview.visible) return;
+
+		const text = workerResponsePreview.text;
+		const fingerprint = fingerprintText(`worker:${text}`);
+		if (autoLoopWorkerFingerprintRef.current === fingerprint) return;
+
+		if (!detectProvider(getLiveUrl() || currentUrl)) {
+			stopAutoLoop("no Browser AI provider");
+			return;
+		}
+		if (!text.trim()) {
+			stopAutoLoop("Worker Response Preview is empty");
+			return;
+		}
+		if (workerResponsePreview.confidence === "low") {
+			stopAutoLoop("worker confidence low");
+			return;
+		}
+		const workerStopReason = hasWorkerFailureOrUnresolved(text);
+		if (workerStopReason) {
+			stopAutoLoop(workerStopReason);
+			return;
+		}
+
+		autoLoopWorkerFingerprintRef.current = fingerprint;
+		setAutoLoopPhase("sending-browser-ai");
+		setAutoLoopLastAction("Sending Worker response to Browser AI");
+		void (async () => {
+			const ok = await sendWorkerResponseToBrowserAI(text);
+			if (!ok) {
+				stopAutoLoop("browser injection failed");
+				return;
+			}
+			setWorkerResponsePreview(EMPTY_WORKER_RESPONSE_PREVIEW);
+			if (autoLoopTurn >= autoLoopMaxTurns) {
+				stopAutoLoop("max turns reached");
+				return;
+			}
+			setAutoLoopPhase("waiting-browser-ai");
+			setAutoLoopLastAction("Sent Worker response to Browser AI");
+		})();
+	}, [
+		autoLoopMaxTurns,
+		autoLoopStopReason,
+		autoLoopTurn,
+		autoRelayMode,
+		currentUrl,
+		getLiveUrl,
+		stopAutoLoop,
+		workerResponsePreview,
+	]);
 
 	const showSessionDraft = useCallback(
 		(
@@ -1729,6 +2170,7 @@ export function usePromptTransfer({
 			setCaptureForTerminalPreview({
 				visible: true,
 				text: buildTerminalPathPrompt(pathInfo),
+				source: "path",
 			});
 			toast.success("Terminal Send Previewに送ります");
 		},
@@ -1819,10 +2261,11 @@ export function usePromptTransfer({
 			toast.error("Terminal が見つかりません — ターミナルを開いてください");
 			return;
 		}
-		setCaptureForTerminalPreview({
-			visible: true,
-			text: handoffPreview.text,
-		});
+			setCaptureForTerminalPreview({
+				visible: true,
+				text: handoffPreview.text,
+				source: "handoff",
+			});
 		setHandoffPreview((prev) => ({ ...prev, visible: false }));
 	}, [handoffPreview.text, activeTerminal]);
 
@@ -1927,7 +2370,11 @@ export function usePromptTransfer({
 		const extracted = extractInstructionBlock(capturePreview);
 		logWorkerInstructionExtraction(capturePreview, extracted);
 		setLatestBrowserAiDirectionText(extracted || capturePreview);
-		setCaptureForTerminalPreview({ visible: true, text: extracted });
+		setCaptureForTerminalPreview({
+			visible: true,
+			text: extracted,
+			source: "browser-ai",
+		});
 	}, [capturePreview, activeTerminal]);
 
 	const handleConfirmCaptureToTerminal = useCallback(
@@ -1940,7 +2387,7 @@ export function usePromptTransfer({
 				await sendToTerminal(activeTerminal, editedText, options);
 				startRelay?.();
 			})();
-			setCaptureForTerminalPreview({ visible: false, text: "" });
+			setCaptureForTerminalPreview(EMPTY_CAPTURE_FOR_TERMINAL_PREVIEW);
 			setCapturePreview(null);
 		},
 		[activeTerminal, handleTerminalSubmitBeforeSend],
@@ -1978,6 +2425,13 @@ export function usePromptTransfer({
 		captureForTerminalPreview,
 		autoCaptureStatus,
 		autoRelayStatus,
+		autoLoopMaxTurns,
+		autoLoopTurn,
+		autoLoopStopReason,
+		autoLoopPhase,
+		autoLoopLastAction,
+		setAutoLoopMaxTurns,
+		stopAutoLoop,
 		workerResponsePreview,
 		handoffPreview,
 		sessionDraftPreview,
@@ -2013,7 +2467,7 @@ export function usePromptTransfer({
 		dismissSelectionPreview: () => setSelectionPreview(null),
 		dismissCapturePreview: () => setCapturePreview(null),
 		dismissCaptureForTerminal: () =>
-			setCaptureForTerminalPreview({ visible: false, text: "" }),
+			setCaptureForTerminalPreview(EMPTY_CAPTURE_FOR_TERMINAL_PREVIEW),
 		dismissWorkerResponsePreview: () =>
 			setWorkerResponsePreview(EMPTY_WORKER_RESPONSE_PREVIEW),
 		dismissHandoffPreview: () =>

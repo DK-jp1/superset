@@ -178,6 +178,7 @@ export function CommanderTab({
 
 	const currentProvider = detectProvider(webview.currentUrl);
 	const providerLabel = getProviderLabel(currentProvider);
+	const isAutoLoop = autoRelayMode === "loop";
 
 	return (
 		<div className="flex h-full flex-col overflow-hidden">
@@ -194,7 +195,8 @@ export function CommanderTab({
 					onReload={webview.reload}
 					onNavigate={webview.navigateTo}
 				/>
-				{transfer.autoCaptureStatus === "waiting" &&
+				{!isAutoLoop &&
+					transfer.autoCaptureStatus === "waiting" &&
 					!transfer.captureForTerminalPreview.visible && (
 						<div className="flex items-center gap-1.5 px-2 py-1 border-b bg-muted/30">
 							<LuLoader className="size-3 animate-spin text-muted-foreground" />
@@ -212,7 +214,7 @@ export function CommanderTab({
 							</Button>
 						</div>
 					)}
-				{transfer.captureForTerminalPreview.visible && (
+				{!isAutoLoop && transfer.captureForTerminalPreview.visible && (
 					<EditableTerminalPreview
 						text={transfer.captureForTerminalPreview.text}
 						hasTerminal={!!activeTerminal}
@@ -220,7 +222,7 @@ export function CommanderTab({
 						onCancel={transfer.dismissCaptureForTerminal}
 					/>
 				)}
-				{transfer.workerResponsePreview.visible && (
+				{!isAutoLoop && transfer.workerResponsePreview.visible && (
 					<WorkerResponsePreview
 						text={transfer.workerResponsePreview.text}
 						confidence={transfer.workerResponsePreview.confidence}
@@ -249,7 +251,8 @@ export function CommanderTab({
 						onCancel={transfer.handleCancelSessionDraft}
 					/>
 				)}
-				{transfer.autoRelayStatus === "watching" &&
+				{!isAutoLoop &&
+					transfer.autoRelayStatus === "watching" &&
 					!transfer.workerResponsePreview.visible && (
 						<div className="flex items-center gap-1.5 px-2 py-1 border-b bg-muted/30">
 							<LuLoader className="size-3 animate-spin text-muted-foreground" />
@@ -267,7 +270,8 @@ export function CommanderTab({
 							</Button>
 						</div>
 					)}
-				{transfer.capturePreview &&
+				{!isAutoLoop &&
+					transfer.capturePreview &&
 					!transfer.captureForTerminalPreview.visible && (
 						<CapturePreview
 							text={transfer.capturePreview}
@@ -297,6 +301,13 @@ export function CommanderTab({
 					handoffPrompt={transfer.handoffPreview.text}
 					autoRelayMode={autoRelayMode}
 					onAutoRelayModeChange={setAutoRelayMode}
+					autoLoopMaxTurns={transfer.autoLoopMaxTurns}
+					onAutoLoopMaxTurnsChange={transfer.setAutoLoopMaxTurns}
+					autoLoopTurn={transfer.autoLoopTurn}
+					autoLoopPhase={transfer.autoLoopPhase}
+					autoLoopLastAction={transfer.autoLoopLastAction}
+					autoLoopStopReason={transfer.autoLoopStopReason}
+					onStopAutoLoop={transfer.stopAutoLoop}
 					onTerminalSubmitBeforeSend={transfer.handleTerminalSubmitBeforeSend}
 					providerLabel={providerLabel}
 					hasProvider={!!currentProvider}
