@@ -1,4 +1,5 @@
 import { electronTrpcClient } from "renderer/lib/trpc-client";
+import { isDoyDeckNativeFileDragActive } from "renderer/stores/doydeck-native-file-drag";
 import type { BrowserLoadError } from "shared/tabs-types";
 import { sanitizeUrl } from "./sanitizeUrl";
 
@@ -92,7 +93,10 @@ class BrowserRuntimeRegistryImpl {
 
 		window.addEventListener(
 			"dragstart",
-			() => this.setWindowDragPassthrough(true),
+			() => {
+				if (isDoyDeckNativeFileDragActive()) return;
+				this.setWindowDragPassthrough(true);
+			},
 			true,
 		);
 		window.addEventListener(

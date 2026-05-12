@@ -9,6 +9,13 @@ declare global {
 	interface Window {
 		App: typeof API;
 		ipcRenderer: typeof ipcRendererAPI;
+		doydeckNativeFileDrag: {
+			start: (payload: {
+				rootId: string;
+				workspaceId?: string;
+				absolutePath: string;
+			}) => void;
+		};
 		webUtils: {
 			getPathForFile: (file: File) => string;
 		};
@@ -63,6 +70,13 @@ exposeElectronTRPC();
 
 contextBridge.exposeInMainWorld("App", API);
 contextBridge.exposeInMainWorld("ipcRenderer", ipcRendererAPI);
+contextBridge.exposeInMainWorld("doydeckNativeFileDrag", {
+	start: (payload: {
+		rootId: string;
+		workspaceId?: string;
+		absolutePath: string;
+	}) => ipcRenderer.send("doydeck:native-file-drag:start", payload),
+});
 contextBridge.exposeInMainWorld("webUtils", {
 	getPathForFile: (file: File) => webUtils.getPathForFile(file),
 });

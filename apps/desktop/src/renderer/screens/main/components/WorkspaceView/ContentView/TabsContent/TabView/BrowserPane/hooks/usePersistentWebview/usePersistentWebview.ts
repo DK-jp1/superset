@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { electronTrpc } from "renderer/lib/electron-trpc";
+import { isDoyDeckNativeFileDragActive } from "renderer/stores/doydeck-native-file-drag";
 import { useTabsStore } from "renderer/stores/tabs/store";
 
 // ---------------------------------------------------------------------------
@@ -46,7 +47,10 @@ function setWebviewsDragPassthrough(passthrough: boolean) {
 
 window.addEventListener(
 	"dragstart",
-	() => setWebviewsDragPassthrough(true),
+	() => {
+		if (isDoyDeckNativeFileDragActive()) return;
+		setWebviewsDragPassthrough(true);
+	},
 	true,
 );
 window.addEventListener(

@@ -16,6 +16,7 @@ import { createIPCHandler } from "trpc-electron/main";
 import { productName } from "~/package.json";
 import { appState } from "../lib/app-state";
 import { browserManager } from "../lib/browser/browser-manager";
+import { registerDoyDeckNativeFileDragIpc } from "../lib/doydeck-native-file-drag";
 import { createApplicationMenu } from "../lib/menu";
 import { playNotificationSound } from "../lib/notification-sound";
 import { NotificationManager } from "../lib/notifications/notification-manager";
@@ -129,6 +130,7 @@ export async function MainWindow() {
 	createApplicationMenu();
 
 	currentWindow = window;
+	registerDoyDeckNativeFileDragIpc();
 
 	// macOS Sequoia+: background throttling can corrupt GPU compositor layers
 	if (PLATFORM.IS_MAC) {

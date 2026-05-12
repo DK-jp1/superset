@@ -26,6 +26,7 @@ import {
 	PanelTopOpen,
 	RefreshCw,
 	Terminal as TerminalIcon,
+	UploadCloud,
 } from "lucide-react";
 import type { ComponentType } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -43,6 +44,7 @@ import {
 	sendSelectedPathToTerminalPreview,
 } from "renderer/stores/doydeck-commander-actions";
 import { useDoyDeckDropdownClose } from "renderer/stores/doydeck-dropdown-close-events";
+import { setDoyDeckNativeFileDragActive } from "renderer/stores/doydeck-native-file-drag";
 import { openDoyDeckCenterPreview } from "renderer/stores/doydeck-preview-openers";
 import type { CommanderSelectedPath } from "renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/components/WorkspaceSidebar/components/CommanderTab/commander-types";
 import { DoyDeckPreviewRenderer } from "./DoyDeckPreviewRenderer";
@@ -78,6 +80,7 @@ const MIN_LIST_HEIGHT_PX = 120;
 const MIN_PREVIEW_HEIGHT_PX = 160;
 const EXPLORER_SPLITTER_HEIGHT_PX = 8;
 const FILE_PATH_MIME = "application/x-superset-file-path";
+const NATIVE_FILE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 
 function getElementRect(element: HTMLElement | null) {
 	if (!element) return null;
@@ -414,6 +417,22 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		selectedPreviewFilePath,
 		selectedRelativePath,
 	]);
+	const selectedFileByteLength =
+		selectedPreviewFilePath === selectedPath
+			? previewQuery.data?.byteLength
+			: undefined;
+	const canStartNativeFileUploadDrag =
+		selectedKind === "file" &&
+		!!selectedPath &&
+		(selectedFileByteLength == null ||
+			selectedFileByteLength <= NATIVE_FILE_UPLOAD_MAX_BYTES);
+	const nativeFileUploadDisabledReason =
+		selectedKind !== "file"
+			? "Native upload drag is available for files only"
+			: selectedFileByteLength != null &&
+					selectedFileByteLength > NATIVE_FILE_UPLOAD_MAX_BYTES
+				? "Files over 10MB are not available for native Browser AI upload drag"
+				: "Drag to Browser AI to attach this file";
 
 	const handleToggleDirectory = (absolutePath: string) => {
 		setExpanded((prev) => {
@@ -449,6 +468,43 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		event.dataTransfer.setData("text/plain", absolutePath);
 		event.dataTransfer.setData(FILE_PATH_MIME, absolutePath);
 		event.dataTransfer.effectAllowed = "copy";
+	};
+
+	const handleNativeFileUploadPointerDown = () => {
+		if (!canStartNativeFileUploadDrag) return;
+		setDoyDeckNativeFileDragActive(true);
+	};
+
+	const resetNativeFileUploadDrag = () => {
+		setDoyDeckNativeFileDragActive(false);
+	};
+
+	const handleNativeFileUploadDragStart = (
+		event: React.DragEvent<HTMLElement>,
+	) => {
+		if (!selectedPath || selectedKind !== "file") {
+			event.preventDefault();
+			resetNativeFileUploadDrag();
+			return;
+		}
+		if (
+			selectedFileByteLength != null &&
+			selectedFileByteLength > NATIVE_FILE_UPLOAD_MAX_BYTES
+		) {
+			event.preventDefault();
+			resetNativeFileUploadDrag();
+			toast.error("Files over 10MB are not available for Browser AI upload drag");
+			return;
+		}
+
+		event.preventDefault();
+		setDoyDeckNativeFileDragActive(true);
+		window.doydeckNativeFileDrag.start({
+			rootId,
+			workspaceId,
+			absolutePath: selectedPath,
+		});
+		window.setTimeout(resetNativeFileUploadDrag, 10_000);
 	};
 
 	const handleOpenInCenterPreview = () => {
@@ -713,6 +769,34 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 							disabled={!selectedCommanderPath}
 							onClick={handleAddToSession}
 						/>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon"
+									className="size-7 shrink-0"
+									aria-disabled={!canStartNativeFileUploadDrag}
+									draggable={canStartNativeFileUploadDrag}
+									onPointerDown={handleNativeFileUploadPointerDown}
+									onPointerUp={resetNativeFileUploadDrag}
+									onPointerCancel={resetNativeFileUploadDrag}
+									onDragStart={handleNativeFileUploadDragStart}
+									onDragEnd={resetNativeFileUploadDrag}
+									onClick={(event) => {
+										event.preventDefault();
+										if (!canStartNativeFileUploadDrag) {
+											toast.info(nativeFileUploadDisabledReason);
+										}
+									}}
+								>
+									<UploadCloud className="size-3.5" />
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent side="bottom" showArrow={false}>
+								{nativeFileUploadDisabledReason}
+							</TooltipContent>
+						</Tooltip>
 						<DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
 							<Tooltip>
 								<TooltipTrigger asChild>

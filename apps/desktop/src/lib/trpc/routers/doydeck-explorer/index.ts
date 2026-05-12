@@ -1,4 +1,4 @@
-import { constants } from "node:fs";
+import fsSync, { constants } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -11,7 +11,7 @@ import { publicProcedure, router } from "../..";
 import { getWorkspace } from "../workspaces/utils/db-helpers";
 import { getWorkspacePath } from "../workspaces/utils/worktree";
 
-const rootIdSchema = z.enum([
+export const rootIdSchema = z.enum([
 	"home",
 	"desktop",
 	"downloads",
@@ -37,6 +37,7 @@ const EXCLUDED_ENTRY_NAMES = new Set([
 const TEXT_MAX_PREVIEW_BYTES = 1024 * 1024;
 const MEDIA_MAX_PREVIEW_BYTES = 10 * 1024 * 1024;
 const OFFICE_MAX_PREVIEW_BYTES = 10 * 1024 * 1024;
+export const DOYDECK_NATIVE_FILE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 const OFFICE_MAX_OUTPUT_CHARS = 80 * 1024;
 const OFFICE_MAX_ZIP_ENTRIES = 1000;
 const PPTX_MAX_SLIDES = 80;
@@ -414,6 +415,34 @@ function direntKind(entry: {
 
 function isBinaryBuffer(buffer: Buffer): boolean {
 	return buffer.includes(0);
+}
+
+export function validateDoyDeckExplorerNativeFileDragSync(input: {
+	rootId: string;
+	workspaceId?: string;
+	absolutePath: string;
+}): { targetPath: string; byteLength: number } {
+	const rootId = rootIdSchema.parse(input.rootId);
+	const rootPath = resolveRootPath(rootId, input.workspaceId);
+	const targetPath = resolveTargetPath(rootPath, input.absolutePath);
+	if (EXCLUDED_ENTRY_NAMES.has(path.basename(targetPath))) {
+		throw new Error("This path is not available in DoyDeck Explorer");
+	}
+
+	const stats = fsSync.lstatSync(targetPath);
+	if (!stats.isFile()) {
+		throw new Error("Native Browser AI upload drag supports files only");
+	}
+	if (stats.size > DOYDECK_NATIVE_FILE_UPLOAD_MAX_BYTES) {
+		throw new Error("File is too large for Browser AI upload drag");
+	}
+
+	const realPath = normalizeAbsolutePath(fsSync.realpathSync(targetPath));
+	if (!isPathWithinRoot(rootPath, realPath)) {
+		throw new Error("Symlink target is outside the selected Explorer root");
+	}
+
+	return { targetPath, byteLength: stats.size };
 }
 
 export const createDoyDeckExplorerRouter = () => {
