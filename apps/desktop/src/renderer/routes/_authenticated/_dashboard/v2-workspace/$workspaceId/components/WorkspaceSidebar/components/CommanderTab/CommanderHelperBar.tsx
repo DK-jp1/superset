@@ -237,6 +237,7 @@ export function CommanderHelperBar({
 							}
 							className="h-5 w-14 rounded border border-border bg-background px-1 text-[9px]"
 							title="Max Turns"
+							data-testid="auto-loop-max-turns-selector"
 						>
 							{AUTO_LOOP_MAX_TURN_OPTIONS.map((option) => (
 								<option key={option} value={option}>
@@ -255,6 +256,7 @@ export function CommanderHelperBar({
 							size="sm"
 							className="h-5 px-1 text-[9px]"
 							onClick={() => onStopAutoLoop("Stopped by Doy")}
+							data-testid="auto-loop-stop-button"
 						>
 							Stop
 						</Button>
@@ -405,7 +407,7 @@ export function CommanderHelperBar({
 					>
 						Diag
 					</Button>
-					<span>
+					<span data-testid="auto-loop-phase">
 						Phase: {AUTO_LOOP_PHASE_LABELS[autoLoopPhase]}
 					</span>
 					{autoLoopLastAction && (
@@ -415,7 +417,10 @@ export function CommanderHelperBar({
 						<span className="ml-2">Activity: {lastActivityLabel}</span>
 					)}
 					{autoLoopStopReason && (
-						<span className="ml-2 text-amber-600 dark:text-amber-400">
+						<span
+							className="ml-2 text-amber-600 dark:text-amber-400"
+							data-testid="auto-loop-stop-reason"
+						>
 							Stopped: {autoLoopStopReason}
 						</span>
 					)}

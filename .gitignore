@@ -46,6 +46,7 @@ mise.toml
 tmp/doydeck-visual-qa/
 tmp/doydeck-interaction-qa/
 tmp/doydeck-electron-qa/
+tmp/doydeck-meta-qa/
 
 # Turbo
 .turbo
