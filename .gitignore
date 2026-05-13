@@ -44,6 +44,7 @@ mise.toml
 # Temporary files
 .tmp/
 tmp/doydeck-visual-qa/
+tmp/doydeck-interaction-qa/
 
 # Turbo
 .turbo
