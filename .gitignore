@@ -47,6 +47,7 @@ tmp/doydeck-visual-qa/
 tmp/doydeck-interaction-qa/
 tmp/doydeck-electron-qa/
 tmp/doydeck-meta-qa/
+tmp/doydeck-real-agent-qa/
 
 # Turbo
 .turbo

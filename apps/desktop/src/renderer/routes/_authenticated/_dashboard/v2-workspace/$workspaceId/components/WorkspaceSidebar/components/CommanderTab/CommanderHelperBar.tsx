@@ -200,6 +200,7 @@ export function CommanderHelperBar({
 							? "bg-primary/10 text-primary"
 							: "bg-muted text-muted-foreground",
 					)}
+					data-testid="browser-provider-status"
 				>
 					{providerLabel}
 				</span>
@@ -210,6 +211,7 @@ export function CommanderHelperBar({
 							? "bg-green-500/10 text-green-600 dark:text-green-400"
 							: "bg-muted text-muted-foreground",
 					)}
+					data-testid="terminal-active-marker"
 				>
 					{activeTerminal ? "Term ✓" : "Term ✗"}
 				</span>

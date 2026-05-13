@@ -25,6 +25,7 @@
 		"visual-qa:doydeck": "bash scripts/doydeck-visual-qa.sh",
 		"electron-qa:doydeck": "node scripts/doydeck-electron-qa.mjs",
 		"meta-qa:doydeck": "node scripts/doydeck-meta-qa.mjs",
+		"real-agent-qa:doydeck": "node scripts/doydeck-real-agent-qa.mjs",
 		"compile:app": "cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-vite build && bun run scripts/check-pty-daemon-bundle.ts",
 		"check:pty-daemon-bundle": "bun run scripts/check-pty-daemon-bundle.ts",
 		"copy:native-modules": "bun run scripts/copy-native-modules.ts",
