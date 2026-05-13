@@ -220,6 +220,7 @@ export function CommanderHelperBar({
 					}
 					className="h-5 max-w-28 rounded border border-border bg-background px-1 text-[9px]"
 					title="Auto Mode"
+					data-testid="commander-auto-mode-selector"
 				>
 					<option value="off">Manual</option>
 					<option value="preview">Auto Relay Preview</option>
@@ -266,6 +267,7 @@ export function CommanderHelperBar({
 							variant="ghost"
 							size="sm"
 							className="h-5 gap-0.5 text-[10px] px-1.5"
+							data-testid="commander-actions-button"
 						>
 							Actions
 							<LuChevronDown className="size-2.5" />
@@ -278,11 +280,15 @@ export function CommanderHelperBar({
 						<DropdownMenuItem
 							disabled={!hasProvider}
 							onSelect={onSendBrowserAiStarterPrompt}
+							data-testid="commander-send-starter-prompt"
 						>
 							<LuZap className="size-3.5" />
 							Send Starter Prompt
 						</DropdownMenuItem>
-						<DropdownMenuItem onSelect={onCopyBrowserAiStarterPrompt}>
+						<DropdownMenuItem
+							onSelect={onCopyBrowserAiStarterPrompt}
+							data-testid="commander-copy-starter-prompt"
+						>
 							<LuClipboard className="size-3.5" />
 							Copy Starter Prompt
 						</DropdownMenuItem>
@@ -395,6 +401,7 @@ export function CommanderHelperBar({
 						size="sm"
 						className="mr-1 h-5 px-1 text-[9px]"
 						onClick={() => setDiagnosticsOpen((open) => !open)}
+						data-testid="commander-diag-button"
 					>
 						Diag
 					</Button>
@@ -413,7 +420,10 @@ export function CommanderHelperBar({
 						</span>
 					)}
 					{diagnosticsOpen && (
-						<div className="mt-1 max-h-36 overflow-y-auto rounded border bg-background/80 p-1.5 text-[9px] leading-4">
+						<div
+							className="mt-1 max-h-36 overflow-y-auto rounded border bg-background/80 p-1.5 text-[9px] leading-4"
+							data-testid="commander-diagnostics-panel"
+						>
 							<div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
 								<span>
 									Phase: {AUTO_LOOP_PHASE_LABELS[autoLoopPhase]}

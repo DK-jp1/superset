@@ -104,6 +104,7 @@ export function WorkspaceSidebarHeader({
 						<button
 							type="button"
 							onClick={handleExplorerClick}
+							data-testid="left-sidebar-explorer-switch"
 							className={cn(
 								"flex items-center justify-center size-8 rounded-md transition-colors",
 								activeView === "explorer"
@@ -162,6 +163,7 @@ export function WorkspaceSidebarHeader({
 			<button
 				type="button"
 				onClick={handleExplorerClick}
+				data-testid="left-sidebar-explorer-switch"
 				className={cn(
 					"flex items-center gap-2 px-2 py-1.5 w-full rounded-md transition-colors",
 					activeView === "explorer"

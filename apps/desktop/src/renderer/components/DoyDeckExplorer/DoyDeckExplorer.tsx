@@ -583,6 +583,7 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 			<div
 				ref={explorerRootRef}
 				className="flex h-full min-h-0 flex-col overflow-hidden bg-background"
+				data-testid="doydeck-explorer-root"
 			>
 			<div className="flex shrink-0 items-center gap-2 border-b px-2 py-2">
 				<Select
@@ -807,6 +808,7 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 											size="sm"
 											className="h-7 shrink-0 gap-1 px-1.5 text-[10px]"
 											disabled={!selectedCommanderPath}
+											data-testid="doydeck-explorer-actions-button"
 										>
 											Actions
 											<ChevronsUpDown className="size-3" />

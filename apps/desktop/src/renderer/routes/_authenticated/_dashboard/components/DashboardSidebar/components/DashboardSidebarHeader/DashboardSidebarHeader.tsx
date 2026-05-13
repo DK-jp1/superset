@@ -158,6 +158,7 @@ export function DashboardSidebarHeader({
 						<button
 							type="button"
 							onClick={handleExplorerClick}
+							data-testid="left-sidebar-explorer-switch"
 							className={cn(
 								"flex size-8 items-center justify-center rounded-md transition-colors",
 								activeView === "explorer"
@@ -297,6 +298,7 @@ export function DashboardSidebarHeader({
 			<button
 				type="button"
 				onClick={handleExplorerClick}
+				data-testid="left-sidebar-explorer-switch"
 				className={cn(
 					"flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium transition-colors",
 					activeView === "explorer"

@@ -459,6 +459,7 @@ export const Terminal = memo(function Terminal({
 			style={{ backgroundColor: terminalBg }}
 			onDragOver={handleDragOver}
 			onDrop={handleDrop}
+			data-testid="terminal-pane"
 		>
 			<TerminalSearch
 				searchAddon={searchAddonRef.current}

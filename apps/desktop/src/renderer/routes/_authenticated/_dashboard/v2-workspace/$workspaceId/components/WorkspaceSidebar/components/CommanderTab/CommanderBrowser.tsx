@@ -140,7 +140,10 @@ export function CommanderBrowser({
 					</Button>
 				))}
 			</div>
-			<div className="flex-1 min-h-0 relative">
+			<div
+				className="flex-1 min-h-0 relative"
+				data-testid="commander-browser-area"
+			>
 				<div ref={containerRef} className="absolute inset-0" />
 				{isBlank && (
 					<div className="absolute inset-0 flex items-center justify-center bg-background z-10">
