@@ -87,8 +87,15 @@ function installDoyDeckTerminalOutputLogAccessor(): void {
 	const target = globalThis as typeof globalThis & {
 		__doydeckGetTerminalOutputLogs?: () => Array<{
 			paneId: string;
+			baseOffset: number;
 			offset: number;
+			outputText: string;
 			text: string;
+			screenText: string;
+			viewportText: string;
+			rows: number;
+			viewportY: number;
+			baseY: number;
 		}>;
 		__doydeckQaWriteTerminal?: (paneId: string, data: string) => Promise<void>;
 	};
@@ -102,10 +109,29 @@ function installDoyDeckTerminalOutputLogAccessor(): void {
 				const line = buffer.getLine(i)?.translateToString(true).trimEnd();
 				if (line) lines.push(line);
 			}
+			const viewportLines: string[] = [];
+			const rows = entry.xterm.rows;
+			const viewportY = buffer.viewportY;
+			const baseY = buffer.baseY;
+			const viewportStart = Math.max(0, viewportY);
+			const viewportEnd = Math.min(buffer.length, viewportStart + rows);
+			for (let i = viewportStart; i < viewportEnd; i += 1) {
+				const line = buffer.getLine(i)?.translateToString(true).trimEnd();
+				if (line) viewportLines.push(line);
+			}
+			const screenText = lines.join("\n");
+			const viewportText = viewportLines.join("\n");
 			return {
 				paneId,
+				baseOffset: log.baseOffset,
 				offset: log.baseOffset + log.text.length,
-				text: [log.text, lines.join("\n")].filter(Boolean).join("\n"),
+				outputText: log.text,
+				text: [log.text, screenText].filter(Boolean).join("\n"),
+				screenText,
+				viewportText,
+				rows,
+				viewportY,
+				baseY,
 			};
 		});
 	target.__doydeckQaWriteTerminal = async (paneId: string, data: string) => {

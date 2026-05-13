@@ -54,6 +54,9 @@ const providerPreference =
 		"chatgpt"
 	).toLowerCase();
 const maxWaitMs = Number(process.env.DOYDECK_REAL_AGENT_QA_MAX_WAIT_MS || 600000);
+const composerWaitMs = Number(
+	process.env.DOYDECK_REAL_AGENT_QA_COMPOSER_WAIT_MS || 120000,
+);
 const codexReadinessProbePrompt =
 	"Codex Worker readiness checkです。次の1行だけ返してください: CODEX_WORKER_READY";
 
@@ -125,6 +128,10 @@ const prepareSummary = {
 	terminalStateReason: "",
 	readinessActionSkippedReason: "",
 	readinessPreconditionScreenshot: "",
+	terminalReadinessAttempts: [],
+	composerReadinessAttempts: [],
+	composerWaitMs,
+	composerFinalResult: "(not evaluated)",
 };
 
 function record(status, name, detail) {
@@ -377,6 +384,59 @@ async function sampleDiagnostics(page, label) {
 	return item;
 }
 
+async function waitForBrowserComposerReady(page, provider) {
+	const startedAt = Date.now();
+	let attempt = 0;
+	let openedNewChat = false;
+	let lastProbe = { ok: false, value: null, error: "not probed" };
+	while (Date.now() - startedAt <= composerWaitMs) {
+		attempt += 1;
+		lastProbe = await executeInWebview(page, composerProbeScript);
+		const elapsedMs = Date.now() - startedAt;
+		if (lastProbe.ok && lastProbe.value?.ok) {
+			prepareSummary.composerReadinessAttempts.push({
+				attempt,
+				status: "ready",
+				elapsedMs,
+				detail: `Composer visible: ${lastProbe.value.selector}`,
+				screenshot: "",
+			});
+			prepareSummary.composerFinalResult = `Composer visible: ${lastProbe.value.selector}`;
+			return { ready: true, probe: lastProbe };
+		}
+		const detail = lastProbe.ok
+			? JSON.stringify(lastProbe.value).slice(0, 500)
+			: lastProbe.error;
+		let screenshot = "";
+		if (attempt === 1 || elapsedMs + 5000 > composerWaitMs) {
+			screenshot = await capture(page, `composer-wait-attempt-${attempt}`);
+		}
+		prepareSummary.composerReadinessAttempts.push({
+			attempt,
+			status: "waiting",
+			elapsedMs,
+			detail,
+			screenshot,
+		});
+		if (!openedNewChat) {
+			const openNewChat = await executeInWebview(page, openNewChatScript);
+			if (openNewChat.ok && openNewChat.value?.ok) {
+				openedNewChat = true;
+				record("PASS", "Browser AI new chat", `Opened new chat: ${openNewChat.value.text}`);
+				await page.waitForTimeout(3000);
+				await capture(page, "02-new-chat-opened");
+				continue;
+			}
+		}
+		await page.waitForTimeout(5000);
+	}
+	const finalDetail = lastProbe.ok
+		? JSON.stringify(lastProbe.value).slice(0, 500)
+		: lastProbe.error;
+	prepareSummary.composerFinalResult = `Browser AI composer loading timeout: ${finalDetail}`;
+	return { ready: false, probe: lastProbe };
+}
+
 async function focusTerminalForInput(page) {
 	const focused = await page.evaluate(() => {
 		const terminalPane = document.querySelector('[data-testid="terminal-pane"]');
@@ -421,6 +481,39 @@ async function getPrimaryTerminalPaneId(page) {
 	return typeof sorted[0]?.paneId === "string" ? sorted[0].paneId : "";
 }
 
+async function getPrimaryTerminalLog(page) {
+	const logs = await getQaTerminalLogs(page).catch(() => []);
+	if (!Array.isArray(logs) || logs.length === 0) return null;
+	const sorted = [...logs].sort((a, b) => {
+		const aOffset = typeof a.offset === "number" ? a.offset : 0;
+		const bOffset = typeof b.offset === "number" ? b.offset : 0;
+		return bOffset - aOffset;
+	});
+	return sorted[0] || null;
+}
+
+async function readTerminalOutputSince(page, paneId, markerOffset) {
+	const logs = await getQaTerminalLogs(page).catch(() => []);
+	if (!Array.isArray(logs) || logs.length === 0) return "";
+	const match =
+		logs.find((log) => log.paneId === paneId) ||
+		[...logs].sort((a, b) => {
+			const aOffset = typeof a.offset === "number" ? a.offset : 0;
+			const bOffset = typeof b.offset === "number" ? b.offset : 0;
+			return bOffset - aOffset;
+		})[0];
+	if (!match) return "";
+	const baseOffset = typeof match.baseOffset === "number" ? match.baseOffset : 0;
+	const outputText =
+		typeof match.outputText === "string"
+			? match.outputText
+			: typeof match.text === "string"
+				? match.text
+				: "";
+	const start = Math.max(0, markerOffset - baseOffset);
+	return outputText.slice(start);
+}
+
 async function writeTerminalViaQaAccessor(page, paneId, data) {
 	return page.evaluate(
 		async ({ paneId: targetPaneId, data: targetData }) => {
@@ -443,6 +536,38 @@ async function sendTerminalLineViaRuntime(page, line) {
 	await page.waitForTimeout(150);
 	await writeTerminalViaQaAccessor(page, paneId, "\r");
 	return paneId;
+}
+
+async function readTerminalScreenText(page) {
+	return page.evaluate(() => {
+		const debugAccessor = window.__doydeckGetTerminalOutputLogs;
+		if (typeof debugAccessor === "function") {
+			const logs = debugAccessor();
+			const sortedLogs = Array.isArray(logs)
+				? [...logs].sort((a, b) => {
+						const aOffset = typeof a.offset === "number" ? a.offset : 0;
+						const bOffset = typeof b.offset === "number" ? b.offset : 0;
+						return bOffset - aOffset;
+					})
+				: [];
+			const latest = sortedLogs[0];
+			if (typeof latest?.viewportText === "string" && latest.viewportText.trim()) {
+				return latest.viewportText;
+			}
+			if (typeof latest?.screenText === "string" && latest.screenText.trim()) {
+				return latest.screenText;
+			}
+		}
+		const terminalPane = document.querySelector('[data-testid="terminal-pane"]');
+		const parts = [];
+		const rows = terminalPane?.querySelector(".xterm-rows");
+		if (rows instanceof HTMLElement && rows.innerText) parts.push(rows.innerText);
+		const screen = terminalPane?.querySelector(".xterm-screen");
+		if (screen instanceof HTMLElement && screen.innerText) parts.push(screen.innerText);
+		const paneText = terminalPane?.textContent || "";
+		if (paneText) parts.push(paneText);
+		return parts.join("\n");
+	});
 }
 
 async function readTerminalVisibleText(page) {
@@ -504,7 +629,7 @@ function classifyHooksApprovalPrompt(text) {
 	return "";
 }
 
-function analyzeCodexTerminalState(text) {
+function analyzeCodexTerminalState(text, { mode = "screen" } = {}) {
 	const cleaned = cleanTerminalText(text);
 	const normalized = cleaned.replace(/\s+/g, " ").trim();
 	const lines = cleaned
@@ -518,57 +643,87 @@ function analyzeCodexTerminalState(text) {
 		/(›|\/model\s+to\s+change|permissions:\s*YOLO|gpt-5|hooks?\s+need\s+review|Open\s+\/hooks\s+to\s+review)/i.test(
 			tail,
 		);
-	const shell =
-		tailLines.some((line) =>
-			/(^|[\s:])(?:[^\s@]+@[^\s]+\s+)?[^\s]*\s*[~\/\w.-]*\s*[%$]\s*$/.test(
-				line,
-			),
-		) || /(?:^|\n)[^\n]*\s[%$]\s*$/.test(tail);
+	const shellLines = tailLines.filter((line) =>
+		/(^|[\s:])(?:[^\s@]+@[^\s]+\s+)?[^\s]*\s*[~\/\w.-]*\s*[%$]\s*$/.test(
+			line,
+		),
+	);
+	const latestMeaningfulLine = tailLines.at(-1) || "";
+	const latestLineShell =
+		/(^|[\s:])(?:[^\s@]+@[^\s]+\s+)?[^\s]*\s*[~\/\w.-]*\s*[%$]\s*$/.test(
+			latestMeaningfulLine,
+		);
+	const currentShell = latestLineShell || /(?:^|\n)[^\n]*\s[%$]\s*$/.test(tail);
+	const staleShell = shellLines.length > 0 && !currentShell;
+	const shell = mode === "full" ? shellLines.length > 0 : currentShell;
 	const codexCliError =
 		/\berror:\s+unrecognized subcommand\b/i.test(tail) ||
 		/\bUsage:\s+codex\b/i.test(tail);
-	return { codexTui, shell, codexCliError, tail };
+	return {
+		codexTui,
+		shell,
+		currentShell,
+		latestLineShell,
+		staleShell,
+		codexCliError,
+		tail,
+		latestMeaningfulLine,
+	};
 }
 
 async function observeTerminalState(page, label) {
-	const text = await readTerminalVisibleText(page).catch(() => "");
-	const state = analyzeCodexTerminalState(text);
-	let terminalState = "unknown";
-	let reason = "Terminal state could not be classified";
-	if (state.codexCliError) {
-		terminalState = "codex-exited-or-cli-error";
-		reason = state.shell
-			? "Codex CLI error and shell prompt detected in recent terminal output"
-			: "Codex CLI error detected in recent terminal output";
-	} else if (state.shell && !state.codexTui) {
-		terminalState = "shell";
-		reason = "Recent terminal output looks like a shell prompt, not Codex interactive UI";
-	} else if (state.codexTui && !state.shell) {
-		terminalState = "codex-interactive";
-		reason = "Recent terminal output looks like Codex interactive UI";
-	} else if (state.codexTui && state.shell) {
-		terminalState = "ambiguous";
-		reason = "Both Codex UI and shell prompt signals were detected in recent terminal output";
-	}
-	prepareSummary.terminalState = terminalState;
+	const text = await readTerminalScreenText(page).catch(() => "");
+	const state = classifyTerminalReadinessState(
+		analyzeCodexTerminalState(text, { mode: "screen" }),
+	);
+	prepareSummary.terminalState = state.terminalState;
 	prepareSummary.terminalLookedLikeShell = state.shell ? "yes" : "no";
-	prepareSummary.terminalLookedLikeCodexInteractive = state.codexTui
-		? "yes"
-		: "no";
-	prepareSummary.terminalStateReason = reason;
+	prepareSummary.terminalLookedLikeCodexInteractive = state.codexTui ? "yes" : "no";
+	prepareSummary.terminalStateReason = state.reason;
 	if (label) {
 		record(
-			terminalState === "codex-interactive" ? "PASS" : "BLOCKED",
+			state.codexInteractive ? "PASS" : "BLOCKED",
 			label,
-			reason,
+			state.reason,
 		);
 	}
 	return {
 		...state,
 		text,
+	};
+}
+
+function classifyTerminalReadinessState(state) {
+	let terminalState = "unknown";
+	let reason = "Terminal state could not be classified";
+	if (state.codexCliError) {
+		terminalState = "codex-exited-or-cli-error";
+		reason = state.currentShell
+			? "Codex CLI error and current shell prompt detected"
+			: "Codex CLI error detected in recent terminal output";
+	} else if (state.currentShell && (!state.codexTui || state.latestLineShell)) {
+		terminalState = "shell-current";
+		reason = state.codexTui
+			? "Terminal latest line is a shell prompt; Codex UI appears only in scrollback"
+			: "Terminal currently looks like a shell prompt, not Codex interactive UI";
+	} else if (state.codexTui && !state.currentShell) {
+		terminalState = state.staleShell ? "codex-ui-visible-shell-stale" : "codex-ui-visible";
+		reason = state.staleShell
+			? "Codex UI is visible; shell prompt appears stale in surrounding output"
+			: "Codex UI is visible and no current shell prompt was detected";
+	} else if (state.codexTui && state.currentShell) {
+		terminalState = "ambiguous";
+		reason = "Codex UI and current shell prompt signals were both detected";
+	}
+	return {
+		...state,
 		terminalState,
 		reason,
-		codexInteractive: terminalState === "codex-interactive",
+		codexInteractive:
+			(terminalState === "codex-ui-visible" ||
+				terminalState === "codex-ui-visible-shell-stale") &&
+			!state.codexCliError,
+		shell: state.currentShell,
 	};
 }
 
@@ -611,9 +766,19 @@ async function observeQaStep(page, name, plannedAction) {
 	const terminalText = await readTerminalVisibleText(page).catch(
 		(error) => `Failed to read terminal text: ${error?.message || error}`,
 	);
+	const terminalScreenText = await readTerminalScreenText(page).catch(
+		(error) => `Failed to read terminal screen text: ${error?.message || error}`,
+	);
 	const terminalTextPath = join(observationsDir, `${slug}-terminal.txt`);
 	writeFileSync(terminalTextPath, `${terminalText}\n`);
-	const terminalAnalysis = analyzeCodexTerminalState(terminalText);
+	const terminalScreenTextPath = join(observationsDir, `${slug}-terminal-screen.txt`);
+	writeFileSync(terminalScreenTextPath, `${terminalScreenText}\n`);
+	const terminalAnalysis = analyzeCodexTerminalState(terminalScreenText, {
+		mode: "screen",
+	});
+	const terminalFullAnalysis = analyzeCodexTerminalState(terminalText, {
+		mode: "full",
+	});
 	const domState = await readDomState(page).catch((error) => ({
 		error: error?.message || String(error),
 	}));
@@ -623,7 +788,9 @@ async function observeQaStep(page, name, plannedAction) {
 		plannedAction,
 		screenshot,
 		terminalTextPath,
+		terminalScreenTextPath,
 		terminalState: terminalAnalysis,
+		terminalFullState: terminalFullAnalysis,
 		domState,
 		consoleErrorCount: consoleErrors.length,
 		pageErrorCount: pageErrors.length,
@@ -662,14 +829,28 @@ function hasCodexHooksWarning(text) {
 }
 
 function hasCodexReadinessProbeResponse(text) {
-	return /(^|\n)\s*CODEX_WORKER_READY\s*($|\n)/.test(cleanTerminalText(text));
+	return /(^|\n)\s*(?:[•*\-›]+\s*)?(?:CODEX_WORKER_READY|READY)\s*($|\n)/.test(
+		cleanTerminalText(text),
+	);
 }
 
-function classifyWorkerFromTerminalText(text) {
+function classifyWorkerFromTerminalText(text, { preferCurrentShell = false } = {}) {
 	const normalized = cleanTerminalText(text).replace(/\s+/g, " ").trim();
+	const currentState = classifyTerminalReadinessState(
+		analyzeCodexTerminalState(text, { mode: "screen" }),
+	);
 	const codexLaunchCommandPattern =
 		/\bcodex\s+--dangerously-bypass-approvals-and-sandbox\b/i;
 	const hooksWarningDetected = hasCodexHooksWarning(text);
+	if (preferCurrentShell && currentState.terminalState === "shell-current") {
+		return {
+			ready: false,
+			type: "shell",
+			state: "not-started",
+			reason: currentState.reason,
+			hooksWarningDetected,
+		};
+	}
 	if (!normalized) {
 		return {
 			ready: false,
@@ -952,39 +1133,40 @@ async function probeCodexWorkerReadiness(page, workerStatus) {
 		: "no";
 	if (!shouldProbeCodexReadiness(workerStatus)) return workerStatus;
 
-	const observation = await observeQaStep(
-		page,
-		"Before readiness probe",
-		"send CODEX_WORKER_READY readiness probe",
-	);
-	prepareSummary.readinessPreconditionScreenshot = observation.screenshot;
-	const terminalState = {
-		...observation.terminalState,
-		terminalState: observation.terminalState.codexCliError
-			? "codex-exited-or-cli-error"
-			: observation.terminalState.shell && !observation.terminalState.codexTui
-				? "shell"
-				: observation.terminalState.codexTui && !observation.terminalState.shell
-					? "codex-interactive"
-					: observation.terminalState.codexTui && observation.terminalState.shell
-						? "ambiguous"
-						: "unknown",
-		reason: observation.terminalState.codexCliError
-			? observation.terminalState.shell
-				? "Codex CLI error and shell prompt detected in recent terminal output"
-				: "Codex CLI error detected in recent terminal output"
-			: observation.terminalState.shell && !observation.terminalState.codexTui
-				? "Recent terminal output looks like a shell prompt, not Codex interactive UI"
-				: observation.terminalState.codexTui && !observation.terminalState.shell
-					? "Recent terminal output looks like Codex interactive UI"
-					: observation.terminalState.codexTui && observation.terminalState.shell
-						? "Both Codex UI and shell prompt signals were detected in recent terminal output"
-						: "Terminal state could not be classified",
-		codexInteractive:
-			observation.terminalState.codexTui &&
-			!observation.terminalState.shell &&
-			!observation.terminalState.codexCliError,
-	};
+	let observation = null;
+	let terminalState = null;
+	for (let attempt = 1; attempt <= 3; attempt += 1) {
+		observation = await observeQaStep(
+			page,
+			attempt === 1
+				? "Before readiness probe"
+				: `Before readiness probe retry ${attempt}`,
+			"send CODEX_WORKER_READY readiness probe",
+		);
+		terminalState = classifyTerminalReadinessState(observation.terminalState);
+		prepareSummary.terminalReadinessAttempts.push({
+			attempt,
+			state: terminalState.terminalState,
+			reason: terminalState.reason,
+			screenshot: observation.screenshot,
+			terminalTextPath: observation.terminalTextPath,
+			terminalScreenTextPath: observation.terminalScreenTextPath,
+		});
+		prepareSummary.readinessPreconditionScreenshot = observation.screenshot;
+		if (terminalState.codexInteractive) break;
+		if (
+			terminalState.terminalState === "shell-current" ||
+			terminalState.terminalState === "codex-exited-or-cli-error"
+		) {
+			break;
+		}
+		decideObservation(
+			observation,
+			"RETRY",
+			`${terminalState.reason}; waiting before next terminal readiness observation`,
+		);
+		await page.waitForTimeout(2500);
+	}
 	prepareSummary.terminalState = terminalState.terminalState;
 	prepareSummary.terminalLookedLikeShell = terminalState.shell ? "yes" : "no";
 	prepareSummary.terminalLookedLikeCodexInteractive = terminalState.codexTui
@@ -998,12 +1180,12 @@ async function probeCodexWorkerReadiness(page, workerStatus) {
 	);
 	if (!terminalState.codexInteractive) {
 		const reason =
-			terminalState.terminalState === "shell"
-				? "Terminal is shell, not Codex worker"
+			terminalState.terminalState === "shell-current"
+				? "Terminal currently shell, not Codex worker"
 				: terminalState.terminalState === "codex-exited-or-cli-error"
 					? "Codex process exited to shell before readiness probe"
 					: terminalState.terminalState === "ambiguous"
-						? "Codex worker not interactive; shell prompt is also visible"
+						? "Codex readiness ambiguous after retries"
 						: "Codex worker not interactive";
 		decideObservation(observation, "BLOCKED", reason);
 		prepareSummary.readinessActionSkippedReason = reason;
@@ -1026,11 +1208,32 @@ async function probeCodexWorkerReadiness(page, workerStatus) {
 		"Codex readiness probe sent",
 		"Sending CODEX_WORKER_READY probe to verify actual Worker responsiveness",
 	);
-	await sendTerminalLineViaRuntime(page, codexReadinessProbePrompt);
+	const markerLog = await getPrimaryTerminalLog(page);
+	const markerPaneId =
+		typeof markerLog?.paneId === "string" ? markerLog.paneId : "";
+	const markerOffset =
+		typeof markerLog?.offset === "number" ? markerLog.offset : 0;
+	const targetPaneId = await sendTerminalLineViaRuntime(page, codexReadinessProbePrompt);
 	await page.waitForTimeout(45_000);
 	await capture(page, "02b-codex-readiness-probe");
 	const terminalText = await readTerminalVisibleText(page).catch(() => "");
-	if (hasCodexReadinessProbeResponse(terminalText)) {
+	const terminalScreenText = await readTerminalScreenText(page).catch(() => "");
+	const probeDelta = await readTerminalOutputSince(
+		page,
+		markerPaneId || targetPaneId,
+		markerOffset,
+	);
+	const afterProbeState = classifyTerminalReadinessState(
+		analyzeCodexTerminalState(terminalScreenText, { mode: "screen" }),
+	);
+	const probeResponseDetected =
+		hasCodexReadinessProbeResponse(probeDelta) ||
+		(terminalScreenText.includes(codexReadinessProbePrompt) &&
+			hasCodexReadinessProbeResponse(terminalScreenText));
+	if (
+		probeResponseDetected &&
+		afterProbeState.codexInteractive
+	) {
 		prepareSummary.readinessProbeResponse = "detected";
 		record(
 			"PASS",
@@ -1048,18 +1251,21 @@ async function probeCodexWorkerReadiness(page, workerStatus) {
 		};
 	}
 	prepareSummary.readinessProbeResponse = "not detected";
+	const blockedReason = probeResponseDetected
+		? `Codex responded to readiness probe, but is not interactive after response: ${afterProbeState.reason}`
+		: "CODEX_WORKER_READY was not detected after readiness probe";
 	record(
 		"BLOCKED",
 		"Codex readiness probe response",
-		"CODEX_WORKER_READY was not detected after readiness probe",
+		blockedReason,
 	);
 	return {
 		...workerStatus,
 		ready: false,
 		state: "worker-not-responding",
 		reason: workerStatus.hooksWarningDetected
-			? "Codex hooks warning was detected, and readiness probe did not receive CODEX_WORKER_READY"
-			: "Codex readiness probe did not receive CODEX_WORKER_READY",
+			? `Codex hooks warning was detected. ${blockedReason}`
+			: blockedReason,
 		nextAction:
 			"DoyDeck TerminalでCodexが入力を受け付け、応答できる状態か確認してください。",
 	};
@@ -1131,9 +1337,12 @@ async function maybeStartWorker(page, workerStatus) {
 	await page.waitForTimeout(20_000);
 	await capture(page, "02-worker-prepare-command");
 	const terminalText =
+		(await readTerminalScreenText(page).catch(() => "")) ||
 		(await readTerminalVisibleText(page).catch(() => "")) ||
 		(await terminal.textContent({ timeout: 5000 }).catch(() => ""));
-	const nextStatus = classifyWorkerFromTerminalText(terminalText);
+	const nextStatus = classifyWorkerFromTerminalText(terminalText, {
+		preferCurrentShell: true,
+	});
 	prepareSummary.hooksWarningDetected = nextStatus.hooksWarningDetected
 		? "yes"
 		: "no";
@@ -1173,6 +1382,7 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 	body.push(`- Approve Codex hooks: \`${approveHooks ? "yes" : "no"}\``);
 	body.push("- QA-only terminal output accessor: `enabled`");
 	body.push(`- Max wait ms: \`${maxWaitMs}\``);
+	body.push(`- Composer wait ms: \`${composerWaitMs}\``);
 	body.push(`- Electron executable: \`${electronPath}\``);
 	body.push(`- App launch target: \`${appLaunchTarget}\``);
 	body.push(`- Report: \`${reportPath}\``);
@@ -1212,6 +1422,7 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 			`- readiness precondition screenshot: \`${prepareSummary.readinessPreconditionScreenshot}\``,
 		);
 	}
+	body.push(`- composer final result: ${prepareSummary.composerFinalResult}`);
 	body.push(`- prepare result: ${prepareSummary.prepareResult}`);
 	if (prepareSummary.blockedReason) {
 		body.push(`- blocked reason: ${prepareSummary.blockedReason}`);
@@ -1263,6 +1474,26 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 		body.push(prepareSummary.approvalPrompt);
 		body.push("```");
 	}
+	body.push("", "### Terminal readiness attempts", "");
+	if (prepareSummary.terminalReadinessAttempts.length === 0) {
+		body.push("- none");
+	} else {
+		for (const attempt of prepareSummary.terminalReadinessAttempts) {
+			body.push(
+				`- attempt ${attempt.attempt}: ${attempt.state} — ${attempt.reason}; screenshot=\`${rel(attempt.screenshot)}\`; screen=\`${rel(attempt.terminalScreenTextPath)}\`; output=\`${rel(attempt.terminalTextPath)}\``,
+			);
+		}
+	}
+	body.push("", "### Browser AI composer attempts", "");
+	if (prepareSummary.composerReadinessAttempts.length === 0) {
+		body.push("- none");
+	} else {
+		for (const attempt of prepareSummary.composerReadinessAttempts) {
+			body.push(
+				`- attempt ${attempt.attempt}: ${attempt.status} — ${attempt.detail}; elapsed=${attempt.elapsedMs}ms${attempt.screenshot ? `; screenshot=\`${rel(attempt.screenshot)}\`` : ""}`,
+			);
+		}
+	}
 	body.push("", "## Screenshots", "");
 	if (screenshots.length === 0) {
 		body.push("- none");
@@ -1282,7 +1513,9 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 				`- planned next action: ${observation.plannedAction}`,
 				`- screenshot: \`${rel(observation.screenshot)}\``,
 				`- terminal output: \`${rel(observation.terminalTextPath)}\``,
+				`- terminal screen output: \`${rel(observation.terminalScreenTextPath)}\``,
 				`- terminal looks like shell: \`${terminal.shell ? "yes" : "no"}\``,
+				`- terminal shell prompt stale: \`${terminal.staleShell ? "yes" : "no"}\``,
 				`- terminal looks like Codex interactive: \`${terminal.codexTui ? "yes" : "no"}\``,
 				`- Codex CLI error: \`${terminal.codexCliError ? "yes" : "no"}\``,
 				`- DOM provider status: \`${observation.domState.providerStatus || "(empty)"}\``,
@@ -1508,13 +1741,16 @@ try {
 		record("BLOCKED", "Terminal active", terminalStatus.trim() || "No active terminal marker");
 	}
 	const terminalText =
+		(await readTerminalScreenText(page).catch(() => "")) ||
 		(await readTerminalVisibleText(page).catch(() => "")) ||
 		(await page
 			.getByTestId("terminal-pane")
 			.first()
 			.textContent({ timeout: 5000 })
 			.catch(() => ""));
-	const workerStatus = classifyWorkerFromTerminalText(terminalText);
+	const workerStatus = classifyWorkerFromTerminalText(terminalText, {
+		preferCurrentShell: true,
+	});
 	const workerIdentityStatus =
 		workerStatus.ready
 			? "PASS"
@@ -1558,24 +1794,15 @@ try {
 
 	let composerReady = false;
 	if (provider) {
-		let probe = await executeInWebview(page, composerProbeScript);
-		if (!(probe.ok && probe.value?.ok)) {
-			const openNewChat = await executeInWebview(page, openNewChatScript);
-			if (openNewChat.ok && openNewChat.value?.ok) {
-				record("PASS", "Browser AI new chat", `Opened new chat: ${openNewChat.value.text}`);
-				await page.waitForTimeout(3000);
-				await capture(page, "02-new-chat-opened");
-				probe = await executeInWebview(page, composerProbeScript);
-			}
-		}
-		if (probe.ok && probe.value?.ok) {
+		const composer = await waitForBrowserComposerReady(page, provider);
+		if (composer.ready) {
 			composerReady = true;
-			record("PASS", "Browser AI composer", `Composer visible: ${probe.value.selector}`);
+			record("PASS", "Browser AI composer", prepareSummary.composerFinalResult);
 		} else {
 			record(
 				"BLOCKED",
 				"Browser AI composer",
-				`Composer unavailable. ${probe.ok ? JSON.stringify(probe.value).slice(0, 500) : probe.error}`,
+				prepareSummary.composerFinalResult,
 			);
 		}
 	}
