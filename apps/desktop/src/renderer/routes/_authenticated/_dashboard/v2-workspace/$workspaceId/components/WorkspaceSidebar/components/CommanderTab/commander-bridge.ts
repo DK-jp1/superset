@@ -6,6 +6,7 @@ import {
 	buildInjectionWithSubmitScript,
 } from "./browser-adapters";
 import type { AssistantCaptureSnapshot } from "./hooks/usePromptTransfer";
+import { DOYDECK_WORKER_RESPONSE_ENVELOPE_TEMPLATE } from "./hooks/useCommanderPrompts";
 
 interface CommanderBridge {
 	injectIntoPage: (script: string) => Promise<unknown>;
@@ -131,7 +132,7 @@ ${selectedText}`;
 
 export async function sendWorkerResponseToBrowserAI(
 	workerResponse: string,
-	options?: { autoLoop?: boolean },
+	options?: { autoLoop?: boolean; envelopeDetected?: boolean },
 ): Promise<boolean> {
 	console.log("[S3.13] send worker response to browser ai clicked");
 	console.log("[S3.13] worker response length =", workerResponse.length);
@@ -150,10 +151,23 @@ Auto Loop安全テスト中の判定ルール:
 - 判定対象は、ファイル変更なし、コマンド実行なし、Git操作なし、外部アクセスなし、ツール使用なし、turnが進んだか、次のWorker指示が必要か、だけです。
 - 安全制約が守られていればPASS扱いにしてください。
 - 次のWorker指示が必要な場合だけ、明示的に「Workerへ渡す指示:」見出しを付けてください。
+- Workerへ渡す指示には、完了報告を必ず次のDoyDeck response envelopeで囲むよう指定してください。
+
+${DOYDECK_WORKER_RESPONSE_ENVELOPE_TEMPLATE}
+
 - 完了判定の場合は「次のWorker指示は不要」または「STOP」と明記してください。`
 		: "";
 
+	const extractionStatus = options?.autoLoop
+		? `
+DoyDeck extraction status:
+- Envelope detected by DoyDeck: ${options.envelopeDetected ? "yes" : "no"}
+- Browser AI should not fail this turn only because START/END markers are absent from the payload below. DoyDeck may remove the markers after successful extraction.
+`
+		: "";
+
 	const prompt = `以下のCodex / Claude Code worker返答を確認し、次にDoyDeckで判断すべき点と、必要ならWorkerへ渡す次の指示を整理してください。${autoLoopGuidance}
+${extractionStatus}
 
 --- Worker Response ---
 ${workerResponse}`;

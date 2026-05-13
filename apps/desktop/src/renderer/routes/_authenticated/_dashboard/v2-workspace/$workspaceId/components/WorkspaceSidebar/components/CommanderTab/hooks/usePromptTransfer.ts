@@ -27,6 +27,8 @@ import { sendWorkerResponseToBrowserAI } from "../commander-bridge";
 import { getTerminalSelection } from "../useActiveTerminal";
 import {
 	BROWSER_AI_STARTER_PROMPT,
+	DOYDECK_WORKER_RESPONSE_END,
+	DOYDECK_WORKER_RESPONSE_START,
 	generateWorkerPrompt,
 	generateReviewPrompt,
 	generateHandoffPrompt,
@@ -354,7 +356,7 @@ function isNegativeStatusText(text: string): boolean {
 }
 
 function isPositiveStatusText(text: string): boolean {
-	return /(なし|無し|ありません|特になし|none|no\b|問題なし|PASS|OK|成功|完了|危険操作なし|外部参照なし|外部アクセスなし|Git操作なし|ツール使用なし|既存DoyDeck本体への変更なし)/i.test(
+	return /(なし|無し|ありません|していません|行っていません|未実行|特になし|none|no\b|問題なし|PASS|OK|成功|完了|変更なし|実行なし|操作なし|使用なし|危険操作なし|外部参照なし|外部アクセスなし|Git操作なし|ツール使用なし|ファイル変更なし|コマンド実行なし|禁止事項を守りました|安全条件を守りました|既存DoyDeck本体への変更なし)/i.test(
 		text,
 	);
 }
@@ -378,7 +380,12 @@ function isExplicitFailureStatus(line: string): string | null {
 	if (/^(コマンド|実装|実行|検証|確認).*(失敗しました|失敗|エラーが発生しました|エラー発生)/u.test(normalized)) {
 		return normalized;
 	}
-	if (/^((想定外の)?ファイル変更|外部アクセス|Git操作|ツール使用)/u.test(normalized) && isNegativeStatusText(normalized)) {
+	if (
+		/^((想定外の)?ファイル変更|コマンド実行|外部アクセス|Git操作|ツール使用)/u.test(
+			normalized,
+		) &&
+		isNegativeStatusText(normalized)
+	) {
 		return normalized;
 	}
 	return null;
@@ -429,6 +436,12 @@ type WorkerResponseDetection = {
 	reasons: string[];
 };
 
+type WorkerResponseEnvelopeExtraction =
+	| { status: "none" }
+	| { status: "incomplete"; reason: string; startIndex: number }
+	| { status: "invalid"; reason: string; text: string; startIndex: number; endIndex: number }
+	| { status: "matched"; text: string; startIndex: number; endIndex: number };
+
 interface AutoCaptureStartOptions {
 	baseline?: AssistantCaptureSnapshot | null;
 	prompt?: string;
@@ -451,6 +464,8 @@ interface AutoRelayTracker {
 	lastOutputChangedAt: number;
 	detectionFirstSeenAt: number | null;
 	lastDetection: WorkerResponseDetection | null;
+	envelopeIncompleteSince: number | null;
+	lastEnvelopeIncompleteReason: string | null;
 }
 
 export function extractInstructionBlock(text: string): string {
@@ -1055,6 +1070,112 @@ function extractWorkerCompletionReport(text: string): string {
 	return normalizeWorkerCompletionReport(report);
 }
 
+function validateWorkerResponseEnvelopeBody(body: string): string | null {
+	const normalized = body.trim();
+	if (normalized.length < 80) return "envelope body too short";
+	const requiredSections: Array<{ label: string; pattern: RegExp }> = [
+		{ label: "実施内容", pattern: /(?:^|\n)\s*#{0,6}\s*実施内容[：:]?/u },
+		{ label: "変更ファイル", pattern: /(?:^|\n)\s*#{0,6}\s*変更ファイル[：:]?/u },
+		{ label: "確認結果", pattern: /(?:^|\n)\s*#{0,6}\s*確認結果[：:]?/u },
+		{ label: "git diff --check", pattern: /git diff --check/i },
+		{ label: "未解決", pattern: /(?:^|\n)\s*#{0,6}\s*未解決[：:]?/u },
+	];
+	const missing = requiredSections
+		.filter((section) => !section.pattern.test(normalized))
+		.map((section) => section.label);
+	if (missing.length > 0) {
+		return `missing envelope sections: ${missing.join(", ")}`;
+	}
+	return null;
+}
+
+function normalizeWorkerResponseEnvelopeMarkerLine(line: string): string {
+	return line
+		.replace(/[\u200B-\u200D\uFEFF]/g, "")
+		.replace(/[^\S\r\n]+/g, " ")
+		.trim()
+		.replace(/^(?:[-*・•●⏺⎿>›❯]+\s*)+/u, "")
+		.replace(/\s+/g, "");
+}
+
+function findWorkerResponseEnvelopeMarkers(
+	text: string,
+	marker: string,
+): Array<{ index: number; lineStart: number; lineEnd: number }> {
+	const compactMarker = marker.replace(/\s+/g, "");
+	const matches: Array<{ index: number; lineStart: number; lineEnd: number }> = [];
+	let lineStart = 0;
+
+	for (const line of text.split("\n")) {
+		const lineEnd = lineStart + line.length;
+		const directIndex = line.indexOf(marker);
+		if (directIndex !== -1) {
+			matches.push({
+				index: lineStart + directIndex,
+				lineStart,
+				lineEnd,
+			});
+		} else {
+			const normalizedLine = normalizeWorkerResponseEnvelopeMarkerLine(line);
+			if (normalizedLine.includes(compactMarker)) {
+				matches.push({
+					index: lineStart,
+					lineStart,
+					lineEnd,
+				});
+			}
+		}
+		lineStart = lineEnd + 1;
+	}
+
+	return matches;
+}
+
+function extractDoyDeckWorkerResponseEnvelope(
+	text: string,
+): WorkerResponseEnvelopeExtraction {
+	const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	const starts = findWorkerResponseEnvelopeMarkers(
+		normalized,
+		DOYDECK_WORKER_RESPONSE_START,
+	);
+	if (starts.length === 0) return { status: "none" };
+
+	const latestStart = starts[starts.length - 1];
+	const latestStartIndex = latestStart.lineEnd + 1;
+	const endCandidates = findWorkerResponseEnvelopeMarkers(
+		normalized.slice(latestStartIndex),
+		DOYDECK_WORKER_RESPONSE_END,
+	);
+	if (endCandidates.length === 0) {
+		return {
+			status: "incomplete",
+			reason: "missing end marker",
+			startIndex: latestStart.index,
+		};
+	}
+
+	const latestEnd = endCandidates[0];
+	const latestEndIndex = latestStartIndex + latestEnd.lineStart;
+	const body = normalized.slice(latestStartIndex, latestEndIndex).trim();
+	const invalidReason = validateWorkerResponseEnvelopeBody(body);
+	if (invalidReason) {
+		return {
+			status: "invalid",
+			reason: invalidReason,
+			text: body,
+			startIndex: latestStart.index,
+			endIndex: latestStartIndex + latestEnd.index,
+		};
+	}
+	return {
+		status: "matched",
+		text: body,
+		startIndex: latestStart.index,
+		endIndex: latestStartIndex + latestEnd.index,
+	};
+}
+
 function buildWorkerResponseFallbackBlocks(text: string): string[] {
 	const blocks: string[] = [];
 	let current: string[] = [];
@@ -1155,6 +1276,17 @@ function detectWorkerResponseFallback(text: string): WorkerResponseDetection | n
 }
 
 function detectWorkerResponse(text: string): WorkerResponseDetection | null {
+	const envelope = extractDoyDeckWorkerResponseEnvelope(text);
+	if (envelope.status === "matched") {
+		return {
+			text: envelope.text,
+			confidence: "high",
+			reasons: ["envelope matched"],
+		};
+	}
+	if (envelope.status !== "none") {
+		return null;
+	}
 	const headingReport = extractWorkerCompletionReport(text);
 	if (headingReport) {
 		return {
@@ -1461,19 +1593,55 @@ export function usePromptTransfer({
 				lastOutputChangedAt: startedAt,
 				detectionFirstSeenAt: null,
 				lastDetection: null,
+				envelopeIncompleteSince: null,
+				lastEnvelopeIncompleteReason: null,
 			};
 
 			const executeCapture = (reason: string) => {
 				const rawDelta = getOutputLogSince(paneId, relayRef.markerOffset);
 				const current = stripAnsi(rawDelta);
 				const headingCandidates = findWorkerCompletionHeadingCandidates(current);
-				const detection = detectWorkerResponse(current);
-				const report = detection?.text ?? "";
 				const completionReportCount = headingCandidates.length;
 				const now = Date.now();
 				const currentOffset = getOutputLogOffset(paneId);
 				const outputStableMs = now - relayRef.lastOutputChangedAt;
 				const promptReturned = hasWorkerPromptReturned(current);
+				const envelope = extractDoyDeckWorkerResponseEnvelope(current);
+				if (envelope.status === "incomplete" || envelope.status === "invalid") {
+					if (relayRef.envelopeIncompleteSince === null) {
+						relayRef.envelopeIncompleteSince = now;
+						relayRef.lastEnvelopeIncompleteReason = envelope.reason;
+						if (autoRelayMode === "loop") {
+							appendAutoLoopEvent(
+								`worker response envelope incomplete: ${envelope.reason}`,
+							);
+						}
+					} else if (relayRef.lastEnvelopeIncompleteReason !== envelope.reason) {
+						relayRef.lastEnvelopeIncompleteReason = envelope.reason;
+						relayRef.envelopeIncompleteSince = now;
+					}
+					const incompleteWaitMs = now - relayRef.envelopeIncompleteSince;
+					if (
+						autoRelayMode === "loop" &&
+						outputStableMs >= AUTO_RELAY_OUTPUT_STABLE_MS &&
+						incompleteWaitMs >= AUTO_RELAY_MAX_DETECTION_WAIT_MS
+					) {
+						const stopReason =
+							envelope.status === "incomplete"
+								? "worker response envelope incomplete"
+								: "worker response extraction incomplete";
+						appendAutoLoopEvent(`${stopReason}: ${envelope.reason}`);
+						cancelAutoRelay(stopReason);
+						stopAutoLoop(stopReason);
+					}
+					return;
+				}
+				if (envelope.status === "matched") {
+					relayRef.envelopeIncompleteSince = null;
+					relayRef.lastEnvelopeIncompleteReason = null;
+				}
+				const detection = detectWorkerResponse(current);
+				const report = detection?.text ?? "";
 				debugAutoRelayWatcher("[S3.13-stream] capture executed =", reason);
 				debugAutoRelayWatcher("[S3.13-stream] raw delta length =", rawDelta.length);
 				debugAutoRelayWatcher("[S3.13-stream] clean delta length =", current.length);
@@ -1508,6 +1676,13 @@ export function usePromptTransfer({
 					report.length,
 				);
 				debugAutoRelayWatcher("[S3.13-stream] worker response detection =", detection);
+				debugAutoRelayWatcher("[S3.13-stream] worker response envelope =", envelope);
+				debugAutoRelayWatcher("[S3.13-stream] worker response envelope indices =", {
+					status: envelope.status,
+					startIndex: envelope.status === "none" ? null : envelope.startIndex,
+					endIndex: envelope.status === "matched" ? envelope.endIndex : null,
+					extractedLength: envelope.status === "matched" ? envelope.text.length : null,
+				});
 				debugAutoRelayWatcher("[S3.13-stream] output settled state =", {
 					currentOffset,
 					lastObservedOffset: relayRef.lastObservedOffset,
@@ -1573,7 +1748,11 @@ export function usePromptTransfer({
 					setAutoLoopLastAction(
 						`Worker response captured (${detection?.confidence ?? "low"} confidence)`,
 					);
-					appendAutoLoopEvent("capture succeeded: worker response");
+					appendAutoLoopEvent(
+						detection?.reasons.includes("envelope matched")
+							? `capture succeeded: worker response envelope matched start=${envelope.status === "matched" ? envelope.startIndex : "n/a"} end=${envelope.status === "matched" ? envelope.endIndex : "n/a"} length=${report.length}`
+							: "capture succeeded: worker response",
+					);
 				}
 				setWorkerResponsePreview({
 					visible: true,
@@ -2460,7 +2639,10 @@ export function usePromptTransfer({
 		setAutoLoopPhase("sending-browser-ai");
 		setAutoLoopLastAction("Sending Worker response to Browser AI");
 		void (async () => {
-			const ok = await sendWorkerResponseToBrowserAI(text, { autoLoop: true });
+			const ok = await sendWorkerResponseToBrowserAI(text, {
+				autoLoop: true,
+				envelopeDetected: workerResponsePreview.reasons.includes("envelope matched"),
+			});
 			if (!ok) {
 				stopAutoLoop("browser injection failed");
 				return;

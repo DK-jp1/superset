@@ -1,6 +1,35 @@
 import { toast } from "@superset/ui/sonner";
 import type { CommanderSession, CommanderState } from "../commander-types";
 
+export const DOYDECK_WORKER_RESPONSE_START =
+	"<<<DOYDECK_WORKER_RESPONSE_START>>>";
+export const DOYDECK_WORKER_RESPONSE_END =
+	"<<<DOYDECK_WORKER_RESPONSE_END>>>";
+export const DOYDECK_WORKER_RESPONSE_ENVELOPE_TEMPLATE = `${DOYDECK_WORKER_RESPONSE_START}
+## 完了報告
+
+### 実施内容
+- ...
+
+### 変更ファイル
+- ...
+
+### 確認結果
+- ...
+
+### git diff --check 結果
+- PASS / FAIL
+
+### セルフレビュー
+- ...
+
+### 次に改善するなら
+- ...
+
+### 未解決
+- なし / あり: ...
+${DOYDECK_WORKER_RESPONSE_END}`;
+
 export const BROWSER_AI_STARTER_PROMPT = `あなたはDoyDeck内のBrowser AIです。
 
 あなたの役割:
@@ -62,9 +91,14 @@ Worker指示には基本的に以下を含めてください:
 - セルフレビュー/別観点レビュー
 - 完了報告形式
 
+Workerへの指示には、完了報告を必ず以下のDoyDeck response envelopeで囲むように指定してください。
+
+${DOYDECK_WORKER_RESPONSE_ENVELOPE_TEMPLATE}
+
 Auto Loop時:
 - Workerへ渡す指示が必要なら必ず「Workerへ渡す指示:」で始める
 - 完了なら「次のWorker指示は不要」または「STOP」と明記する
+- Worker完了報告は必ずDoyDeck response envelopeで囲ませる
 - Worker出力のMarkdown見出しがTUI上で \`● 完了報告\` のように見えても、それだけで不合格扱いしない
 - 安全条件、成果、次アクションで判断する
 
@@ -166,7 +200,15 @@ export function generateWorkerPrompt(state: CommanderState): string {
 
 	if (sections.length === 0) return "";
 
-	return `# Worker Prompt\n\n${sections.join("\n\n")}\n\n---\nExecute the goal above. Follow all constraints. Report what you did and any issues found.`;
+	return `# Worker Prompt
+
+${sections.join("\n\n")}
+
+---
+Execute the goal above. Follow all constraints. Report what you did and any issues found.
+Wrap your final response in this DoyDeck response envelope:
+
+${DOYDECK_WORKER_RESPONSE_ENVELOPE_TEMPLATE}`;
 }
 
 export function generateReviewPrompt(state: CommanderState): string {
@@ -272,12 +314,7 @@ ${nextAction}
 不明点がある場合は勝手に範囲を広げず、最小の確認事項として報告してください。
 完了時は以下の形式で報告してください。
 
-## 完了報告
-- やったこと:
-- 変更ファイル:
-- 確認結果:
-- 未解決:
-- 次にやること:
+${DOYDECK_WORKER_RESPONSE_ENVELOPE_TEMPLATE}
 `;
 }
 
