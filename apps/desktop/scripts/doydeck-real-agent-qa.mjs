@@ -80,12 +80,14 @@ const diagnosticsLog = [];
 const prepareSummary = {
 	selectedBrowserProvider: "(unknown)",
 	selectedWorkerType: "(unknown)",
+	workerReadinessState: "(not evaluated)",
 	workerPrepareCommand: "(not evaluated)",
 	doyApprovalRequired: "no",
 	doyApprovalGranted: "no",
 	prepareResult: "(not evaluated)",
 	blockedReason: "",
 	approvalPrompt: "",
+	nextAction: "",
 };
 
 function record(status, name, detail) {
@@ -326,13 +328,90 @@ async function sampleDiagnostics(page, label) {
 	return item;
 }
 
+async function focusTerminalForInput(page) {
+	const focused = await page.evaluate(() => {
+		const terminalPane = document.querySelector('[data-testid="terminal-pane"]');
+		const textarea =
+			terminalPane?.querySelector("textarea.xterm-helper-textarea") ||
+			document.querySelector("textarea.xterm-helper-textarea");
+		if (textarea instanceof HTMLTextAreaElement) {
+			textarea.focus();
+			return true;
+		}
+		return false;
+	});
+	if (!focused) {
+		await page.getByTestId("terminal-pane").first().click({ timeout: 5000 });
+	}
+	await page.waitForTimeout(250);
+	return focused;
+}
+
+async function sendTerminalLineViaUi(page, line) {
+	await focusTerminalForInput(page);
+	await page.keyboard.insertText(line);
+	await page.keyboard.press("Enter");
+}
+
+async function readTerminalVisibleText(page) {
+	return page.evaluate(() => {
+		const terminalPane = document.querySelector('[data-testid="terminal-pane"]');
+		const parts = [];
+		const paneText = terminalPane?.textContent || "";
+		if (paneText) parts.push(paneText);
+		const rows = terminalPane?.querySelector(".xterm-rows");
+		if (rows instanceof HTMLElement && rows.innerText) {
+			parts.push(rows.innerText);
+		}
+		const screen = terminalPane?.querySelector(".xterm-screen");
+		if (screen instanceof HTMLElement && screen.innerText) {
+			parts.push(screen.innerText);
+		}
+		return parts.join("\n");
+	});
+}
+
 function classifyWorkerFromTerminalText(text) {
 	const normalized = String(text || "").replace(/\s+/g, " ").trim();
+	const codexLaunchCommandPattern =
+		/\bcodex\s+--dangerously-bypass-approvals-and-sandbox\b/i;
 	if (!normalized) {
 		return {
 			ready: false,
 			type: "unknown",
+			state: "not-started",
 			reason: "Terminal text unavailable",
+		};
+	}
+	if (
+		/hooks?\s+need\s+review\s+before\s+they\s+can\s+run/i.test(normalized) ||
+		/Open\s+\/hooks\s+to\s+review\s+them/i.test(normalized)
+	) {
+		return {
+			ready: false,
+			type: "codex",
+			state: "hooks-review-required",
+			reason:
+				"Codex worker blocked: hooks review required (3 hooks need review before they can run / Open /hooks to review them)",
+			nextAction:
+				"DoyDeck Terminalで `/hooks` を開き、hooksを確認/承認してからReal Agent QAを再実行してください。",
+		};
+	}
+	if (/\bOpenAI\s+Codex\b/i.test(normalized)) {
+		return {
+			ready: true,
+			type: "codex",
+			state: "worker-ready",
+			reason: "OpenAI Codex worker signal detected",
+		};
+	}
+	if (codexLaunchCommandPattern.test(normalized)) {
+		return {
+			ready: false,
+			type: "codex",
+			state: "launch-command-sent",
+			reason:
+				"Codex launch command was sent, but worker-ready UI signal was not detected yet",
 		};
 	}
 	const codexSignals = [
@@ -340,6 +419,7 @@ function classifyWorkerFromTerminalText(text) {
 		/\bCodex\b.+\b(turn|task|prompt|approval|sandbox)\b/i,
 		/\besc to interrupt\b/i,
 		/\bWrite tests for @filename\b/i,
+		/\bcodex-cli\b/i,
 	];
 	const claudeSignals = [
 		/\bClaude Code\b/i,
@@ -352,6 +432,7 @@ function classifyWorkerFromTerminalText(text) {
 		return {
 			ready: true,
 			type: "codex",
+			state: "worker-ready",
 			reason: "Codex-like terminal UI signal detected",
 		};
 	}
@@ -359,6 +440,7 @@ function classifyWorkerFromTerminalText(text) {
 		return {
 			ready: true,
 			type: "claude",
+			state: "worker-ready",
 			reason: "Claude Code-like terminal UI signal detected",
 		};
 	}
@@ -366,12 +448,14 @@ function classifyWorkerFromTerminalText(text) {
 		return {
 			ready: false,
 			type: "shell",
+			state: "not-started",
 			reason: "Terminal appears to be a normal shell prompt",
 		};
 	}
 	return {
 		ready: false,
 		type: "unknown",
+		state: "unknown",
 		reason: "No Claude Code / Codex worker signal detected",
 	};
 }
@@ -406,10 +490,12 @@ async function maybeStartWorker(page, workerStatus) {
 		return {
 			status: "PASS",
 			selectedWorkerType: workerStatus.type,
+			readinessState: workerStatus.state,
 			command: "(not needed)",
 			approvalRequired: false,
 			approvalGranted: false,
 			result: workerStatus.reason,
+			nextAction: workerStatus.nextAction || "",
 			approvalPrompt,
 		};
 	}
@@ -417,34 +503,39 @@ async function maybeStartWorker(page, workerStatus) {
 		return {
 			status: "BLOCKED",
 			selectedWorkerType: workerPreference,
+			readinessState: workerStatus.state,
 			command: workerStartCommand,
 			approvalRequired: true,
 			approvalGranted: workerStartApproved,
 			result: allowRealSend
 				? `Worker start requires Doy approval. ${workerStatus.reason}`
 				: `Worker start requires real-send opt-in and Doy approval. ${workerStatus.reason}`,
+			nextAction: workerStatus.nextAction || "",
 			approvalPrompt,
 		};
 	}
 	const terminal = page.getByTestId("terminal-pane").first();
-	await terminal.click({ timeout: 5000 });
-	await page.keyboard.type(workerStartCommand, { delay: 0 });
-	await page.keyboard.press("Enter");
+	await sendTerminalLineViaUi(page, workerStartCommand);
 	record(
 		"PASS",
 		"Worker prepare command sent",
 		`Sent approved ${workerPreference} worker start command`,
 	);
-	await page.waitForTimeout(8000);
-	const terminalText = await terminal.textContent({ timeout: 5000 }).catch(() => "");
+	await page.waitForTimeout(20_000);
+	await capture(page, "02-worker-prepare-command");
+	const terminalText =
+		(await readTerminalVisibleText(page).catch(() => "")) ||
+		(await terminal.textContent({ timeout: 5000 }).catch(() => ""));
 	const nextStatus = classifyWorkerFromTerminalText(terminalText);
 	return {
 		status: nextStatus.ready ? "PASS" : "BLOCKED",
 		selectedWorkerType: nextStatus.ready ? nextStatus.type : workerPreference,
+		readinessState: nextStatus.state,
 		command: workerStartCommand,
 		approvalRequired: true,
 		approvalGranted: true,
 		result: nextStatus.reason,
+		nextAction: nextStatus.nextAction || "",
 		approvalPrompt,
 	};
 }
@@ -478,12 +569,19 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 	body.push("", "## Self prepare summary", "");
 	body.push(`- selected Browser AI provider: \`${prepareSummary.selectedBrowserProvider}\``);
 	body.push(`- selected Worker type: \`${prepareSummary.selectedWorkerType}\``);
+	body.push(`- worker readiness state: \`${prepareSummary.workerReadinessState}\``);
 	body.push(`- worker prepare command: \`${prepareSummary.workerPrepareCommand}\``);
 	body.push(`- Doy approval required: \`${prepareSummary.doyApprovalRequired}\``);
 	body.push(`- Doy approval granted: \`${prepareSummary.doyApprovalGranted}\``);
 	body.push(`- prepare result: ${prepareSummary.prepareResult}`);
 	if (prepareSummary.blockedReason) {
 		body.push(`- blocked reason: ${prepareSummary.blockedReason}`);
+	}
+	if (prepareSummary.nextAction) {
+		body.push("", "### Next action", "");
+		body.push("- DoyDeck Terminalで `/hooks` を開く");
+		body.push("- hooksを確認/承認する");
+		body.push("- その後、Real Agent QAを再実行する");
 	}
 	if (prepareSummary.approvalPrompt) {
 		body.push("", "### Worker start approval prompt", "");
@@ -695,11 +793,13 @@ try {
 	} else {
 		record("BLOCKED", "Terminal active", terminalStatus.trim() || "No active terminal marker");
 	}
-	const terminalText = await page
-		.getByTestId("terminal-pane")
-		.first()
-		.textContent({ timeout: 5000 })
-		.catch(() => "");
+	const terminalText =
+		(await readTerminalVisibleText(page).catch(() => "")) ||
+		(await page
+			.getByTestId("terminal-pane")
+			.first()
+			.textContent({ timeout: 5000 })
+			.catch(() => ""));
 	const workerStatus = classifyWorkerFromTerminalText(terminalText);
 	record(
 		workerStatus.ready ? "PASS" : "BLOCKED",
@@ -711,6 +811,7 @@ try {
 		: {
 				status: workerStatus.ready ? "PASS" : "BLOCKED",
 				selectedWorkerType: workerStatus.type,
+				readinessState: workerStatus.state,
 				command: "(self prepare disabled)",
 				approvalRequired: false,
 				approvalGranted: false,
@@ -718,10 +819,13 @@ try {
 				approvalPrompt: "",
 			};
 	prepareSummary.selectedWorkerType = workerPrepare.selectedWorkerType;
+	prepareSummary.workerReadinessState =
+		workerPrepare.readinessState || "(unknown)";
 	prepareSummary.workerPrepareCommand = workerPrepare.command;
 	prepareSummary.doyApprovalRequired = workerPrepare.approvalRequired ? "yes" : "no";
 	prepareSummary.doyApprovalGranted = workerPrepare.approvalGranted ? "yes" : "no";
 	prepareSummary.prepareResult = workerPrepare.result;
+	prepareSummary.nextAction = workerPrepare.nextAction || "";
 	prepareSummary.approvalPrompt = workerPrepare.approvalPrompt;
 	if (workerPrepare.status !== "PASS") {
 		prepareSummary.blockedReason = workerPrepare.result;
