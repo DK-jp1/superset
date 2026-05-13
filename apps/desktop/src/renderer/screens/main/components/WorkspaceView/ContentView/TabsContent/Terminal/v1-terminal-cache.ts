@@ -73,7 +73,52 @@ type OutputLogListener = (snapshot: {
 }) => void;
 const outputLogListeners = new Map<string, Set<OutputLogListener>>();
 
+function isDoyDeckTerminalOutputLogAccessorEnabled(): boolean {
+	const target = globalThis as typeof globalThis & {
+		doydeckQa?: {
+			terminalOutputLogAccessorEnabled?: boolean;
+		};
+	};
+	return target.doydeckQa?.terminalOutputLogAccessorEnabled === true;
+}
+
+function installDoyDeckTerminalOutputLogAccessor(): void {
+	if (!isDoyDeckTerminalOutputLogAccessorEnabled()) return;
+	const target = globalThis as typeof globalThis & {
+		__doydeckGetTerminalOutputLogs?: () => Array<{
+			paneId: string;
+			offset: number;
+			text: string;
+		}>;
+		__doydeckQaWriteTerminal?: (paneId: string, data: string) => Promise<void>;
+	};
+	if (target.__doydeckGetTerminalOutputLogs) return;
+	target.__doydeckGetTerminalOutputLogs = () =>
+		Array.from(cache.entries()).map(([paneId, entry]) => {
+			const log = outputLogs.get(paneId) ?? { baseOffset: 0, text: "" };
+			const buffer = entry.xterm.buffer.active;
+			const lines: string[] = [];
+			for (let i = 0; i < buffer.length; i += 1) {
+				const line = buffer.getLine(i)?.translateToString(true).trimEnd();
+				if (line) lines.push(line);
+			}
+			return {
+				paneId,
+				offset: log.baseOffset + log.text.length,
+				text: [log.text, lines.join("\n")].filter(Boolean).join("\n"),
+			};
+		});
+	target.__doydeckQaWriteTerminal = async (paneId: string, data: string) => {
+		await electronTrpcClient.terminal.write.mutate({
+			paneId,
+			data,
+			throwOnError: true,
+		});
+	};
+}
+
 function appendOutputLog(paneId: string, data: string): void {
+	installDoyDeckTerminalOutputLogAccessor();
 	let log = outputLogs.get(paneId);
 	if (!log) {
 		log = { baseOffset: 0, text: "" };

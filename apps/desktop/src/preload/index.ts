@@ -19,6 +19,9 @@ declare global {
 		webUtils: {
 			getPathForFile: (file: File) => string;
 		};
+		doydeckQa: {
+			terminalOutputLogAccessorEnabled: boolean;
+		};
 	}
 }
 
@@ -79,4 +82,9 @@ contextBridge.exposeInMainWorld("doydeckNativeFileDrag", {
 });
 contextBridge.exposeInMainWorld("webUtils", {
 	getPathForFile: (file: File) => webUtils.getPathForFile(file),
+});
+contextBridge.exposeInMainWorld("doydeckQa", {
+	terminalOutputLogAccessorEnabled:
+		process.env.DOYDECK_REAL_AGENT_QA === "1" ||
+		process.env.DOYDECK_ELECTRON_QA === "1",
 });

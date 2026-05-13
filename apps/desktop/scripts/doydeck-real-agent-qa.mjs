@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { _electron as electron } from "playwright";
@@ -15,9 +15,11 @@ const outDir = resolve(
 	process.argv[2] ?? join(repoRoot, "tmp/doydeck-real-agent-qa"),
 );
 const screenshotsDir = join(outDir, "screenshots");
+const observationsDir = join(outDir, "observations");
 const reportPath = join(outDir, "report.md");
 const consoleErrorsPath = join(outDir, "console-errors.json");
 const diagnosticsPath = join(outDir, "diagnostics-log.json");
+const hooksReviewTextPath = join(outDir, "codex-hooks-review.txt");
 const require = createRequire(import.meta.url);
 
 const allowRealSend =
@@ -29,6 +31,14 @@ const selfPrepare =
 const workerStartApproved =
 	process.env.DOYDECK_REAL_AGENT_QA_APPROVE_WORKER_START === "1" ||
 	process.argv.includes("--approve-worker-start");
+const reviewHooks =
+	process.env.DOYDECK_REAL_AGENT_QA_REVIEW_HOOKS === "1" ||
+	process.env.DOYDECK_REAL_AGENT_QA_APPROVE_HOOKS === "1" ||
+	process.argv.includes("--review-hooks") ||
+	process.argv.includes("--approve-hooks");
+const approveHooks =
+	process.env.DOYDECK_REAL_AGENT_QA_APPROVE_HOOKS === "1" ||
+	process.argv.includes("--approve-hooks");
 const workerPreference =
 	process.env.DOYDECK_REAL_AGENT_QA_WORKER?.toLowerCase() || "codex";
 const workerStartCommands = {
@@ -37,7 +47,6 @@ const workerStartCommands = {
 };
 const workerStartCommand =
 	workerStartCommands[workerPreference] || workerStartCommands.codex;
-const workerConfirmed = allowRealSend;
 const providerPreference =
 	(
 		process.env.DOYDECK_REAL_AGENT_QA_BROWSER ||
@@ -45,9 +54,14 @@ const providerPreference =
 		"chatgpt"
 	).toLowerCase();
 const maxWaitMs = Number(process.env.DOYDECK_REAL_AGENT_QA_MAX_WAIT_MS || 600000);
+const codexReadinessProbePrompt =
+	"Codex Worker readiness checkです。次の1行だけ返してください: CODEX_WORKER_READY";
 
 rmSync(screenshotsDir, { recursive: true, force: true });
 mkdirSync(screenshotsDir, { recursive: true });
+rmSync(observationsDir, { recursive: true, force: true });
+mkdirSync(observationsDir, { recursive: true });
+rmSync(hooksReviewTextPath, { force: true });
 
 const runAt = new Date().toLocaleString("ja-JP", {
 	timeZone: "Asia/Tokyo",
@@ -58,6 +72,7 @@ const rendererEntry = join(desktopDir, "dist/renderer/index.html");
 const appLaunchTarget = desktopDir;
 const electronPath = require("electron");
 const safeDevEnv = {
+	DOYDECK_REAL_AGENT_QA: "1",
 	DOYDECK_DEV_MODE: "1",
 	SUPERSET_WORKSPACE_NAME: "doydeck-dev",
 	SUPERSET_HOME_DIR: join(homedir(), ".doydeck-superset-dev"),
@@ -76,6 +91,7 @@ const checks = [];
 const consoleErrors = [];
 const pageErrors = [];
 const screenshots = [];
+const observations = [];
 const diagnosticsLog = [];
 const prepareSummary = {
 	selectedBrowserProvider: "(unknown)",
@@ -88,10 +104,43 @@ const prepareSummary = {
 	blockedReason: "",
 	approvalPrompt: "",
 	nextAction: "",
+	hooksReviewRequired: "no",
+	hooksReviewOpened: "no",
+	hooksApprovalAttempted: "no",
+	hooksApprovalGranted: "no",
+	hooksReviewResult: "(not evaluated)",
+	hooksReviewTextPreview: "",
+	hooksApprovalPrompt: "",
+	hooksWarningDetected: "no",
+	hooksCommandSubmitted: "no",
+	hooksUiDetected: "no",
+	hooksTerminalLookedLikeCodexTui: "unknown",
+	hooksTerminalLookedLikeShell: "unknown",
+	hooksBlockedReason: "",
+	readinessProbeSent: "no",
+	readinessProbeResponse: "not detected",
+	terminalState: "unknown",
+	terminalLookedLikeShell: "unknown",
+	terminalLookedLikeCodexInteractive: "unknown",
+	terminalStateReason: "",
+	readinessActionSkippedReason: "",
+	readinessPreconditionScreenshot: "",
 };
 
 function record(status, name, detail) {
 	checks.push({ status, name, detail });
+}
+
+function rel(path) {
+	return relative(outDir, path);
+}
+
+function slugify(value) {
+	return String(value || "step")
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "")
+		.slice(0, 80) || "step";
 }
 
 async function capture(page, name) {
@@ -349,14 +398,65 @@ async function focusTerminalForInput(page) {
 
 async function sendTerminalLineViaUi(page, line) {
 	await focusTerminalForInput(page);
-	await page.keyboard.insertText(line);
+	await page.keyboard.type(line, { delay: 0 });
 	await page.keyboard.press("Enter");
+}
+
+async function getQaTerminalLogs(page) {
+	return page.evaluate(() => {
+		const accessor = window.__doydeckGetTerminalOutputLogs;
+		if (typeof accessor !== "function") return [];
+		return accessor();
+	});
+}
+
+async function getPrimaryTerminalPaneId(page) {
+	const logs = await getQaTerminalLogs(page).catch(() => []);
+	if (!Array.isArray(logs) || logs.length === 0) return "";
+	const sorted = [...logs].sort((a, b) => {
+		const aOffset = typeof a.offset === "number" ? a.offset : 0;
+		const bOffset = typeof b.offset === "number" ? b.offset : 0;
+		return bOffset - aOffset;
+	});
+	return typeof sorted[0]?.paneId === "string" ? sorted[0].paneId : "";
+}
+
+async function writeTerminalViaQaAccessor(page, paneId, data) {
+	return page.evaluate(
+		async ({ paneId: targetPaneId, data: targetData }) => {
+			const writer = window.__doydeckQaWriteTerminal;
+			if (typeof writer !== "function") {
+				throw new Error("QA terminal write accessor is unavailable");
+			}
+			await writer(targetPaneId, targetData);
+		},
+		{ paneId, data },
+	);
+}
+
+async function sendTerminalLineViaRuntime(page, line) {
+	const paneId = await getPrimaryTerminalPaneId(page);
+	if (!paneId) {
+		throw new Error("No terminal paneId available for QA terminal write");
+	}
+	await writeTerminalViaQaAccessor(page, paneId, line);
+	await page.waitForTimeout(150);
+	await writeTerminalViaQaAccessor(page, paneId, "\r");
+	return paneId;
 }
 
 async function readTerminalVisibleText(page) {
 	return page.evaluate(() => {
-		const terminalPane = document.querySelector('[data-testid="terminal-pane"]');
 		const parts = [];
+		const debugAccessor = window.__doydeckGetTerminalOutputLogs;
+		if (typeof debugAccessor === "function") {
+			const logs = debugAccessor();
+			const joined = logs
+				.map((log) => `[${log.paneId} offset=${log.offset}]\n${log.text}`)
+				.join("\n\n");
+			if (joined.trim()) parts.push(joined);
+		}
+		const terminalPane = document.querySelector('[data-testid="terminal-pane"]');
 		const paneText = terminalPane?.textContent || "";
 		if (paneText) parts.push(paneText);
 		const rows = terminalPane?.querySelector(".xterm-rows");
@@ -371,38 +471,223 @@ async function readTerminalVisibleText(page) {
 	});
 }
 
+function compactTextPreview(text, maxLength = 2000) {
+	const normalized = cleanTerminalText(text)
+		.replace(/\r/g, "")
+		.replace(/[ \t]+\n/g, "\n")
+		.trim();
+	if (normalized.length <= maxLength) return normalized;
+	const head = normalized.slice(0, Math.floor(maxLength / 2));
+	const tail = normalized.slice(-Math.floor(maxLength / 2));
+	return `${head}\n\n... [truncated] ...\n\n${tail}`;
+}
+
+function cleanTerminalText(text) {
+	return String(text || "")
+		.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+		.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+		.replace(/\x1b[()][A-Za-z0-9]/g, "")
+		.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+}
+
+function classifyHooksApprovalPrompt(text) {
+	const normalized = cleanTerminalText(text).replace(/\s+/g, " ").trim();
+	if (/\b(approve all|accept all|allow all)\b/i.test(normalized)) {
+		return "a";
+	}
+	if (/\b(y\/n|yes\/no|press y|type y)\b/i.test(normalized)) {
+		return "y";
+	}
+	if (/\b(approve|accept|allow)\b/i.test(normalized)) {
+		return "Enter";
+	}
+	return "";
+}
+
+function analyzeCodexTerminalState(text) {
+	const cleaned = cleanTerminalText(text);
+	const normalized = cleaned.replace(/\s+/g, " ").trim();
+	const lines = cleaned
+		.split(/\n/)
+		.map((line) => line.trim())
+		.filter(Boolean);
+	const tailLines = lines.slice(-12);
+	const tail = tailLines.join("\n");
+	const codexTui =
+		/\bOpenAI\s+Codex\b/i.test(tail) ||
+		/(›|\/model\s+to\s+change|permissions:\s*YOLO|gpt-5|hooks?\s+need\s+review|Open\s+\/hooks\s+to\s+review)/i.test(
+			tail,
+		);
+	const shell =
+		tailLines.some((line) =>
+			/(^|[\s:])(?:[^\s@]+@[^\s]+\s+)?[^\s]*\s*[~\/\w.-]*\s*[%$]\s*$/.test(
+				line,
+			),
+		) || /(?:^|\n)[^\n]*\s[%$]\s*$/.test(tail);
+	const codexCliError =
+		/\berror:\s+unrecognized subcommand\b/i.test(tail) ||
+		/\bUsage:\s+codex\b/i.test(tail);
+	return { codexTui, shell, codexCliError, tail };
+}
+
+async function observeTerminalState(page, label) {
+	const text = await readTerminalVisibleText(page).catch(() => "");
+	const state = analyzeCodexTerminalState(text);
+	let terminalState = "unknown";
+	let reason = "Terminal state could not be classified";
+	if (state.codexCliError) {
+		terminalState = "codex-exited-or-cli-error";
+		reason = state.shell
+			? "Codex CLI error and shell prompt detected in recent terminal output"
+			: "Codex CLI error detected in recent terminal output";
+	} else if (state.shell && !state.codexTui) {
+		terminalState = "shell";
+		reason = "Recent terminal output looks like a shell prompt, not Codex interactive UI";
+	} else if (state.codexTui && !state.shell) {
+		terminalState = "codex-interactive";
+		reason = "Recent terminal output looks like Codex interactive UI";
+	} else if (state.codexTui && state.shell) {
+		terminalState = "ambiguous";
+		reason = "Both Codex UI and shell prompt signals were detected in recent terminal output";
+	}
+	prepareSummary.terminalState = terminalState;
+	prepareSummary.terminalLookedLikeShell = state.shell ? "yes" : "no";
+	prepareSummary.terminalLookedLikeCodexInteractive = state.codexTui
+		? "yes"
+		: "no";
+	prepareSummary.terminalStateReason = reason;
+	if (label) {
+		record(
+			terminalState === "codex-interactive" ? "PASS" : "BLOCKED",
+			label,
+			reason,
+		);
+	}
+	return {
+		...state,
+		text,
+		terminalState,
+		reason,
+		codexInteractive: terminalState === "codex-interactive",
+	};
+}
+
+async function readDomState(page) {
+	return page.evaluate(() => {
+		const textOf = (selector) =>
+			document.querySelector(selector)?.textContent?.replace(/\s+/g, " ").trim() ||
+			"";
+		const visible = (selector) => {
+			const element = document.querySelector(selector);
+			if (!(element instanceof HTMLElement)) return false;
+			const rect = element.getBoundingClientRect();
+			return rect.width > 0 && rect.height > 0;
+		};
+		const webview = document.querySelector("webview");
+		let webviewUrl = "";
+		try {
+			webviewUrl = webview?.getURL?.() || webview?.src || "";
+		} catch {
+			webviewUrl = webview?.src || "";
+		}
+		return {
+			title: document.title,
+			commanderRootVisible: visible('[data-testid="commander-root"]'),
+			terminalVisible: visible('[data-testid="terminal-pane"]'),
+			browserAreaVisible: visible('[data-testid="commander-browser-area"]'),
+			autoMode: textOf('[data-testid="commander-auto-mode-selector"]'),
+			terminalActive: textOf('[data-testid="terminal-active-marker"]'),
+			providerStatus: textOf('[data-testid="browser-provider-status"]'),
+			diagnosticsText: textOf('[data-testid="commander-diagnostics-panel"]'),
+			webviewUrl,
+		};
+	});
+}
+
+async function observeQaStep(page, name, plannedAction) {
+	const stepNumber = String(observations.length + 1).padStart(2, "0");
+	const slug = `${stepNumber}-${slugify(name)}`;
+	const screenshot = await capture(page, slug);
+	const terminalText = await readTerminalVisibleText(page).catch(
+		(error) => `Failed to read terminal text: ${error?.message || error}`,
+	);
+	const terminalTextPath = join(observationsDir, `${slug}-terminal.txt`);
+	writeFileSync(terminalTextPath, `${terminalText}\n`);
+	const terminalAnalysis = analyzeCodexTerminalState(terminalText);
+	const domState = await readDomState(page).catch((error) => ({
+		error: error?.message || String(error),
+	}));
+	const observation = {
+		step: observations.length + 1,
+		name,
+		plannedAction,
+		screenshot,
+		terminalTextPath,
+		terminalState: terminalAnalysis,
+		domState,
+		consoleErrorCount: consoleErrors.length,
+		pageErrorCount: pageErrors.length,
+		decision: "pending",
+		decisionReason: "",
+	};
+	observations.push(observation);
+	return observation;
+}
+
+function decideObservation(observation, decision, reason) {
+	observation.decision = decision;
+	observation.decisionReason = reason;
+}
+
+function detectHooksReviewUi(text) {
+	const normalized = cleanTerminalText(text).replace(/\s+/g, " ").trim();
+	const hasHooksWord = /\bhooks?\b/i.test(normalized);
+	const hasUiWord =
+		/\b(approve|accept|allow|deny|enabled|disabled|command|hook\s+\d+)\b/i.test(
+			normalized,
+		);
+	const isOnlyReviewWarning =
+		/hooks?\s+need\s+review\s+before\s+they\s+can\s+run/i.test(normalized) &&
+		/Open\s+\/hooks\s+to\s+review\s+them/i.test(normalized) &&
+		!hasUiWord;
+	return hasHooksWord && hasUiWord && !isOnlyReviewWarning;
+}
+
+function hasCodexHooksWarning(text) {
+	const normalized = cleanTerminalText(text).replace(/\s+/g, " ").trim();
+	return (
+		/hooks?\s+need\s+review\s+before\s+they\s+can\s+run/i.test(normalized) ||
+		/Open\s+\/hooks\s+to\s+review\s+them/i.test(normalized)
+	);
+}
+
+function hasCodexReadinessProbeResponse(text) {
+	return /(^|\n)\s*CODEX_WORKER_READY\s*($|\n)/.test(cleanTerminalText(text));
+}
+
 function classifyWorkerFromTerminalText(text) {
-	const normalized = String(text || "").replace(/\s+/g, " ").trim();
+	const normalized = cleanTerminalText(text).replace(/\s+/g, " ").trim();
 	const codexLaunchCommandPattern =
 		/\bcodex\s+--dangerously-bypass-approvals-and-sandbox\b/i;
+	const hooksWarningDetected = hasCodexHooksWarning(text);
 	if (!normalized) {
 		return {
 			ready: false,
 			type: "unknown",
 			state: "not-started",
 			reason: "Terminal text unavailable",
-		};
-	}
-	if (
-		/hooks?\s+need\s+review\s+before\s+they\s+can\s+run/i.test(normalized) ||
-		/Open\s+\/hooks\s+to\s+review\s+them/i.test(normalized)
-	) {
-		return {
-			ready: false,
-			type: "codex",
-			state: "hooks-review-required",
-			reason:
-				"Codex worker blocked: hooks review required (3 hooks need review before they can run / Open /hooks to review them)",
-			nextAction:
-				"DoyDeck Terminalで `/hooks` を開き、hooksを確認/承認してからReal Agent QAを再実行してください。",
+			hooksWarningDetected,
 		};
 	}
 	if (/\bOpenAI\s+Codex\b/i.test(normalized)) {
 		return {
-			ready: true,
+			ready: false,
 			type: "codex",
-			state: "worker-ready",
-			reason: "OpenAI Codex worker signal detected",
+			state: "codex-started",
+			reason: hooksWarningDetected
+				? "OpenAI Codex UI detected; hooks warning recorded, readiness probe required"
+				: "OpenAI Codex UI detected; readiness probe required",
+			hooksWarningDetected,
 		};
 	}
 	if (codexLaunchCommandPattern.test(normalized)) {
@@ -412,6 +697,7 @@ function classifyWorkerFromTerminalText(text) {
 			state: "launch-command-sent",
 			reason:
 				"Codex launch command was sent, but worker-ready UI signal was not detected yet",
+			hooksWarningDetected,
 		};
 	}
 	const codexSignals = [
@@ -420,6 +706,8 @@ function classifyWorkerFromTerminalText(text) {
 		/\besc to interrupt\b/i,
 		/\bWrite tests for @filename\b/i,
 		/\bcodex-cli\b/i,
+		/hooks?\s+need\s+review\s+before\s+they\s+can\s+run/i,
+		/Open\s+\/hooks\s+to\s+review\s+them/i,
 	];
 	const claudeSignals = [
 		/\bClaude Code\b/i,
@@ -430,10 +718,13 @@ function classifyWorkerFromTerminalText(text) {
 	];
 	if (codexSignals.some((pattern) => pattern.test(normalized))) {
 		return {
-			ready: true,
+			ready: false,
 			type: "codex",
-			state: "worker-ready",
-			reason: "Codex-like terminal UI signal detected",
+			state: "codex-started",
+			reason: hooksWarningDetected
+				? "Codex-like terminal UI signal detected; hooks warning recorded, readiness probe required"
+				: "Codex-like terminal UI signal detected; readiness probe required",
+			hooksWarningDetected,
 		};
 	}
 	if (claudeSignals.some((pattern) => pattern.test(normalized))) {
@@ -442,6 +733,7 @@ function classifyWorkerFromTerminalText(text) {
 			type: "claude",
 			state: "worker-ready",
 			reason: "Claude Code-like terminal UI signal detected",
+			hooksWarningDetected,
 		};
 	}
 	if (/%\s*$/.test(normalized) || /\$\s*$/.test(normalized)) {
@@ -450,6 +742,7 @@ function classifyWorkerFromTerminalText(text) {
 			type: "shell",
 			state: "not-started",
 			reason: "Terminal appears to be a normal shell prompt",
+			hooksWarningDetected,
 		};
 	}
 	return {
@@ -457,6 +750,7 @@ function classifyWorkerFromTerminalText(text) {
 		type: "unknown",
 		state: "unknown",
 		reason: "No Claude Code / Codex worker signal detected",
+		hooksWarningDetected,
 	};
 }
 
@@ -482,6 +776,295 @@ function buildWorkerApprovalPrompt(command, purpose) {
 DoyがOKしたら実行します。`;
 }
 
+function buildHooksApprovalPrompt() {
+	return `確認:
+Codex Workerのhooks reviewを開き、必要なら承認操作を進めてよいですか？
+
+目的:
+- Real Agent QAでCodex Workerをready状態にするため
+
+実行予定操作:
+- DoyDeck Terminalへ \`/hooks\` を送信する
+- hooks画面の内容をスクショ/レポートに保存する
+- 許可がある場合だけ、hooks承認操作を試みる
+
+理由:
+- Codex Workerが hooks review required で止まっているため
+- hooks未承認のままだとReal Agent QAの実往復を開始できません
+
+想定リスク:
+- hooks承認はCodex Workerが実行するhookを許可する操作です
+- APPROVE_HOOKSなしでは承認操作を行いません
+
+DoyがOKしたら \`DOYDECK_REAL_AGENT_QA_REVIEW_HOOKS=1\` と、承認まで行う場合は \`DOYDECK_REAL_AGENT_QA_APPROVE_HOOKS=1\` を付けて再実行します。`;
+}
+
+async function reviewCodexHooksIfRequested(page, workerStatus) {
+	if (workerStatus.state !== "hooks-review-required") {
+		return workerStatus;
+	}
+	prepareSummary.hooksReviewRequired = "yes";
+	prepareSummary.hooksApprovalPrompt = buildHooksApprovalPrompt();
+	if (!reviewHooks) {
+		prepareSummary.hooksReviewResult =
+			"hooks review required, but DOYDECK_REAL_AGENT_QA_REVIEW_HOOKS=1 was not set";
+		return workerStatus;
+	}
+
+	record(
+		"PASS",
+		"Codex hooks review required",
+		"Detected Codex hooks review blocker; opening /hooks for read-only review",
+	);
+	const beforeHooksText = await readTerminalVisibleText(page).catch(() => "");
+	const beforeState = analyzeCodexTerminalState(beforeHooksText);
+	prepareSummary.hooksTerminalLookedLikeCodexTui = beforeState.codexTui
+		? "yes"
+		: "no";
+	prepareSummary.hooksTerminalLookedLikeShell = beforeState.shell ? "yes" : "no";
+	await capture(page, "02a-before-hooks-command");
+	let hooksPaneId = "";
+	try {
+		hooksPaneId = await sendTerminalLineViaRuntime(page, "/hooks");
+		prepareSummary.hooksCommandSubmitted = "yes";
+		record(
+			"PASS",
+			"Codex hooks command submitted",
+			`Submitted /hooks via terminal.write to ${hooksPaneId}`,
+		);
+	} catch (error) {
+		prepareSummary.hooksCommandSubmitted = "no";
+		prepareSummary.hooksBlockedReason =
+			error instanceof Error ? error.message : "Failed to submit /hooks";
+		record("BLOCKED", "Codex hooks command submitted", prepareSummary.hooksBlockedReason);
+		return {
+			...workerStatus,
+			nextAction:
+				"QA runner could not submit /hooks to the terminal runtime. DoyDeck Terminal上で手動確認してください。",
+		};
+	}
+	await page.waitForTimeout(3000);
+	await capture(page, "02b-after-hooks-command");
+	let hooksText = await readTerminalVisibleText(page).catch(() => "");
+	const afterState = analyzeCodexTerminalState(hooksText);
+	prepareSummary.hooksTerminalLookedLikeCodexTui = afterState.codexTui
+		? "yes"
+		: "no";
+	prepareSummary.hooksTerminalLookedLikeShell = afterState.shell ? "yes" : "no";
+	const hooksUiDetected = detectHooksReviewUi(hooksText);
+	prepareSummary.hooksUiDetected = hooksUiDetected ? "yes" : "no";
+	const hooksPreview = compactTextPreview(hooksText);
+	writeFileSync(hooksReviewTextPath, `${hooksPreview}\n`);
+	prepareSummary.hooksReviewOpened = hooksUiDetected ? "yes" : "no";
+	prepareSummary.hooksReviewResult = approveHooks
+		? "hooks review opened; approval requested"
+		: "hooks review opened; approval not attempted";
+	prepareSummary.hooksReviewTextPreview = hooksPreview;
+	record(
+		"PASS",
+		"Codex hooks review text saved",
+		`Saved hooks review text to ${hooksReviewTextPath}`,
+	);
+	if (hooksUiDetected) {
+		await capture(page, "02c-hooks-ui-detected");
+	} else {
+		prepareSummary.hooksBlockedReason = afterState.shell
+			? "Codex appears to have returned to shell before /hooks review UI opened"
+			: "Codex hooks review required, but /hooks command did not open review UI";
+		prepareSummary.hooksReviewResult = prepareSummary.hooksBlockedReason;
+		record("BLOCKED", "Codex hooks UI", prepareSummary.hooksBlockedReason);
+		return {
+			...workerStatus,
+			nextAction:
+				"/hooks command was submitted, but hooks review UI was not detected. DoyDeck Terminal上で手動確認してください。",
+		};
+	}
+
+	if (!approveHooks) {
+		return {
+			...workerStatus,
+			nextAction:
+				"DoyDeck Terminalでhooksを確認/承認してからReal Agent QAを再実行してください。自動承認する場合は DOYDECK_REAL_AGENT_QA_APPROVE_HOOKS=1 を指定してください。",
+		};
+	}
+
+	prepareSummary.hooksApprovalAttempted = "yes";
+	const approvalKey = classifyHooksApprovalPrompt(hooksText);
+	if (!approvalKey) {
+		prepareSummary.hooksReviewResult =
+			"hooks approval requested, but approval control could not be inferred";
+		record(
+			"BLOCKED",
+			"Codex hooks approval",
+			"APPROVE_HOOKS was set, but the hooks approval control could not be inferred safely",
+		);
+		return {
+			...workerStatus,
+			nextAction:
+				"hooks画面の承認操作を安全に推定できませんでした。DoyDeck Terminal上で手動確認/承認してからReal Agent QAを再実行してください。",
+		};
+	}
+
+	await focusTerminalForInput(page);
+	if (approvalKey === "Enter") {
+		await page.keyboard.press("Enter");
+	} else {
+		await page.keyboard.press(approvalKey);
+	}
+	await page.waitForTimeout(10_000);
+	await capture(page, "02b-codex-hooks-approval");
+	hooksText = await readTerminalVisibleText(page).catch(() => "");
+	const nextStatus = classifyWorkerFromTerminalText(hooksText);
+	prepareSummary.hooksReviewTextPreview = compactTextPreview(hooksText);
+	writeFileSync(hooksReviewTextPath, `${prepareSummary.hooksReviewTextPreview}\n`);
+	if (nextStatus.ready) {
+		prepareSummary.hooksApprovalGranted = "yes";
+		prepareSummary.hooksReviewResult =
+			"hooks approval attempted and worker-ready signal detected";
+		record(
+			"PASS",
+			"Codex hooks approval",
+			`Approval key ${approvalKey} sent; ${nextStatus.reason}`,
+		);
+		return nextStatus;
+	}
+	prepareSummary.hooksReviewResult = `hooks approval attempted with ${approvalKey}, but worker is still not ready: ${nextStatus.reason}`;
+	record(
+		"BLOCKED",
+		"Codex hooks approval",
+		prepareSummary.hooksReviewResult,
+	);
+	return nextStatus;
+}
+
+function shouldProbeCodexReadiness(workerStatus) {
+	return (
+		workerStatus?.type === "codex" &&
+		["codex-started", "launch-command-sent", "unknown"].includes(
+			workerStatus.state,
+		)
+	);
+}
+
+async function probeCodexWorkerReadiness(page, workerStatus) {
+	prepareSummary.hooksWarningDetected = workerStatus.hooksWarningDetected
+		? "yes"
+		: "no";
+	if (!shouldProbeCodexReadiness(workerStatus)) return workerStatus;
+
+	const observation = await observeQaStep(
+		page,
+		"Before readiness probe",
+		"send CODEX_WORKER_READY readiness probe",
+	);
+	prepareSummary.readinessPreconditionScreenshot = observation.screenshot;
+	const terminalState = {
+		...observation.terminalState,
+		terminalState: observation.terminalState.codexCliError
+			? "codex-exited-or-cli-error"
+			: observation.terminalState.shell && !observation.terminalState.codexTui
+				? "shell"
+				: observation.terminalState.codexTui && !observation.terminalState.shell
+					? "codex-interactive"
+					: observation.terminalState.codexTui && observation.terminalState.shell
+						? "ambiguous"
+						: "unknown",
+		reason: observation.terminalState.codexCliError
+			? observation.terminalState.shell
+				? "Codex CLI error and shell prompt detected in recent terminal output"
+				: "Codex CLI error detected in recent terminal output"
+			: observation.terminalState.shell && !observation.terminalState.codexTui
+				? "Recent terminal output looks like a shell prompt, not Codex interactive UI"
+				: observation.terminalState.codexTui && !observation.terminalState.shell
+					? "Recent terminal output looks like Codex interactive UI"
+					: observation.terminalState.codexTui && observation.terminalState.shell
+						? "Both Codex UI and shell prompt signals were detected in recent terminal output"
+						: "Terminal state could not be classified",
+		codexInteractive:
+			observation.terminalState.codexTui &&
+			!observation.terminalState.shell &&
+			!observation.terminalState.codexCliError,
+	};
+	prepareSummary.terminalState = terminalState.terminalState;
+	prepareSummary.terminalLookedLikeShell = terminalState.shell ? "yes" : "no";
+	prepareSummary.terminalLookedLikeCodexInteractive = terminalState.codexTui
+		? "yes"
+		: "no";
+	prepareSummary.terminalStateReason = terminalState.reason;
+	record(
+		terminalState.codexInteractive ? "PASS" : "BLOCKED",
+		"Codex readiness precondition",
+		terminalState.reason,
+	);
+	if (!terminalState.codexInteractive) {
+		const reason =
+			terminalState.terminalState === "shell"
+				? "Terminal is shell, not Codex worker"
+				: terminalState.terminalState === "codex-exited-or-cli-error"
+					? "Codex process exited to shell before readiness probe"
+					: terminalState.terminalState === "ambiguous"
+						? "Codex worker not interactive; shell prompt is also visible"
+						: "Codex worker not interactive";
+		decideObservation(observation, "BLOCKED", reason);
+		prepareSummary.readinessActionSkippedReason = reason;
+		prepareSummary.readinessProbeSent = "no";
+		record("BLOCKED", "Codex readiness probe skipped", reason);
+		return {
+			...workerStatus,
+			ready: false,
+			state: "worker-not-interactive",
+			reason,
+			nextAction:
+				"DoyDeck TerminalでCodexがinteractive状態か確認してからReal Agent QAを再実行してください。",
+		};
+	}
+
+	decideObservation(observation, "PROCEED", "Codex interactive precondition satisfied");
+	prepareSummary.readinessProbeSent = "yes";
+	record(
+		"PASS",
+		"Codex readiness probe sent",
+		"Sending CODEX_WORKER_READY probe to verify actual Worker responsiveness",
+	);
+	await sendTerminalLineViaRuntime(page, codexReadinessProbePrompt);
+	await page.waitForTimeout(45_000);
+	await capture(page, "02b-codex-readiness-probe");
+	const terminalText = await readTerminalVisibleText(page).catch(() => "");
+	if (hasCodexReadinessProbeResponse(terminalText)) {
+		prepareSummary.readinessProbeResponse = "detected";
+		record(
+			"PASS",
+			"Codex readiness probe response",
+			"CODEX_WORKER_READY detected in terminal output",
+		);
+		return {
+			ready: true,
+			type: "codex",
+			state: "worker-ready",
+			reason: workerStatus.hooksWarningDetected
+				? "Codex responded to readiness probe; hooks warning recorded but not blocking"
+				: "Codex responded to readiness probe",
+			hooksWarningDetected: workerStatus.hooksWarningDetected,
+		};
+	}
+	prepareSummary.readinessProbeResponse = "not detected";
+	record(
+		"BLOCKED",
+		"Codex readiness probe response",
+		"CODEX_WORKER_READY was not detected after readiness probe",
+	);
+	return {
+		...workerStatus,
+		ready: false,
+		state: "worker-not-responding",
+		reason: workerStatus.hooksWarningDetected
+			? "Codex hooks warning was detected, and readiness probe did not receive CODEX_WORKER_READY"
+			: "Codex readiness probe did not receive CODEX_WORKER_READY",
+		nextAction:
+			"DoyDeck TerminalでCodexが入力を受け付け、応答できる状態か確認してください。",
+	};
+}
+
 async function maybeStartWorker(page, workerStatus) {
 	const purpose =
 		"DoyDeck Real Agent QAでBrowser AIからTerminal WorkerへのAuto Loop実往復を検証するため";
@@ -496,6 +1079,20 @@ async function maybeStartWorker(page, workerStatus) {
 			approvalGranted: false,
 			result: workerStatus.reason,
 			nextAction: workerStatus.nextAction || "",
+			approvalPrompt,
+		};
+	}
+	if (shouldProbeCodexReadiness(workerStatus)) {
+		const probedStatus = await probeCodexWorkerReadiness(page, workerStatus);
+		return {
+			status: probedStatus.ready ? "PASS" : "BLOCKED",
+			selectedWorkerType: probedStatus.type || workerPreference,
+			readinessState: probedStatus.state,
+			command: "(readiness probe)",
+			approvalRequired: false,
+			approvalGranted: false,
+			result: probedStatus.reason,
+			nextAction: probedStatus.nextAction || "",
 			approvalPrompt,
 		};
 	}
@@ -515,7 +1112,17 @@ async function maybeStartWorker(page, workerStatus) {
 		};
 	}
 	const terminal = page.getByTestId("terminal-pane").first();
-	await sendTerminalLineViaUi(page, workerStartCommand);
+	const startObservation = await observeQaStep(
+		page,
+		"Before worker start command",
+		`send ${workerStartCommand}`,
+	);
+	decideObservation(
+		startObservation,
+		"PROCEED",
+		"Real send and worker-start approval were provided; sending worker start command to active terminal",
+	);
+	await sendTerminalLineViaRuntime(page, workerStartCommand);
 	record(
 		"PASS",
 		"Worker prepare command sent",
@@ -527,15 +1134,19 @@ async function maybeStartWorker(page, workerStatus) {
 		(await readTerminalVisibleText(page).catch(() => "")) ||
 		(await terminal.textContent({ timeout: 5000 }).catch(() => ""));
 	const nextStatus = classifyWorkerFromTerminalText(terminalText);
+	prepareSummary.hooksWarningDetected = nextStatus.hooksWarningDetected
+		? "yes"
+		: "no";
+	const probedStatus = await probeCodexWorkerReadiness(page, nextStatus);
 	return {
-		status: nextStatus.ready ? "PASS" : "BLOCKED",
-		selectedWorkerType: nextStatus.ready ? nextStatus.type : workerPreference,
-		readinessState: nextStatus.state,
+		status: probedStatus.ready ? "PASS" : "BLOCKED",
+		selectedWorkerType: probedStatus.ready ? probedStatus.type : workerPreference,
+		readinessState: probedStatus.state,
 		command: workerStartCommand,
 		approvalRequired: true,
 		approvalGranted: true,
-		result: nextStatus.reason,
-		nextAction: nextStatus.nextAction || "",
+		result: probedStatus.reason,
+		nextAction: probedStatus.nextAction || "",
 		approvalPrompt,
 	};
 }
@@ -552,10 +1163,15 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 	body.push("- 起動方式: Playwright _electron.launch + apps/desktop app path");
 	body.push(`- Self prepare: \`${selfPrepare ? "yes" : "no"}\``);
 	body.push(`- Real send allowed: \`${allowRealSend ? "yes" : "no"}\``);
-	body.push(`- Worker identity confirmed: \`${workerConfirmed ? "yes" : "no"}\``);
+	body.push(
+		`- Worker identity confirmed: \`${prepareSummary.workerReadinessState === "worker-ready" ? "yes" : "no"}\``,
+	);
 	body.push(`- Provider preference: \`${providerPreference}\``);
 	body.push(`- Worker preference: \`${workerPreference}\``);
 	body.push(`- Worker start approved: \`${workerStartApproved ? "yes" : "no"}\``);
+	body.push(`- Review Codex hooks: \`${reviewHooks ? "yes" : "no"}\``);
+	body.push(`- Approve Codex hooks: \`${approveHooks ? "yes" : "no"}\``);
+	body.push("- QA-only terminal output accessor: `enabled`");
 	body.push(`- Max wait ms: \`${maxWaitMs}\``);
 	body.push(`- Electron executable: \`${electronPath}\``);
 	body.push(`- App launch target: \`${appLaunchTarget}\``);
@@ -573,15 +1189,73 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 	body.push(`- worker prepare command: \`${prepareSummary.workerPrepareCommand}\``);
 	body.push(`- Doy approval required: \`${prepareSummary.doyApprovalRequired}\``);
 	body.push(`- Doy approval granted: \`${prepareSummary.doyApprovalGranted}\``);
+	body.push(`- hooks warning detected: \`${prepareSummary.hooksWarningDetected}\``);
+	body.push(`- terminal state: \`${prepareSummary.terminalState}\``);
+	body.push(`- looked like shell: \`${prepareSummary.terminalLookedLikeShell}\``);
+	body.push(
+		`- looked like Codex interactive: \`${prepareSummary.terminalLookedLikeCodexInteractive}\``,
+	);
+	if (prepareSummary.terminalStateReason) {
+		body.push(`- terminal state reason: ${prepareSummary.terminalStateReason}`);
+	}
+	body.push(`- readiness probe sent: \`${prepareSummary.readinessProbeSent}\``);
+	body.push(
+		`- readiness probe response: \`${prepareSummary.readinessProbeResponse}\``,
+	);
+	if (prepareSummary.readinessActionSkippedReason) {
+		body.push(
+			`- readiness probe skipped reason: ${prepareSummary.readinessActionSkippedReason}`,
+		);
+	}
+	if (prepareSummary.readinessPreconditionScreenshot) {
+		body.push(
+			`- readiness precondition screenshot: \`${prepareSummary.readinessPreconditionScreenshot}\``,
+		);
+	}
 	body.push(`- prepare result: ${prepareSummary.prepareResult}`);
 	if (prepareSummary.blockedReason) {
 		body.push(`- blocked reason: ${prepareSummary.blockedReason}`);
 	}
 	if (prepareSummary.nextAction) {
 		body.push("", "### Next action", "");
-		body.push("- DoyDeck Terminalで `/hooks` を開く");
-		body.push("- hooksを確認/承認する");
-		body.push("- その後、Real Agent QAを再実行する");
+		if (prepareSummary.hooksReviewRequired === "yes") {
+			body.push("- DoyDeck Terminalで `/hooks` を開く");
+			body.push("- hooksを確認/承認する");
+			body.push("- その後、Real Agent QAを再実行する");
+		} else {
+			body.push(`- ${prepareSummary.nextAction}`);
+		}
+	}
+	if (prepareSummary.hooksReviewRequired === "yes") {
+		body.push("", "### Codex hooks review", "");
+		body.push(`- review required: \`${prepareSummary.hooksReviewRequired}\``);
+		body.push(`- review opened: \`${prepareSummary.hooksReviewOpened}\``);
+		body.push(`- approval attempted: \`${prepareSummary.hooksApprovalAttempted}\``);
+		body.push(`- approval granted: \`${prepareSummary.hooksApprovalGranted}\``);
+		body.push(`- hooks command submitted: \`${prepareSummary.hooksCommandSubmitted}\``);
+		body.push(`- hooks UI detected: \`${prepareSummary.hooksUiDetected}\``);
+		body.push(
+			`- terminal looked like Codex TUI: \`${prepareSummary.hooksTerminalLookedLikeCodexTui}\``,
+		);
+		body.push(
+			`- terminal looked like shell: \`${prepareSummary.hooksTerminalLookedLikeShell}\``,
+		);
+		body.push(`- result: ${prepareSummary.hooksReviewResult}`);
+		if (prepareSummary.hooksBlockedReason) {
+			body.push(`- hooks blocked reason: ${prepareSummary.hooksBlockedReason}`);
+		}
+		body.push(`- hooks review text: \`${hooksReviewTextPath}\``);
+		if (prepareSummary.hooksReviewTextPreview) {
+			body.push("", "```text");
+			body.push(prepareSummary.hooksReviewTextPreview);
+			body.push("```");
+		}
+		if (prepareSummary.hooksApprovalPrompt) {
+			body.push("", "#### Hooks approval prompt", "");
+			body.push("```text");
+			body.push(prepareSummary.hooksApprovalPrompt);
+			body.push("```");
+		}
 	}
 	if (prepareSummary.approvalPrompt) {
 		body.push("", "### Worker start approval prompt", "");
@@ -594,6 +1268,32 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 		body.push("- none");
 	} else {
 		for (const screenshot of screenshots) body.push(`- \`${screenshot}\``);
+	}
+	body.push("", "## Observation steps", "");
+	if (observations.length === 0) {
+		body.push("- none");
+	} else {
+		for (const observation of observations) {
+			const terminal = observation.terminalState;
+			body.push(
+				"",
+				`### Step ${observation.step}: ${observation.name}`,
+				"",
+				`- planned next action: ${observation.plannedAction}`,
+				`- screenshot: \`${rel(observation.screenshot)}\``,
+				`- terminal output: \`${rel(observation.terminalTextPath)}\``,
+				`- terminal looks like shell: \`${terminal.shell ? "yes" : "no"}\``,
+				`- terminal looks like Codex interactive: \`${terminal.codexTui ? "yes" : "no"}\``,
+				`- Codex CLI error: \`${terminal.codexCliError ? "yes" : "no"}\``,
+				`- DOM provider status: \`${observation.domState.providerStatus || "(empty)"}\``,
+				`- DOM terminal active: \`${observation.domState.terminalActive || "(empty)"}\``,
+				`- DOM auto mode: \`${observation.domState.autoMode || "(empty)"}\``,
+				`- console errors at step: \`${observation.consoleErrorCount}\``,
+				`- page errors at step: \`${observation.pageErrorCount}\``,
+				`- decision: \`${observation.decision}\``,
+				`- decision reason: ${observation.decisionReason || "(not set)"}`,
+			);
+		}
 	}
 	body.push("", "## Check results", "");
 	if (checks.length === 0) {
@@ -663,6 +1363,20 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 	body.push("- Worker起動には、上記に加えて `DOYDECK_REAL_AGENT_QA_APPROVE_WORKER_START=1` または `--approve-worker-start` が必要です。");
 	body.push("- Browser AIはReal Agent QAではChatGPT / Claudeのみ対象です。`DOYDECK_REAL_AGENT_QA_BROWSER=chatgpt|claude` で選べます。");
 	body.push("- TerminalがClaude Code / CodexであることはDoy側で事前確認してください。普通のshellへWorker指示を送らないための安全ゲートです。");
+	body.push("", "## Agent Review Prompt", "");
+	body.push("以下のreport.md、screenshots、terminal outputを見て、Real Agent QAの次アクションを判断してください。");
+	body.push("", "観点:");
+	body.push("- 今のTerminalはCodex Worker状態か");
+	body.push("- shellに戻っていないか");
+	body.push("- readiness probeを送ってよい状態か");
+	body.push("- Browser AIは使える状態か");
+	body.push("- Auto Loopを進めてよいか");
+	body.push("- BLOCKEDなら何が原因か");
+	body.push("", "出力:");
+	body.push("- 判定: PROCEED / BLOCKED / NEEDS_FIX");
+	body.push("- 理由");
+	body.push("- 次に実行すべき操作");
+	body.push("- 修正すべき箇所");
 	if (failedBeforeLaunch) {
 		body.push("", "## 起動前エラー", "");
 		body.push("- build artifactが不足している場合は `bun run --cwd apps/desktop compile:app` を実行してください。");
@@ -801,8 +1515,14 @@ try {
 			.textContent({ timeout: 5000 })
 			.catch(() => ""));
 	const workerStatus = classifyWorkerFromTerminalText(terminalText);
+	const workerIdentityStatus =
+		workerStatus.ready
+			? "PASS"
+			: shouldProbeCodexReadiness(workerStatus)
+				? "UNKNOWN"
+				: "BLOCKED";
 	record(
-		workerStatus.ready ? "PASS" : "BLOCKED",
+		workerIdentityStatus,
 		"Terminal Worker identity",
 		`${workerStatus.type}: ${workerStatus.reason}`,
 	);
