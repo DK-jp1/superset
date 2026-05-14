@@ -1,7 +1,9 @@
 # Browser AI Runtime Architecture
 
-> Status: **Phase 0 (design) + S5.8 Phase 1 (active-tab-only guard) implemented.**
-> S5.7 Per-Tab Browser AI Session body and S5.8 Phase 2+ remain design-only.
+> Status: **Phase 0 (design) + S5.8 Phase 1 (active-tab-only guard) +
+> S5.10 Phase 1 (tab context visibility) implemented.** S5.7 Per-Tab
+> Browser AI Session body (composite registry key, multi-webview parking)
+> and S5.8/S5.10 Phase 2+ remain design-only.
 
 ## 1. Why this document exists
 
@@ -200,6 +202,52 @@ Start with Phase 1. Do not skip ahead. The Phase 1 output (`activeTabId`
 visible in Diagnostics + abort-on-tab-switch) is small, reversible, and
 gives Real Agent QA a stable observation surface for the Phase 2 + Phase 3
 work that will actually change the webview lifecycle.
+
+## 10c. S5.10 Phase 1 — tab context visibility (IMPLEMENTED)
+
+Status: **landed**. Strictly additive on top of S5.8 Phase 1. Still no
+webview-side change; `browserRuntimeRegistry` is untouched.
+
+What ships:
+
+* `resetAutoLoopState` now emits `auto loop armed for tab <last-8>`
+  (or `auto loop armed for tab (none)` when no workspace is bound).
+* When `tabContextStatus` flips from `"same"` to `"changed"` for the
+  first time during a single armed run, a new event
+  `tab context changed: <armed-8> -> <current-8>` is appended to
+  `recentEvents` just before the existing `tab switched ... aborting auto loop`
+  / `stopped: ...` events. A `tabContextSeenChangedRef` ref guards the
+  flood case so we don't write the same event every poll while the
+  user remains on the wrong tab. The ref is reset on the next arm.
+* `CommanderHelperBar` Diag panel gains a static hint:
+  `Browser AI: shared webview (S5.10 Phase 1; per-tab slot pending S5.7 Phase 2)`
+  so it's obvious from the running app that we're still on the single
+  shared webview model and per-tab is still TODO.
+
+What does NOT change:
+
+* No new webview, no composite registry key, no per-tab Auto Loop.
+* Stop reasons / phase transitions / output offset polling — all
+  identical to S5.8 Phase 1.
+* `useWorkspaceEvent` lifecycle subscription from S5.9 Phase 1 still
+  fires only inside `waiting-worker` and still writes observation-only
+  entries.
+
+Why "visibility before plumbing":
+
+* The Phase 0 doc § 7 says Phase 2 = composite slot key in
+  `browserRuntimeRegistry`. Before we touch that, anyone debugging a
+  bad relay needs to be able to read off "which tab was armed, which
+  tab is current, and when did they diverge" from the Diag panel and
+  the QA report alone — without having to attach DevTools. This commit
+  is that diagnostic surface.
+
+Next step (NOT in this change):
+
+* S5.7 Phase 2: introduce `(workspaceId, tabId, paneId)` as the
+  registry key in `browserRuntimeRegistry` (webview count still 1).
+* S5.8 Phase 2: derive `activeTabIdAtArm` from that composite key so
+  multi-tab parallel loops become well-defined.
 
 ## 10b. S5.8 Phase 1 — active-tab-only guard (IMPLEMENTED)
 

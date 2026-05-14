@@ -491,6 +491,10 @@ export function CommanderHelperBar({
 								<span className="col-span-2">
 									Tab context: {autoLoopDiagnostics.tabContextStatus}
 								</span>
+								<span className="col-span-2 text-foreground/60">
+									Browser AI: shared webview (S5.10 Phase 1; per-tab slot
+									pending S5.7 Phase 2)
+								</span>
 							</div>
 							{autoLoopDiagnostics.recentEvents.length > 0 && (
 								<div className="mt-1 border-t pt-1">

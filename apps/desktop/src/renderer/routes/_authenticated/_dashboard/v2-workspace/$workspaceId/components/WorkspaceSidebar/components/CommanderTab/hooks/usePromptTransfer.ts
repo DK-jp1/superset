@@ -1413,6 +1413,10 @@ export function usePromptTransfer({
 	const currentActiveTabId = useTabsStore(
 		(s) => (workspaceId ? s.activeTabIds[workspaceId] ?? null : null),
 	);
+	// S5.10 Phase 1: track the tab id we've already logged a `tab context
+	// changed` event for, so we don't append a duplicate every poll while the
+	// user is on the wrong tab.
+	const tabContextSeenChangedRef = useRef<string | null>(null);
 	const [autoLoopLastActivityAt, setAutoLoopLastActivityAt] =
 		useState<number | null>(null);
 	const [autoLoopDiagnostics, setAutoLoopDiagnostics] =
@@ -1554,11 +1558,18 @@ export function usePromptTransfer({
 			? useTabsStore.getState().activeTabIds[workspaceId] ?? null
 			: null;
 		activeTabIdAtArmRef.current = armedTabId;
+		tabContextSeenChangedRef.current = null;
 		setAutoLoopTurn(0);
 		setAutoLoopStopReason(null);
 		setAutoLoopPhase("waiting-browser-ai");
 		setAutoLoopLastAction("Auto Loop armed");
 		setAutoLoopLastActivityAt(null);
+		// S5.10 Phase 1: surface the tab the loop armed against in the arm
+		// event itself. The Diag panel already shows `Armed tab` / `Current
+		// tab` / `Tab context` separately, but having the same id in the
+		// event log lets us trace tab context through a screenshot or QA
+		// report without having to read the static panel fields.
+		const armedTabSuffix = armedTabId ? armedTabId.slice(-8) : "(none)";
 		setAutoLoopDiagnostics({
 			...EMPTY_AUTO_LOOP_DIAGNOSTICS,
 			activeTimeoutType: "browser no activity",
@@ -1566,7 +1577,9 @@ export function usePromptTransfer({
 			hardMaxRemainingMs: AUTO_LOOP_HARD_MAX_WAIT_MS,
 			noActivityDeadlineAt: now + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
 			hardMaxDeadlineAt: now + AUTO_LOOP_HARD_MAX_WAIT_MS,
-			recentEvents: [{ at: now, label: "auto loop armed" }],
+			recentEvents: [
+				{ at: now, label: `auto loop armed for tab ${armedTabSuffix}` },
+			],
 			activeTabIdAtArm: armedTabId,
 			currentActiveTabId: armedTabId,
 			tabContextStatus: armedTabId ? "same" : "unknown",
@@ -1607,6 +1620,24 @@ export function usePromptTransfer({
 				tabContextStatus: status,
 			};
 		});
+		// S5.10 Phase 1: emit a discrete recent event the moment the tab
+		// context shifts from "same" to "changed". The abort event below
+		// already covers the same instant, but having a dedicated
+		// `tab context changed` line in recentEvents makes the cause
+		// readable even after the loop has stopped and `Tab context` reads
+		// "changed" statically. We do NOT log "same" each poll — that
+		// would flood the event log.
+		if (
+			armed &&
+			currentActiveTabId &&
+			currentActiveTabId !== armed &&
+			tabContextSeenChangedRef.current !== currentActiveTabId
+		) {
+			tabContextSeenChangedRef.current = currentActiveTabId;
+			appendAutoLoopEvent(
+				`tab context changed: ${armed.slice(-8)} -> ${currentActiveTabId.slice(-8)}`,
+			);
+		}
 		if (
 			armed &&
 			currentActiveTabId &&
