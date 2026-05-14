@@ -182,11 +182,18 @@ export function CommanderTab({
 
 	return (
 		<div
-			className="flex h-full flex-col overflow-hidden"
+			className="relative flex h-full min-w-0 flex-col overflow-hidden"
 			data-testid="commander-root"
 		>
 			{/* Browser view — primary UI */}
-			<div className="flex-1 min-h-0 flex flex-col">
+			{/* min-w-0 + overflow-hidden on this wrapper prevents its
+			    descendants (CommanderBrowser → useCommanderWebview's
+			    container → <webview>) from overflowing the commander-root
+			    bounds. Without this, the Browser AI region was rendering
+			    51px left of commander-root, intruding into the center
+			    pane area. Width-shrink behaviour is still flex's default;
+			    we just disallow shrink-below-content-min escape. */}
+			<div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
 				<CommanderBrowser
 					currentUrl={webview.currentUrl}
 					isLoading={webview.isLoading}
