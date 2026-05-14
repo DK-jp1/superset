@@ -702,6 +702,15 @@ function parseDiagnosticsSnapshot(text) {
 		"Browser AI:",
 	]);
 	const workerBindingStatus = matchField("Worker binding", ["Worker type:"]);
+	const workerBindingPolicy = matchField("Worker policy", [
+		"Required bound Worker:",
+	]);
+	const requireBoundWorker = matchField("Required bound Worker", [
+		"Fallback used:",
+	]);
+	const workerBindingFallbackUsed = matchField("Fallback used", [
+		"Worker type:",
+	]);
 	const workerType = matchField("Worker type", ["Browser activity:"]);
 	const activeTerminalPaneId = matchField("Active terminal", ["Bound worker:"]);
 	const boundWorkerPaneId = matchField("Bound worker", ["Bound terminal:"]);
@@ -748,6 +757,9 @@ function parseDiagnosticsSnapshot(text) {
 		commanderRuntimeUrl,
 		commanderRuntimeReason,
 		workerBindingStatus,
+		workerBindingPolicy,
+		requireBoundWorker,
+		workerBindingFallbackUsed,
 		workerType,
 		activeTerminalPaneId,
 		boundWorkerPaneId,
@@ -1435,6 +1447,18 @@ async function readBrowserAiState(page, label, screenshotPath = "") {
 			workerBindingStatus: fieldText(
 				'[data-testid="auto-loop-worker-binding-status"]',
 				"Worker binding",
+			),
+			workerBindingPolicy: fieldText(
+				'[data-testid="auto-loop-worker-binding-policy"]',
+				"Worker policy",
+			),
+			requireBoundWorker: fieldText(
+				'[data-testid="auto-loop-require-bound-worker"]',
+				"Required bound Worker",
+			),
+			workerBindingFallbackUsed: fieldText(
+				'[data-testid="auto-loop-worker-binding-fallback-used"]',
+				"Fallback used",
 			),
 			workerType: fieldText(
 				'[data-testid="auto-loop-worker-type"]',
@@ -2415,7 +2439,7 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 	} else {
 		for (const snapshot of browserAiStateSnapshots) {
 			body.push(
-				`- ${snapshot.label}: status=\`${snapshot.workerBindingStatus || "(not visible)"}\`; type=\`${snapshot.workerType || "(not visible)"}\`; activeTerminal=\`${snapshot.activeTerminalPaneId || "(not visible)"}\`; boundWorker=\`${snapshot.boundWorkerPaneId || "(not visible)"}\`; boundTerminal=\`${snapshot.boundTerminalId || "(not visible)"}\`; workerAtArm=\`${snapshot.workerPaneIdAtArm || "(not visible)"}\`; statusAtArm=\`${snapshot.workerBindingStatusAtArm || "(not visible)"}\`; reason=\`${snapshot.workerBindingReason || "(not visible)"}\``,
+				`- ${snapshot.label}: status=\`${snapshot.workerBindingStatus || "(not visible)"}\`; policy=\`${snapshot.workerBindingPolicy || "(not visible)"}\`; required=\`${snapshot.requireBoundWorker || "(not visible)"}\`; fallbackUsed=\`${snapshot.workerBindingFallbackUsed || "(not visible)"}\`; type=\`${snapshot.workerType || "(not visible)"}\`; activeTerminal=\`${snapshot.activeTerminalPaneId || "(not visible)"}\`; boundWorker=\`${snapshot.boundWorkerPaneId || "(not visible)"}\`; boundTerminal=\`${snapshot.boundTerminalId || "(not visible)"}\`; workerAtArm=\`${snapshot.workerPaneIdAtArm || "(not visible)"}\`; statusAtArm=\`${snapshot.workerBindingStatusAtArm || "(not visible)"}\`; reason=\`${snapshot.workerBindingReason || "(not visible)"}\``,
 			);
 		}
 	}
@@ -2808,6 +2832,61 @@ try {
 				"BLOCKED",
 				"Browser AI composer",
 				prepareSummary.composerFinalResult,
+			);
+		}
+	}
+
+	if (
+		allowRealSend &&
+		/Term\s*✓/.test(terminalStatus) &&
+		workerPrepare.status === "PASS"
+	) {
+		const actionsButton = page.getByTestId("commander-actions-button");
+		if (await isVisible(actionsButton, 3000)) {
+			await actionsButton.click();
+			await page.waitForTimeout(250);
+			const bindWorkerAction = page.getByTestId(
+				"commander-bind-worker-terminal",
+			);
+			if (await isVisible(bindWorkerAction, 3000)) {
+				const disabled = await bindWorkerAction
+					.evaluate(
+						(el) =>
+							el.getAttribute("aria-disabled") === "true" ||
+							el.hasAttribute("disabled") ||
+							el.getAttribute("data-disabled") === "",
+					)
+					.catch(() => false);
+				if (!disabled) {
+					await bindWorkerAction.click();
+					await page.waitForTimeout(700);
+					record(
+						"PASS",
+						"Worker binding auto-bind",
+						"Bound active terminal to current tab before Auto Loop strict mode",
+					);
+					await capture(page, "02-worker-bound-to-tab");
+				} else {
+					record(
+						"BLOCKED",
+						"Worker binding auto-bind",
+						"Bind active terminal action was disabled",
+					);
+					await page.keyboard.press("Escape").catch(() => {});
+				}
+			} else {
+				record(
+					"BLOCKED",
+					"Worker binding auto-bind",
+					"Bind active terminal action was not visible",
+				);
+				await page.keyboard.press("Escape").catch(() => {});
+			}
+		} else {
+			record(
+				"BLOCKED",
+				"Worker binding auto-bind",
+				"Commander Actions button was not visible",
 			);
 		}
 	}

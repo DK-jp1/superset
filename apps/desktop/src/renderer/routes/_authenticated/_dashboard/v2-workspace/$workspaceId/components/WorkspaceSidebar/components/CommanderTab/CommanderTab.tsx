@@ -70,6 +70,10 @@ export function CommanderTab({
 		createEmptyCommanderSession,
 	);
 	const [autoRelayMode, setAutoRelayMode] = useState<AutoRelayMode>("off");
+	const [
+		requireBoundWorkerForAutoLoop,
+		setRequireBoundWorkerForAutoLoop,
+	] = useState(true);
 
 	const workerPrompt = useMemo(
 		() => generateWorkerPrompt(state),
@@ -147,6 +151,7 @@ export function CommanderTab({
 		activeTerminal,
 		workerBinding,
 		autoRelayMode,
+		requireBoundWorkerForAutoLoop,
 		getLiveUrl: webview.getLiveUrl,
 		currentUrl: webview.currentUrl,
 		injectIntoPage: webview.injectIntoPage,
@@ -384,6 +389,10 @@ export function CommanderTab({
 					handoffPrompt={transfer.handoffPreview.text}
 					autoRelayMode={autoRelayMode}
 					onAutoRelayModeChange={setAutoRelayMode}
+					requireBoundWorkerForAutoLoop={requireBoundWorkerForAutoLoop}
+					onRequireBoundWorkerForAutoLoopChange={
+						setRequireBoundWorkerForAutoLoop
+					}
 					autoLoopMaxTurns={transfer.autoLoopMaxTurns}
 					onAutoLoopMaxTurnsChange={transfer.setAutoLoopMaxTurns}
 					autoLoopTurn={transfer.autoLoopTurn}

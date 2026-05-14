@@ -134,3 +134,52 @@ Recommended Phase 2:
 
 Full 1-tab-1Worker automation should wait until binding, readiness, and stale
 cleanup are stable under Real Agent QA.
+
+## S5.14 Strict Worker Binding
+
+S5.14 makes explicit Worker binding an Auto Loop safety condition. The goal is to stop Auto Loop from silently sending a Browser AI instruction to whichever Terminal happens to be active when multiple tabs or Terminals are open.
+
+### Policy
+
+Auto Loop now carries a Worker binding policy:
+
+- `strict`: Auto Loop requires a bound Worker for the current tab.
+- `fallback`: Auto Loop may use the active terminal fallback, but Diagnostics and QA reports must say fallback was used.
+
+The UI default for Auto Loop Preview is `strict`. Manual mode and Auto Relay Preview are unchanged. The escape hatch is an Actions-menu checkbox, `Require bound Worker for Auto Loop`, so a developer can temporarily allow fallback without changing the send path globally.
+
+### Start Conditions
+
+When Auto Loop is armed in strict mode:
+
+- `bound`: snapshot `workerPaneIdAtArm` and `terminalIdAtArm`, then continue.
+- `active-terminal` or `unbound`: do not start; stop reason is `worker binding required`.
+- `stale`: do not start; stop reason is `bound worker stale`.
+
+No Browser AI or Terminal send is attempted when the strict start condition fails.
+
+### Send Path
+
+Auto Loop still sends to the arm-time Worker target, not to the current focused terminal. If a bound Worker exists, that pane id is captured as `workerPaneIdAtArm` and used for the loop. If strict mode is on and no arm-time bound Worker exists, the loop is stopped before any terminal write.
+
+Fallback mode is retained only as a transitional compatibility path. In fallback mode, Auto Loop can use the active terminal target, and Diagnostics show `Worker policy: fallback` plus `Fallback used: yes` when no explicit binding is present.
+
+### Diagnostics
+
+Diagnostics now expose:
+
+- Worker policy: `strict` or `fallback`
+- Required bound Worker: `yes` or `no`
+- Fallback used: `yes` or `no`
+- Worker binding status and reason
+- Worker pane / terminal at arm
+
+This keeps the safety policy visible without adding another primary button.
+
+### Real Agent QA
+
+Real Agent QA reports the binding policy, whether a bound Worker is required, whether fallback was used, and the Worker pane captured at arm time. When real sends are allowed and the Worker has been confirmed ready, the runner binds the active terminal to the current tab before switching into Auto Loop Preview. It does not spawn a Worker or approve any Worker permission flow.
+
+### Next Phase
+
+A later phase can make strict binding the only allowed Auto Loop mode and remove fallback once per-tab Worker binding is routine. The same context can also feed a future 1-tab-1-Worker model where each tab owns a Browser AI slot, Worker pane, and Auto Loop run state.

@@ -1,6 +1,7 @@
 import { Button } from "@superset/ui/button";
 import {
 	DropdownMenu,
+	DropdownMenuCheckboxItem,
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuLabel,
@@ -65,6 +66,8 @@ export function CommanderHelperBar({
 	handoffPrompt,
 	autoRelayMode,
 	onAutoRelayModeChange,
+	requireBoundWorkerForAutoLoop,
+	onRequireBoundWorkerForAutoLoopChange,
 	autoLoopMaxTurns,
 	onAutoLoopMaxTurnsChange,
 	autoLoopTurn,
@@ -100,6 +103,8 @@ export function CommanderHelperBar({
 	handoffPrompt: string;
 	autoRelayMode: AutoRelayMode;
 	onAutoRelayModeChange: (mode: AutoRelayMode) => void;
+	requireBoundWorkerForAutoLoop: boolean;
+	onRequireBoundWorkerForAutoLoopChange: (required: boolean) => void;
 	autoLoopMaxTurns: AutoLoopMaxTurns;
 	onAutoLoopMaxTurnsChange: (maxTurns: AutoLoopMaxTurns) => void;
 	autoLoopTurn: number;
@@ -369,6 +374,14 @@ export function CommanderHelperBar({
 						<DropdownMenuLabel className="text-[10px] font-normal text-muted-foreground">
 							Worker Binding
 						</DropdownMenuLabel>
+						<DropdownMenuCheckboxItem
+							checked={requireBoundWorkerForAutoLoop}
+							onCheckedChange={onRequireBoundWorkerForAutoLoopChange}
+							onSelect={(event) => event.preventDefault()}
+							data-testid="commander-require-bound-worker"
+						>
+							Require bound Worker for Auto Loop
+						</DropdownMenuCheckboxItem>
 						<DropdownMenuItem
 							disabled={!activeTerminal}
 							onSelect={onBindActiveTerminalToTab}
@@ -501,6 +514,20 @@ export function CommanderHelperBar({
 								</span>
 								<span data-testid="auto-loop-worker-binding-status">
 									Worker binding: {autoLoopDiagnostics.workerBindingStatus}
+								</span>
+								<span data-testid="auto-loop-worker-binding-policy">
+									Worker policy:{" "}
+									{autoLoopDiagnostics.workerBindingPolicy}
+								</span>
+								<span data-testid="auto-loop-require-bound-worker">
+									Required bound Worker:{" "}
+									{autoLoopDiagnostics.requireBoundWorker ? "yes" : "no"}
+								</span>
+								<span data-testid="auto-loop-worker-binding-fallback-used">
+									Fallback used:{" "}
+									{autoLoopDiagnostics.workerBindingFallbackUsed
+										? "yes"
+										: "no"}
 								</span>
 								<span data-testid="auto-loop-worker-type">
 									Worker type: {autoLoopDiagnostics.workerType}

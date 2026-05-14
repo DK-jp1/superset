@@ -190,6 +190,7 @@ export type AutoLoopPhase =
 	| "waiting-worker"
 	| "sending-browser-ai"
 	| "stopped";
+export type AutoLoopWorkerBindingPolicy = "strict" | "fallback";
 export type WorkerResponseConfidence = "high" | "medium" | "low";
 export type AutoLoopDiagnosticEvent = {
 	id: number;
@@ -253,6 +254,9 @@ export type AutoLoopDiagnostics = {
 	workerBindingStatusAtArm: DoyDeckWorkerBindingStatus;
 	workerBindingMismatch: boolean;
 	workerBindingReason: string | null;
+	workerBindingPolicy: AutoLoopWorkerBindingPolicy;
+	requireBoundWorker: boolean;
+	workerBindingFallbackUsed: boolean;
 };
 
 type CaptureForTerminalPreviewSource =
@@ -346,6 +350,9 @@ const EMPTY_AUTO_LOOP_DIAGNOSTICS: AutoLoopDiagnostics = {
 	workerBindingStatusAtArm: "unbound",
 	workerBindingMismatch: false,
 	workerBindingReason: null,
+	workerBindingPolicy: "strict",
+	requireBoundWorker: true,
+	workerBindingFallbackUsed: false,
 };
 
 const DANGEROUS_TERMINAL_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
@@ -1412,6 +1419,7 @@ interface UsePromptTransferParams {
 	activeTerminal: string | null;
 	workerBinding: DoyDeckWorkerBindingSnapshot;
 	autoRelayMode: AutoRelayMode;
+	requireBoundWorkerForAutoLoop: boolean;
 	getLiveUrl: () => string;
 	currentUrl: string;
 	injectIntoPage: (script: string) => Promise<unknown>;
@@ -1434,6 +1442,7 @@ export function usePromptTransfer({
 	activeTerminal,
 	workerBinding,
 	autoRelayMode,
+	requireBoundWorkerForAutoLoop,
 	getLiveUrl,
 	currentUrl,
 	injectIntoPage,
@@ -1560,10 +1569,17 @@ export function usePromptTransfer({
 		useRef<DoyDeckWorkerBindingStatus>("unbound");
 	const autoLoopDiagnosticEventIdRef = useRef(0);
 	const workerBindingRef = useRef(workerBinding);
+	const requireBoundWorkerForAutoLoopRef = useRef(
+		requireBoundWorkerForAutoLoop,
+	);
 
 	useEffect(() => {
 		workerBindingRef.current = workerBinding;
 	}, [workerBinding]);
+	useEffect(() => {
+		requireBoundWorkerForAutoLoopRef.current =
+			requireBoundWorkerForAutoLoop;
+	}, [requireBoundWorkerForAutoLoop]);
 
 	const appendAutoLoopEvent = useCallback((label: string) => {
 		const at = Date.now();
@@ -1688,16 +1704,31 @@ export function usePromptTransfer({
 		);
 		const commanderRuntime = getCommanderBrowserRuntimeSnapshot();
 		const armedWorkerBinding = workerBindingRef.current;
+		const requireBoundWorker = requireBoundWorkerForAutoLoopRef.current;
+		const workerBindingPolicy: AutoLoopWorkerBindingPolicy =
+			requireBoundWorker ? "strict" : "fallback";
+		const bindingFallbackUsed =
+			!requireBoundWorker && armedWorkerBinding.bindingStatus !== "bound";
+		const strictStopReason =
+			requireBoundWorker && armedWorkerBinding.bindingStatus !== "bound"
+				? armedWorkerBinding.bindingStatus === "stale"
+					? "bound worker stale"
+					: "worker binding required"
+				: null;
 		activeTabIdAtArmRef.current = armedTabId;
-		autoLoopWorkerPaneIdAtArmRef.current = armedWorkerBinding.workerPaneId;
-		autoLoopTerminalIdAtArmRef.current = armedWorkerBinding.terminalId;
+		autoLoopWorkerPaneIdAtArmRef.current = strictStopReason
+			? null
+			: armedWorkerBinding.workerPaneId;
+		autoLoopTerminalIdAtArmRef.current = strictStopReason
+			? null
+			: armedWorkerBinding.terminalId;
 		autoLoopWorkerBindingStatusAtArmRef.current =
 			armedWorkerBinding.bindingStatus;
 		tabContextSeenChangedRef.current = null;
 		setAutoLoopTurn(0);
-		setAutoLoopStopReason(null);
-		setAutoLoopPhase("waiting-browser-ai");
-		setAutoLoopLastAction("Auto Loop armed");
+		setAutoLoopStopReason(strictStopReason);
+		setAutoLoopPhase(strictStopReason ? "stopped" : "waiting-browser-ai");
+		setAutoLoopLastAction(strictStopReason ?? "Auto Loop armed");
 		setAutoLoopLastActivityAt(null);
 		// S5.10 Phase 1: surface the tab the loop armed against in the arm
 		// event itself. The Diag panel already shows `Armed tab` / `Current
@@ -1717,7 +1748,9 @@ export function usePromptTransfer({
 				{
 					id: armedEventId,
 					at: now,
-					label: `auto loop armed for tab ${armedTabSuffix}`,
+					label: strictStopReason
+						? `auto loop blocked: ${strictStopReason}`
+						: `auto loop armed for tab ${armedTabSuffix}`,
 				},
 			],
 			activeTabIdAtArm: armedTabId,
@@ -1750,17 +1783,32 @@ export function usePromptTransfer({
 			activeTerminalId: armedWorkerBinding.activeTerminalId,
 			boundWorkerPaneId: armedWorkerBinding.boundWorkerPaneId,
 			boundTerminalId: armedWorkerBinding.boundTerminalId,
-			currentWorkerPaneId: armedWorkerBinding.workerPaneId,
-			currentWorkerTerminalId: armedWorkerBinding.terminalId,
-			workerPaneIdAtArm: armedWorkerBinding.workerPaneId,
-			terminalIdAtArm: armedWorkerBinding.terminalId,
+			currentWorkerPaneId: strictStopReason
+				? null
+				: armedWorkerBinding.workerPaneId,
+			currentWorkerTerminalId: strictStopReason
+				? null
+				: armedWorkerBinding.terminalId,
+			workerPaneIdAtArm: strictStopReason
+				? null
+				: armedWorkerBinding.workerPaneId,
+			terminalIdAtArm: strictStopReason
+				? null
+				: armedWorkerBinding.terminalId,
 			workerType: armedWorkerBinding.workerType,
 			workerBindingStatus: armedWorkerBinding.bindingStatus,
 			workerBindingStatusAtArm: armedWorkerBinding.bindingStatus,
 			workerBindingMismatch: armedWorkerBinding.workerBindingMismatch,
-			workerBindingReason: armedWorkerBinding.reason,
+			workerBindingReason:
+				strictStopReason ?? armedWorkerBinding.reason,
+			workerBindingPolicy,
+			requireBoundWorker,
+			workerBindingFallbackUsed: bindingFallbackUsed,
 		});
-		if (armedWorkerBinding.bindingStatus !== "bound") {
+		if (strictStopReason) {
+			console.warn("[S5.14] Auto Loop blocked:", strictStopReason);
+			toast.warning(`Auto Loop stopped: ${strictStopReason}`);
+		} else if (armedWorkerBinding.bindingStatus !== "bound") {
 			appendAutoLoopEvent(
 				`worker binding ${armedWorkerBinding.bindingStatus}: ${armedWorkerBinding.reason ?? "no explicit binding"}`,
 			);
@@ -1790,6 +1838,11 @@ export function usePromptTransfer({
 			currentBrowserSlot.key,
 		);
 		const currentCommanderRuntime = getCommanderBrowserRuntimeSnapshot();
+		const requireBoundWorker = requireBoundWorkerForAutoLoopRef.current;
+		const workerBindingPolicy: AutoLoopWorkerBindingPolicy =
+			requireBoundWorker ? "strict" : "fallback";
+		const bindingFallbackUsed =
+			!requireBoundWorker && workerBinding.bindingStatus !== "bound";
 		// Reflect current tab id in diagnostics every time the active tab id
 		// changes; this keeps the Diag panel readable while the loop is live.
 		setAutoLoopDiagnostics((prev) => {
@@ -1837,7 +1890,10 @@ export function usePromptTransfer({
 				prev.workerType === workerBinding.workerType &&
 				prev.workerBindingStatus === workerBinding.bindingStatus &&
 				prev.workerBindingMismatch === workerBinding.workerBindingMismatch &&
-				prev.workerBindingReason === workerBinding.reason
+				prev.workerBindingReason === workerBinding.reason &&
+				prev.workerBindingPolicy === workerBindingPolicy &&
+				prev.requireBoundWorker === requireBoundWorker &&
+				prev.workerBindingFallbackUsed === bindingFallbackUsed
 			) {
 				return prev;
 			}
@@ -1885,6 +1941,9 @@ export function usePromptTransfer({
 				workerBindingStatus: workerBinding.bindingStatus,
 				workerBindingMismatch: workerBinding.workerBindingMismatch,
 				workerBindingReason: workerBinding.reason,
+				workerBindingPolicy,
+				requireBoundWorker,
+				workerBindingFallbackUsed: bindingFallbackUsed,
 			};
 		});
 		// S5.10 Phase 1: emit a discrete recent event the moment the tab
@@ -2973,6 +3032,17 @@ export function usePromptTransfer({
 		if (autoLoopTerminalFingerprintRef.current === fingerprint) return;
 
 		const workerPaneId = autoLoopWorkerPaneIdAtArmRef.current;
+		if (
+			requireBoundWorkerForAutoLoopRef.current &&
+			autoLoopWorkerBindingStatusAtArmRef.current !== "bound"
+		) {
+			stopAutoLoop(
+				autoLoopWorkerBindingStatusAtArmRef.current === "stale"
+					? "bound worker stale"
+					: "worker binding required",
+			);
+			return;
+		}
 		if (autoLoopWorkerBindingStatusAtArmRef.current === "stale") {
 			stopAutoLoop("bound worker terminal is stale");
 			return;
