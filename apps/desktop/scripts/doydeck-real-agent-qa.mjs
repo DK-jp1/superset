@@ -115,6 +115,21 @@ const pageErrors = [];
 const screenshots = [];
 const observations = [];
 const diagnosticsLog = [];
+const browserAiStateSnapshots = [];
+const autoLoopResult = {
+	finalPhase: "unknown",
+	finalStopReason: "",
+	finalClassification: "UNKNOWN",
+	finalReason: "not evaluated",
+	workerResponseDetected: "no",
+	browserAiReturnPhaseObserved: "no",
+	workerEnvelopeVisibleInTerminal: "unknown",
+	workerEnvelopeComplete: "unknown",
+	workerEnvelopeMissingSections: [],
+	envelopeExtractionEventObserved: "no",
+	sendingBrowserAiPhaseObserved: "no",
+	browserAiResponseAfterWorkerReturn: "unknown",
+};
 const prepareSummary = {
 	selectedBrowserProvider: "(unknown)",
 	selectedWorkerType: "(unknown)",
@@ -234,6 +249,9 @@ function providerLabel(provider) {
 	if (provider === "gemini") return "Gemini";
 	return "Unsupported";
 }
+
+const DOYDECK_WORKER_RESPONSE_START = "<<<DOYDECK_WORKER_RESPONSE_START>>>";
+const DOYDECK_WORKER_RESPONSE_END = "<<<DOYDECK_WORKER_RESPONSE_END>>>";
 
 const providerUrls = {
 	chatgpt: "https://chatgpt.com",
@@ -565,6 +583,133 @@ async function sampleDiagnostics(page, label) {
 	const item = { at: new Date().toISOString(), label, text: text || "" };
 	diagnosticsLog.push(item);
 	return item;
+}
+
+async function ensureDiagnosticsOpen(page) {
+	const panel = page.getByTestId("commander-diagnostics-panel");
+	if (await panel.isVisible().catch(() => false)) return true;
+	const button = page.getByTestId("commander-diag-button");
+	await button.click();
+	await page.waitForTimeout(500);
+	return panel.isVisible().catch(() => false);
+}
+
+function normalizeDiagnosticText(text) {
+	return String(text || "")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+function parseDiagnosticsSnapshot(text) {
+	const normalized = normalizeDiagnosticText(text);
+	const phaseMatch = normalized.match(
+		/Phase:\s*(.*?)(?:Turn:|Browser watcher:|Worker watcher:|$)/i,
+	);
+	const stopReasonMatch = normalized.match(
+		/Stop reason:\s*(.*?)(?:Armed tab:|Current tab:|Tab context:|Browser AI:|Recent events|$)/i,
+	);
+	const phase = (phaseMatch?.[1] || "").trim() || "unknown";
+	const stopReason = (stopReasonMatch?.[1] || "").trim();
+	const hasStopReason = Boolean(stopReason && !/^[-–—]$/.test(stopReason));
+	return {
+		normalized,
+		phase,
+		stopReason: hasStopReason ? stopReason : "",
+		stopped: /^stopped$/i.test(phase),
+		waitingWorker: /waiting\s*for\s*Worker|waiting-worker/i.test(phase),
+		sendingBrowserAi:
+			/sending\s*to\s*Browser\s*AI|sending-browser-ai/i.test(phase) ||
+			/sending\s*to\s*Browser\s*AI|sending-browser-ai|Sent Worker response to Browser AI/i.test(
+				normalized,
+			),
+		hasStopReason,
+	};
+}
+
+function normalizeEnvelopeMarkerLine(line) {
+	return line
+		.replace(/[\u200B-\u200D\uFEFF]/g, "")
+		.replace(/[^\S\r\n]+/g, " ")
+		.trim()
+		.replace(/^(?:[-*・•●⏺⎿>›❯]+\s*)+/u, "")
+		.replace(/\s+/g, "");
+}
+
+function findEnvelopeMarkers(text, marker) {
+	const compactMarker = marker.replace(/\s+/g, "");
+	const matches = [];
+	let lineStart = 0;
+	for (const line of String(text || "").split("\n")) {
+		const lineEnd = lineStart + line.length;
+		const directIndex = line.indexOf(marker);
+		if (directIndex !== -1) {
+			matches.push({ index: lineStart + directIndex, lineStart, lineEnd });
+		} else if (normalizeEnvelopeMarkerLine(line).includes(compactMarker)) {
+			matches.push({ index: lineStart, lineStart, lineEnd });
+		}
+		lineStart = lineEnd + 1;
+	}
+	return matches;
+}
+
+function inspectWorkerResponseEnvelope(text) {
+	const normalized = cleanTerminalText(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	const starts = findEnvelopeMarkers(normalized, DOYDECK_WORKER_RESPONSE_START);
+	const ends = findEnvelopeMarkers(normalized, DOYDECK_WORKER_RESPONSE_END);
+	if (starts.length === 0) {
+		return {
+			visible: false,
+			complete: false,
+			status: "missing-start",
+			missingSections: [],
+			bodyLength: 0,
+			startCount: 0,
+			endCount: ends.length,
+		};
+	}
+	const latestStart = starts[starts.length - 1];
+	const bodyStart = latestStart.lineEnd + 1;
+	const endCandidates = findEnvelopeMarkers(
+		normalized.slice(bodyStart),
+		DOYDECK_WORKER_RESPONSE_END,
+	);
+	if (endCandidates.length === 0) {
+		return {
+			visible: true,
+			complete: false,
+			status: "missing-end",
+			missingSections: [],
+			bodyLength: 0,
+			startCount: starts.length,
+			endCount: ends.length,
+		};
+	}
+	const firstEnd = endCandidates[0];
+	const bodyEnd = bodyStart + firstEnd.lineStart;
+	const body = normalized.slice(bodyStart, bodyEnd).trim();
+	const requiredSections = [
+		{ label: "実施内容", pattern: /(?:^|\n)\s*#{0,6}\s*実施内容[：:]?/u },
+		{ label: "変更ファイル", pattern: /(?:^|\n)\s*#{0,6}\s*変更ファイル[：:]?/u },
+		{ label: "確認結果", pattern: /(?:^|\n)\s*#{0,6}\s*確認結果[：:]?/u },
+		{ label: "git diff --check", pattern: /git diff --check/i },
+		{ label: "未解決", pattern: /(?:^|\n)\s*#{0,6}\s*未解決[：:]?/u },
+	];
+	const missingSections = requiredSections
+		.filter((section) => !section.pattern.test(body))
+		.map((section) => section.label);
+	return {
+		visible: true,
+		complete: missingSections.length === 0 && body.length >= 80,
+		status:
+			missingSections.length === 0 && body.length >= 80
+				? "complete"
+				: "incomplete",
+		missingSections,
+		bodyLength: body.length,
+		startCount: starts.length,
+		endCount: ends.length,
+		bodyPreview: body.slice(0, 500),
+	};
 }
 
 function detectBrowserHumanVerification(probe) {
@@ -988,6 +1133,141 @@ async function readDomState(page) {
 			webviewUrl,
 		};
 	});
+}
+
+async function readBrowserAiState(page, label, screenshotPath = "") {
+	const state = await page.evaluate(
+		({ snapshotLabel, snapshotScreenshot }) => {
+		const textOf = (selector) =>
+			document.querySelector(selector)?.textContent?.replace(/\s+/g, " ").trim() ||
+			"";
+		const rectOf = (selector) => {
+			const element = document.querySelector(selector);
+			if (!(element instanceof HTMLElement)) return null;
+			const rect = element.getBoundingClientRect();
+			return {
+				x: Math.round(rect.x),
+				y: Math.round(rect.y),
+				width: Math.round(rect.width),
+				height: Math.round(rect.height),
+				right: Math.round(rect.right),
+				bottom: Math.round(rect.bottom),
+			};
+		};
+		const webviews = Array.from(document.querySelectorAll("webview")).map(
+			(webview, index) => {
+				const rect = webview.getBoundingClientRect();
+				let url = "";
+				let webContentsId = null;
+				try {
+					url = webview.getURL?.() || webview.src || "";
+				} catch {
+					url = webview.src || "";
+				}
+				try {
+					webContentsId = webview.getWebContentsId?.() ?? null;
+				} catch {
+					webContentsId = null;
+				}
+				return {
+					index,
+					url,
+					src: webview.src || "",
+					webContentsId,
+					visible: rect.width > 0 && rect.height > 0,
+					rect: {
+						x: Math.round(rect.x),
+						y: Math.round(rect.y),
+						width: Math.round(rect.width),
+						height: Math.round(rect.height),
+					},
+				};
+			},
+		);
+		const primary = webviews.find((item) => item.visible) || webviews[0] || null;
+		const commanderRootRect = rectOf('[data-testid="commander-root"]');
+		const browserAreaRect = rectOf('[data-testid="commander-browser-area"]');
+		const primaryRect = primary?.rect || null;
+		const contentClipped =
+			Boolean(primaryRect && browserAreaRect) &&
+			(primaryRect.x < browserAreaRect.x - 1 ||
+				primaryRect.right > browserAreaRect.right + 1 ||
+				primaryRect.y < browserAreaRect.y - 1 ||
+				primaryRect.bottom > browserAreaRect.bottom + 1);
+		const usableWidth = primaryRect?.width ?? 0;
+		const tooNarrow = usableWidth > 0 && usableWidth < 480;
+		const visualStatus = !primary
+			? "UNKNOWN"
+			: contentClipped || tooNarrow
+				? "NEEDS_FIX"
+				: "PASS";
+		const visualReason = !primary
+			? "no visible Browser AI webview"
+			: contentClipped
+				? "webview is clipped outside commander browser area"
+				: tooNarrow
+					? `webview usable width ${usableWidth}px is below 480px`
+					: `webview usable width ${usableWidth}px is acceptable`;
+		return {
+			label: snapshotLabel,
+			at: new Date().toISOString(),
+			screenshot: snapshotScreenshot,
+			providerStatus: textOf('[data-testid="browser-provider-status"]'),
+			autoMode: textOf('[data-testid="commander-auto-mode-selector"]'),
+			diagnosticsText: textOf('[data-testid="commander-diagnostics-panel"]'),
+			commanderRootRect,
+			browserAreaRect,
+			webviews,
+			currentUrl: primary?.url || "",
+			webContentsId: primary?.webContentsId ?? null,
+			webviewCount: webviews.length,
+			usableWidth,
+			contentClipped: contentClipped ? "yes" : "no",
+			tooNarrow: tooNarrow ? "yes" : "no",
+			visualStatus,
+			visualReason,
+			composerVisible: "unknown",
+			cleanupPerformed: "no",
+			cleanupReason: "",
+		};
+		},
+		{ snapshotLabel: label, snapshotScreenshot: screenshotPath },
+	);
+	const composerProbe = await executeInWebview(
+		page,
+		`(function() {
+			var selectors = [
+				'#prompt-textarea',
+				'textarea',
+				'[role="textbox"]',
+				'[contenteditable="plaintext-only"]',
+				'.ProseMirror[contenteditable="true"]',
+				'rich-textarea .ql-editor',
+				'div.ql-editor[contenteditable="true"]',
+				'div[contenteditable="true"]'
+			];
+			var composer = null;
+			for (var i = 0; i < selectors.length; i++) {
+				composer = document.querySelector(selectors[i]);
+				if (composer) break;
+			}
+			var body = document.body;
+			return {
+				composerVisible: !!composer,
+				bodyScrollWidth: body ? body.scrollWidth : 0,
+				bodyClientWidth: body ? body.clientWidth : 0,
+				documentTitle: document.title || ''
+			};
+		})()`,
+	).catch(() => ({ ok: false, error: "composer probe failed" }));
+	if (composerProbe.ok && composerProbe.value) {
+		state.composerVisible = composerProbe.value.composerVisible ? "yes" : "no";
+		state.webviewBodyScrollWidth = composerProbe.value.bodyScrollWidth;
+		state.webviewBodyClientWidth = composerProbe.value.bodyClientWidth;
+		state.webviewTitle = composerProbe.value.documentTitle;
+	}
+	browserAiStateSnapshots.push(state);
+	return state;
 }
 
 async function observeQaStep(page, name, plannedAction) {
@@ -1809,6 +2089,55 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 		body.push(instructionSource.extractedWorkerInstructionPreview);
 		body.push("```");
 	}
+	body.push("", "## Auto Loop final classification", "");
+	body.push(`- final phase: \`${autoLoopResult.finalPhase}\``);
+	body.push(`- final stop reason: \`${autoLoopResult.finalStopReason || "-"}\``);
+	body.push(`- final classification: \`${autoLoopResult.finalClassification}\``);
+	body.push(`- reason: ${autoLoopResult.finalReason}`);
+	body.push(`- worker response detected: \`${autoLoopResult.workerResponseDetected}\``);
+	body.push(
+		`- browser ai return phase observed: \`${autoLoopResult.browserAiReturnPhaseObserved}\``,
+	);
+	body.push(
+		`- worker envelope visible in terminal: \`${autoLoopResult.workerEnvelopeVisibleInTerminal}\``,
+	);
+	body.push(
+		`- worker envelope complete: \`${autoLoopResult.workerEnvelopeComplete}\``,
+	);
+	if (autoLoopResult.workerEnvelopeMissingSections.length > 0) {
+		body.push(
+			`- worker envelope missing sections: \`${autoLoopResult.workerEnvelopeMissingSections.join(", ")}\``,
+		);
+	}
+	body.push(
+		`- envelope extraction event observed: \`${autoLoopResult.envelopeExtractionEventObserved}\``,
+	);
+	body.push(
+		`- sending-browser-ai phase observed: \`${autoLoopResult.sendingBrowserAiPhaseObserved}\``,
+	);
+	body.push(
+		`- browser ai response after worker return: \`${autoLoopResult.browserAiResponseAfterWorkerReturn}\``,
+	);
+	body.push("", "## Browser AI state snapshots", "");
+	if (browserAiStateSnapshots.length === 0) {
+		body.push("- none");
+	} else {
+		for (const snapshot of browserAiStateSnapshots) {
+			body.push(
+				`- ${snapshot.label}: provider=\`${snapshot.providerStatus || "(empty)"}\`; url=\`${snapshot.currentUrl || "(blank)"}\`; webContentsId=\`${snapshot.webContentsId ?? "(unknown)"}\`; webviewCount=\`${snapshot.webviewCount}\`; autoMode=\`${snapshot.autoMode || "(empty)"}\`; usableWidth=\`${snapshot.usableWidth ?? 0}px\`; visual=\`${snapshot.visualStatus || "UNKNOWN"}\`; cleanup performed=\`${snapshot.cleanupPerformed}\``,
+			);
+		}
+	}
+	body.push("", "## Browser AI visual usability", "");
+	if (browserAiStateSnapshots.length === 0) {
+		body.push("- none");
+	} else {
+		for (const snapshot of browserAiStateSnapshots) {
+			body.push(
+				`- ${snapshot.label}: status=\`${snapshot.visualStatus || "UNKNOWN"}\`; reason=${snapshot.visualReason || "(unknown)"}; screenshot=\`${snapshot.screenshot || "(not captured)"}\`; provider=\`${snapshot.providerStatus || "(empty)"}\`; composer visible=\`${snapshot.composerVisible || "unknown"}\`; content clipped=\`${snapshot.contentClipped || "unknown"}\`; too narrow=\`${snapshot.tooNarrow || "unknown"}\`; commander width=\`${snapshot.commanderRootRect?.width ?? 0}px\`; browser area width=\`${snapshot.browserAreaRect?.width ?? 0}px\`; webview width=\`${snapshot.usableWidth ?? 0}px\`; webContentsId=\`${snapshot.webContentsId ?? "(unknown)"}\``,
+			);
+		}
+	}
 	body.push("", "## Screenshots", "");
 	if (screenshots.length === 0) {
 		body.push("- none");
@@ -2056,7 +2385,7 @@ try {
 
 		await page.waitForLoadState("domcontentloaded", { timeout: 60_000 });
 		await page.waitForTimeout(5000);
-		await capture(page, "00-startup");
+		const startupScreenshot = await capture(page, "00-startup");
 
 		const commanderVisible = await checkVisible(
 			"Commander root",
@@ -2079,6 +2408,7 @@ try {
 		if (!commanderVisible || !browserAreaVisible || !terminalAreaVisible) {
 			await capture(page, "00-ui-not-ready");
 		}
+		await readBrowserAiState(page, "before QA", rel(startupScreenshot));
 
 	const initialUrl = await getWebviewUrl(page);
 	let provider = detectProviderFromUrl(initialUrl);
@@ -2098,8 +2428,13 @@ try {
 		if (await isVisible(preset, 5000)) {
 			await preset.click();
 			await page.waitForTimeout(5000);
-			await capture(page, "01-provider-navigation");
+			const providerScreenshot = await capture(page, "01-provider-navigation");
 			provider = detectProviderFromUrl(await getWebviewUrl(page));
+			await readBrowserAiState(
+				page,
+				"during QA provider navigation",
+				rel(providerScreenshot),
+			);
 			if (provider === "gemini") provider = null;
 		}
 	}
@@ -2113,6 +2448,7 @@ try {
 	} else {
 		record("BLOCKED", "Browser AI provider", `No supported provider detected. Current URL: ${await getWebviewUrl(page) || "(blank)"}`);
 	}
+	await readBrowserAiState(page, "during QA provider setup");
 
 	const terminalStatus = await page
 		.getByTestId("terminal-active-marker")
@@ -2220,15 +2556,14 @@ try {
 				"Diag button visible in Auto Loop mode",
 			)
 		) {
-			await diagButton.click();
-			await page.waitForTimeout(500);
+			const diagnosticsOpened = await ensureDiagnosticsOpen(page);
 			await capture(page, "03-diagnostics-open");
-			await checkVisible(
-				"Diagnostics panel",
-				page.getByTestId("commander-diagnostics-panel"),
-				"Diagnostics panel opened",
-			);
-			await sampleDiagnostics(page, "after-auto-loop-armed");
+			if (diagnosticsOpened) {
+				record("PASS", "Diagnostics panel", "Diagnostics panel opened");
+				await sampleDiagnostics(page, "after-auto-loop-armed");
+			} else {
+				record("UNKNOWN", "Diagnostics panel", "Diagnostics panel did not open");
+			}
 		}
 	}
 
@@ -2357,29 +2692,134 @@ try {
 		}
 
 		const startedAt = Date.now();
-		let stopped = false;
+		let stoppedConfirmed = false;
 		let sawWorkerWait = false;
 		let sawBrowserSend = false;
+		let sawBrowserReplyAfterWorkerReturn = false;
 		let sawTurnProgress = false;
-		while (Date.now() - startedAt < maxWaitMs) {
+		let finalDiagnostics = null;
+		let browserBaselineAfterWorkerReturn = null;
+		const shouldPollAutoLoop = instructionSource.testPromptSent === "yes";
+		while (shouldPollAutoLoop && Date.now() - startedAt < maxWaitMs) {
 			await page.waitForTimeout(5000);
 			const sample = await sampleDiagnostics(page, `poll-${diagnosticsLog.length}`);
-			const normalized = sample.text.replace(/\s+/g, " ").trim();
-			if (/waiting to Worker|waiting-worker|waiting for Worker|Worker watcher:\s*on/i.test(normalized)) {
+			const parsedDiagnostics = parseDiagnosticsSnapshot(sample.text);
+			finalDiagnostics = parsedDiagnostics;
+			const normalized = parsedDiagnostics.normalized;
+			if (parsedDiagnostics.waitingWorker || /Worker watcher:\s*on/i.test(normalized)) {
 				sawWorkerWait = true;
 			}
-			if (/sending to Browser AI|sending-browser-ai|Sent Worker response to Browser AI/i.test(normalized)) {
+			if (parsedDiagnostics.sendingBrowserAi) {
 				sawBrowserSend = true;
+				autoLoopResult.sendingBrowserAiPhaseObserved = "yes";
+				if (!browserBaselineAfterWorkerReturn) {
+					browserBaselineAfterWorkerReturn = await readBrowserBaseline(page).catch(
+						() => null,
+					);
+				}
+			}
+			if (browserBaselineAfterWorkerReturn && !sawBrowserReplyAfterWorkerReturn) {
+				const currentBrowserState = await readBrowserBaseline(page).catch(() => null);
+				if (
+					currentBrowserState &&
+					(currentBrowserState.count > browserBaselineAfterWorkerReturn.count ||
+						currentBrowserState.lastTextHash !==
+							browserBaselineAfterWorkerReturn.lastTextHash ||
+						currentBrowserState.lastId !== browserBaselineAfterWorkerReturn.lastId)
+				) {
+					sawBrowserReplyAfterWorkerReturn = true;
+				}
 			}
 			if (/Turn:\s*[1-9]/.test(normalized) || /\b[1-9]\/10\b/.test(normalized)) {
 				sawTurnProgress = true;
 			}
-			if (/Stop reason:\s*(?!-)/.test(normalized) || /Phase:\s*stopped/i.test(normalized)) {
-				stopped = true;
+			if (parsedDiagnostics.stopped && parsedDiagnostics.hasStopReason) {
+				stoppedConfirmed = true;
 				break;
 			}
 		}
-		await capture(page, "06-final-state");
+		const finalScreenshot = await capture(page, "06-final-state");
+		const afterBrowserState = await readBrowserAiState(
+			page,
+			"after QA",
+			rel(finalScreenshot),
+		);
+		record(
+			afterBrowserState.visualStatus === "PASS" ? "PASS" : "FAIL",
+			"Browser AI visual usability",
+			`${afterBrowserState.visualStatus}: ${afterBrowserState.visualReason}; width=${afterBrowserState.usableWidth}px; clipped=${afterBrowserState.contentClipped}; composer=${afterBrowserState.composerVisible}`,
+		);
+		const finalTerminalOutput = await readTerminalVisibleText(page).catch(() => "");
+		const envelopeInspection = inspectWorkerResponseEnvelope(finalTerminalOutput);
+		autoLoopResult.workerEnvelopeVisibleInTerminal = envelopeInspection.visible
+			? "yes"
+			: "no";
+		autoLoopResult.workerEnvelopeComplete = envelopeInspection.visible
+			? envelopeInspection.complete
+				? "yes"
+				: "no"
+			: "no";
+		autoLoopResult.workerEnvelopeMissingSections =
+			envelopeInspection.missingSections || [];
+		autoLoopResult.workerResponseDetected = envelopeInspection.complete
+			? "yes"
+			: "no";
+		autoLoopResult.envelopeExtractionEventObserved = diagnosticsLog.some((item) =>
+			/envelope matched|capture succeeded: worker response envelope/i.test(item.text),
+		)
+			? "yes"
+			: "no";
+		const confirmedBrowserSend = sawTurnProgress && sawBrowserSend;
+		autoLoopResult.browserAiReturnPhaseObserved = confirmedBrowserSend
+			? "yes"
+			: "no";
+		autoLoopResult.browserAiResponseAfterWorkerReturn =
+			confirmedBrowserSend && sawBrowserReplyAfterWorkerReturn ? "yes" : "no";
+		autoLoopResult.finalPhase = finalDiagnostics?.phase || "unknown";
+		autoLoopResult.finalStopReason = finalDiagnostics?.stopReason || "";
+		if (instructionSource.testPromptSent !== "yes") {
+			autoLoopResult.finalClassification = "BLOCKED";
+			autoLoopResult.finalReason =
+				"Browser AI test prompt was not submitted, so Auto Loop was not exercised";
+		} else if (stoppedConfirmed) {
+			autoLoopResult.finalClassification = "PASS";
+			autoLoopResult.finalReason = "Auto Loop reached stopped phase with a stop reason";
+		} else if (
+			confirmedBrowserSend && sawBrowserReplyAfterWorkerReturn
+		) {
+			autoLoopResult.finalClassification = "PASS";
+			autoLoopResult.finalReason =
+				"Browser AI produced a reply after Worker response return";
+		} else if (finalDiagnostics?.waitingWorker) {
+			autoLoopResult.finalClassification = "BLOCKED";
+			autoLoopResult.finalReason =
+				"Auto Loop was still waiting for Worker when QA max wait ended";
+		} else if (!sawTurnProgress) {
+			autoLoopResult.finalClassification = "UNKNOWN";
+			autoLoopResult.finalReason = "Auto Loop turn did not progress";
+		} else if (!confirmedBrowserSend) {
+			autoLoopResult.finalClassification = "UNKNOWN";
+			autoLoopResult.finalReason =
+				"Worker Response return to Browser AI was not observed";
+		} else {
+			autoLoopResult.finalClassification = "UNKNOWN";
+			autoLoopResult.finalReason =
+				"Auto Loop did not reach a confirmed stopped state before max wait";
+		}
+		record(
+			envelopeInspection.visible ? "PASS" : "UNKNOWN",
+			"Worker response envelope visible in terminal",
+			envelopeInspection.visible
+				? `status=${envelopeInspection.status}; bodyLength=${envelopeInspection.bodyLength}; starts=${envelopeInspection.startCount}; ends=${envelopeInspection.endCount}`
+				: "No DoyDeck response envelope marker found in terminal output",
+		);
+		record(
+			envelopeInspection.complete ? "PASS" : "UNKNOWN",
+			"Worker response envelope complete",
+			envelopeInspection.complete
+				? "Envelope has required sections"
+				: `Envelope incomplete or missing; missing=${(envelopeInspection.missingSections || []).join(", ") || envelopeInspection.status}`,
+		);
 
 		// Judge whether the Worker instruction the Auto Loop sent to the
 		// Terminal originated from the post-testPrompt assistant reply
@@ -2482,14 +2922,18 @@ try {
 			sawWorkerWait ? "Worker wait/activity observed" : "No Worker wait phase observed",
 		);
 		record(
-			sawBrowserSend ? "PASS" : "UNKNOWN",
+			confirmedBrowserSend ? "PASS" : "UNKNOWN",
 			"Worker response returned to Browser AI",
-			sawBrowserSend ? "Browser AI send phase observed" : "No Browser AI return phase observed",
+			confirmedBrowserSend
+				? "Browser AI send phase observed after turn progress"
+				: "No Browser AI return phase observed for this QA turn",
 		);
 		record(
-			stopped ? "PASS" : "UNKNOWN",
+			stoppedConfirmed ? "PASS" : autoLoopResult.finalClassification,
 			"Auto Loop stopped",
-			stopped ? "Stopped with a visible stop reason/phase" : "No stopped phase observed before max wait",
+			stoppedConfirmed
+				? "Stopped phase with stop reason observed"
+				: `${autoLoopResult.finalReason}; final phase=${autoLoopResult.finalPhase}; stop reason=${autoLoopResult.finalStopReason || "-"}`,
 		);
 	}
 

@@ -45,6 +45,10 @@ interface WorkspaceSearch {
 	openUrlRequestId?: string;
 }
 
+const DEFAULT_RIGHT_SIDEBAR_WIDTH = 340;
+const PRACTICAL_RIGHT_SIDEBAR_MIN_WIDTH = 480;
+const PRACTICAL_RIGHT_SIDEBAR_DEFAULT_WIDTH = 520;
+
 function parseOpenUrlTarget(
 	value: unknown,
 ): V2WorkspaceUrlOpenTarget | undefined {
@@ -171,7 +175,12 @@ function V2WorkspacePage() {
 	// Fallback for rows persisted before the rightSidebarWidth field existed —
 	// the live collection skips zod defaults, so an older row reads undefined
 	// here and would render the ResizablePanel without a width (full-bleed).
-	const sidebarWidth = v2UserPreferences.rightSidebarWidth ?? 340;
+	const configuredSidebarWidth =
+		v2UserPreferences.rightSidebarWidth ?? DEFAULT_RIGHT_SIDEBAR_WIDTH;
+	const sidebarWidth = Math.max(
+		configuredSidebarWidth,
+		PRACTICAL_RIGHT_SIDEBAR_DEFAULT_WIDTH,
+	);
 	const [isSidebarResizing, setIsSidebarResizing] = useState(false);
 	const { onSidebarResizeDragging, onWorkspaceInteractionStateChange } =
 		useBrowserShellInteractionPassthrough({ sidebarOpen });
@@ -259,10 +268,12 @@ function V2WorkspacePage() {
 						onWidthChange={setRightSidebarWidth}
 						isResizing={isSidebarResizing}
 						onResizingChange={handleSidebarResizingChange}
-						minWidth={240}
+						minWidth={PRACTICAL_RIGHT_SIDEBAR_MIN_WIDTH}
 						maxWidth={640}
 						handleSide="left"
-						onDoubleClickHandle={() => setRightSidebarWidth(340)}
+						onDoubleClickHandle={() =>
+							setRightSidebarWidth(PRACTICAL_RIGHT_SIDEBAR_DEFAULT_WIDTH)
+						}
 					>
 						<WorkspaceSidebar
 							workspaceId={workspaceId}

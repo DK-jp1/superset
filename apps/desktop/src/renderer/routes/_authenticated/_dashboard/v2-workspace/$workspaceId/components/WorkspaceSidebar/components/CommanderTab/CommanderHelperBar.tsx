@@ -503,7 +503,7 @@ export function CommanderHelperBar({
 									</div>
 									<ul className="space-y-0.5">
 										{autoLoopDiagnostics.recentEvents.map((event) => (
-											<li key={`${event.at}-${event.label}`}>
+											<li key={event.id}>
 												{formatAgo(event.at)} · {event.label}
 											</li>
 										))}

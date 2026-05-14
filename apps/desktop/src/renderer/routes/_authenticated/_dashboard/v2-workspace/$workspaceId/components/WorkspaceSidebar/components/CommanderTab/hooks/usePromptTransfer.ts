@@ -175,6 +175,7 @@ export type AutoLoopPhase =
 	| "stopped";
 export type WorkerResponseConfidence = "high" | "medium" | "low";
 export type AutoLoopDiagnosticEvent = {
+	id: number;
 	at: number;
 	label: string;
 };
@@ -367,11 +368,13 @@ function isBrowserCompletionStop(text: string): boolean {
 }
 
 function isNegativeStatusText(text: string): boolean {
-	return !/(なし|無し|ありません|特になし|none|no\b|問題なし|PASS)/i.test(text);
+	return !/(なし|無し|ありません|特になし|none|no\b|問題なし|PASS|していませ(?:ん)?(?:$|[。.,、\s])|行っていませ(?:ん)?(?:$|[。.,、\s])|未実行|変更なし|実行なし|操作なし|使用なし|危険操作なし|外部参照なし|外部アクセスなし|Git操作なし|ツール使用なし|ファイル変更なし|コマンド実行なし|禁止事項を守りました|安全条件を守りました)/i.test(
+		text,
+	);
 }
 
 function isPositiveStatusText(text: string): boolean {
-	return /(なし|無し|ありません|していません|行っていません|未実行|特になし|none|no\b|問題なし|PASS|OK|成功|完了|変更なし|実行なし|操作なし|使用なし|危険操作なし|外部参照なし|外部アクセスなし|Git操作なし|ツール使用なし|ファイル変更なし|コマンド実行なし|禁止事項を守りました|安全条件を守りました|既存DoyDeck本体への変更なし)/i.test(
+	return /(なし|無し|ありません|していませ(?:ん)?(?:$|[。.,、\s])|行っていませ(?:ん)?(?:$|[。.,、\s])|未実行|特になし|none|no\b|問題なし|PASS|OK|成功|完了|変更なし|実行なし|操作なし|使用なし|危険操作なし|外部参照なし|外部アクセスなし|Git操作なし|ツール使用なし|ファイル変更なし|コマンド実行なし|禁止事項を守りました|安全条件を守りました|既存DoyDeck本体への変更なし)/i.test(
 		text,
 	);
 }
@@ -1440,12 +1443,14 @@ export function usePromptTransfer({
 	const autoRelayRef = useRef<AutoRelayTracker | null>(null);
 	const autoLoopTerminalFingerprintRef = useRef("");
 	const autoLoopWorkerFingerprintRef = useRef("");
+	const autoLoopDiagnosticEventIdRef = useRef(0);
 
 	const appendAutoLoopEvent = useCallback((label: string) => {
 		const at = Date.now();
+		const id = (autoLoopDiagnosticEventIdRef.current += 1);
 		setAutoLoopDiagnostics((prev) => ({
 			...prev,
-			recentEvents: [{ at, label }, ...prev.recentEvents].slice(0, 10),
+			recentEvents: [{ id, at, label }, ...prev.recentEvents].slice(0, 10),
 		}));
 	}, []);
 
@@ -1570,6 +1575,7 @@ export function usePromptTransfer({
 		// event log lets us trace tab context through a screenshot or QA
 		// report without having to read the static panel fields.
 		const armedTabSuffix = armedTabId ? armedTabId.slice(-8) : "(none)";
+		const armedEventId = (autoLoopDiagnosticEventIdRef.current += 1);
 		setAutoLoopDiagnostics({
 			...EMPTY_AUTO_LOOP_DIAGNOSTICS,
 			activeTimeoutType: "browser no activity",
@@ -1578,7 +1584,11 @@ export function usePromptTransfer({
 			noActivityDeadlineAt: now + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
 			hardMaxDeadlineAt: now + AUTO_LOOP_HARD_MAX_WAIT_MS,
 			recentEvents: [
-				{ at: now, label: `auto loop armed for tab ${armedTabSuffix}` },
+				{
+					id: armedEventId,
+					at: now,
+					label: `auto loop armed for tab ${armedTabSuffix}`,
+				},
 			],
 			activeTabIdAtArm: armedTabId,
 			currentActiveTabId: armedTabId,
