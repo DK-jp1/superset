@@ -12,6 +12,10 @@ const webviewRegistry = new Map<string, Electron.WebviewTag>();
 const registeredWebContentsIds = new Map<string, number>();
 let hiddenContainer: HTMLDivElement | null = null;
 
+// Mirror of main/lib/browser/stealth.ts CHROME_UA. Keep in sync when bumping.
+const CHROME_UA =
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
 function getHiddenContainer(): HTMLDivElement {
 	if (!hiddenContainer) {
 		hiddenContainer = document.createElement("div");
@@ -191,6 +195,11 @@ export function usePersistentWebview({
 			webview = document.createElement("webview") as Electron.WebviewTag;
 			webview.setAttribute("partition", "persist:superset");
 			webview.setAttribute("allowpopups", "");
+			// Pretend to be vanilla Chrome stable so reCAPTCHA / Cloudflare /
+			// Turnstile don't see "Electron/<ver>" in the UA. The main process
+			// also pins this UA via wc.setUserAgent() once webContents attaches;
+			// we set it here so the very first request also has the right UA.
+			webview.setAttribute("useragent", CHROME_UA);
 			webview.style.display = "flex";
 			webview.style.flex = "1";
 			webview.style.width = "100%";

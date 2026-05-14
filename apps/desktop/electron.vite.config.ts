@@ -177,6 +177,7 @@ export default defineConfig({
 			rollupOptions: {
 				input: {
 					index: resolve("src/preload/index.ts"),
+					"stealth-webview": resolve("src/preload/stealth-webview.ts"),
 				},
 			},
 		},

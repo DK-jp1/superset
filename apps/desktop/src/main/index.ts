@@ -58,6 +58,24 @@ import { MainWindow } from "./windows/main";
 console.log("[main] Local database ready:", !!localDb);
 const IS_DEV = process.env.NODE_ENV === "development";
 
+// Stealth-mode Chromium switches for the embedded <webview> ("ブラウザAI").
+// These must be set BEFORE app.whenReady() resolves, so they live at the very
+// top of main entry. Each one removes a well-known automation fingerprint
+// that Cloudflare / Turnstile / reCAPTCHA score against.
+app.commandLine.appendSwitch(
+	"disable-blink-features",
+	"AutomationControlled",
+);
+// Note: do NOT add `IsolateOrigins,site-per-process` here — it weakens the
+// renderer sandbox and is unrelated to CAPTCHA detection.
+app.commandLine.appendSwitch("disable-features", "AutomationControlled");
+app.commandLine.appendSwitch(
+	"force-webrtc-ip-handling-policy",
+	"default_public_interface_only",
+);
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
+app.commandLine.appendSwitch("no-default-browser-check");
+
 configureDoyDeckSafeDevUserData();
 
 void applyShellEnvToProcess().catch((error) => {
@@ -345,9 +363,30 @@ if (!gotTheLock) {
 			return net.fetch(pathToFileURL(iconPath).toString());
 		};
 		protocol.handle("superset-icon", iconProtocolHandler);
-		session
-			.fromPartition("persist:superset")
-			.protocol.handle("superset-icon", iconProtocolHandler);
+		const webviewSession = session.fromPartition("persist:superset");
+		webviewSession.protocol.handle("superset-icon", iconProtocolHandler);
+
+		// Install the stealth preload at document_start for every frame in the
+		// persist:superset partition (the embedded "ブラウザAI" webview). This
+		// erases automation fingerprints — navigator.webdriver, window.chrome,
+		// plugins, WebGL vendor — BEFORE Cloudflare Turnstile / reCAPTCHA /
+		// other anti-bot scripts in <head> get to read them. The dom-ready
+		// injection in browser-manager.ts is kept as a safety net; both paths
+		// share an idempotency flag so double-application is a no-op.
+		try {
+			const stealthPreloadPath = path.resolve(
+				__dirname,
+				"..",
+				"preload",
+				"stealth-webview.js",
+			);
+			webviewSession.setPreloads([stealthPreloadPath]);
+		} catch (error) {
+			console.error(
+				"[main] Failed to register stealth-webview preload:",
+				error,
+			);
+		}
 
 		// Serve system fonts (e.g. SF Mono on macOS) via custom protocol
 		// so the renderer can use @font-face with font-src 'self' CSP

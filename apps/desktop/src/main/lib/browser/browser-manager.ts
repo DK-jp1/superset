@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { clipboard, Menu, webContents } from "electron";
 import { safeOpenExternal } from "main/lib/safe-url";
+import { CHROME_UA, STEALTH_INIT_SCRIPT } from "./stealth";
 
 interface ConsoleEntry {
 	level: "log" | "warn" | "error" | "info" | "debug";
@@ -28,12 +29,17 @@ class BrowserManager extends EventEmitter {
 	private consoleLogs = new Map<string, ConsoleEntry[]>();
 	private consoleListeners = new Map<string, () => void>();
 	private contextMenuListeners = new Map<string, () => void>();
+	private stealthListeners = new Map<string, () => void>();
 
 	register(paneId: string, webContentsId: number): void {
 		// Clean up previous listeners if re-registering with a new webContentsId
 		const prevId = this.paneWebContentsIds.get(paneId);
 		if (prevId != null && prevId !== webContentsId) {
-			for (const map of [this.consoleListeners, this.contextMenuListeners]) {
+			for (const map of [
+				this.consoleListeners,
+				this.contextMenuListeners,
+				this.stealthListeners,
+			]) {
 				const cleanup = map.get(paneId);
 				if (cleanup) {
 					cleanup();
@@ -53,13 +59,18 @@ class BrowserManager extends EventEmitter {
 				}
 				return { action: "deny" as const };
 			});
+			this.setupStealth(paneId, wc);
 			this.setupConsoleCapture(paneId, wc);
 			this.setupContextMenu(paneId, wc);
 		}
 	}
 
 	unregister(paneId: string): void {
-		for (const map of [this.consoleListeners, this.contextMenuListeners]) {
+		for (const map of [
+			this.consoleListeners,
+			this.contextMenuListeners,
+			this.stealthListeners,
+		]) {
 			const cleanup = map.get(paneId);
 			if (cleanup) {
 				cleanup();
@@ -112,6 +123,37 @@ class BrowserManager extends EventEmitter {
 		const wc = this.getWebContents(paneId);
 		if (!wc) return;
 		wc.openDevTools({ mode: "detach" });
+	}
+
+	private setupStealth(paneId: string, wc: Electron.WebContents): void {
+		// 1. Pretend to be vanilla Chrome stable. setUserAgent persists across
+		//    subsequent navigations for this webContents.
+		try {
+			wc.setUserAgent(CHROME_UA);
+		} catch {
+			// older Electron versions may throw if called pre-init; fall through
+		}
+
+		// 2. Re-inject the JS environment patches on every navigation. The script
+		//    is idempotent via a window-level flag, so concurrent fires are safe.
+		//    'dom-ready' fires after the DOM tree is built but before sub-resource
+		//    loads, which beats every CAPTCHA fingerprint check we care about.
+		const handler = () => {
+			wc.executeJavaScript(STEALTH_INIT_SCRIPT, true).catch(() => {
+				// Page may have been navigated away mid-injection; ignore.
+			});
+		};
+		wc.on("dom-ready", handler);
+
+		// Apply once immediately in case the page is already loaded (reclaimed
+		// webview after parking).
+		handler();
+
+		this.stealthListeners.set(paneId, () => {
+			if (!wc.isDestroyed()) {
+				wc.removeListener("dom-ready", handler);
+			}
+		});
 	}
 
 	private setupContextMenu(paneId: string, wc: Electron.WebContents): void {
