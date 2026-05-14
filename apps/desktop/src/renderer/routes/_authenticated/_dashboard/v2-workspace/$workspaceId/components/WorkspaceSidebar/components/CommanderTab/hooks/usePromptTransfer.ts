@@ -8,6 +8,11 @@ import {
 	type BrowserSlotMode,
 } from "renderer/lib/doydeck-browser-slot-key";
 import { electronTrpcClient } from "renderer/lib/trpc-client";
+import type {
+	DoyDeckWorkerBindingSnapshot,
+	DoyDeckWorkerBindingStatus,
+	DoyDeckWorkerType,
+} from "renderer/stores/doydeck-worker-bindings";
 import { useTabsStore } from "renderer/stores/tabs/store";
 import { useWorkspaceEvent } from "renderer/hooks/host-service/useWorkspaceEvent";
 import {
@@ -235,6 +240,19 @@ export type AutoLoopDiagnostics = {
 	commanderRuntimeUsableWidth: number | null;
 	commanderRuntimeVisualStatus: "PASS" | "NEEDS_FIX" | "UNKNOWN";
 	commanderRuntimeBridgeAvailable: boolean;
+	activeTerminalPaneId: string | null;
+	activeTerminalId: string | null;
+	boundWorkerPaneId: string | null;
+	boundTerminalId: string | null;
+	currentWorkerPaneId: string | null;
+	currentWorkerTerminalId: string | null;
+	workerPaneIdAtArm: string | null;
+	terminalIdAtArm: string | null;
+	workerType: DoyDeckWorkerType;
+	workerBindingStatus: DoyDeckWorkerBindingStatus;
+	workerBindingStatusAtArm: DoyDeckWorkerBindingStatus;
+	workerBindingMismatch: boolean;
+	workerBindingReason: string | null;
 };
 
 type CaptureForTerminalPreviewSource =
@@ -315,6 +333,19 @@ const EMPTY_AUTO_LOOP_DIAGNOSTICS: AutoLoopDiagnostics = {
 	commanderRuntimeUsableWidth: null,
 	commanderRuntimeVisualStatus: "UNKNOWN",
 	commanderRuntimeBridgeAvailable: false,
+	activeTerminalPaneId: null,
+	activeTerminalId: null,
+	boundWorkerPaneId: null,
+	boundTerminalId: null,
+	currentWorkerPaneId: null,
+	currentWorkerTerminalId: null,
+	workerPaneIdAtArm: null,
+	terminalIdAtArm: null,
+	workerType: "unknown",
+	workerBindingStatus: "unbound",
+	workerBindingStatusAtArm: "unbound",
+	workerBindingMismatch: false,
+	workerBindingReason: null,
 };
 
 const DANGEROUS_TERMINAL_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
@@ -1379,6 +1410,7 @@ interface UsePromptTransferParams {
 	state: CommanderState;
 	session: CommanderSession;
 	activeTerminal: string | null;
+	workerBinding: DoyDeckWorkerBindingSnapshot;
 	autoRelayMode: AutoRelayMode;
 	getLiveUrl: () => string;
 	currentUrl: string;
@@ -1400,6 +1432,7 @@ export function usePromptTransfer({
 	state,
 	session,
 	activeTerminal,
+	workerBinding,
 	autoRelayMode,
 	getLiveUrl,
 	currentUrl,
@@ -1521,7 +1554,16 @@ export function usePromptTransfer({
 	const autoRelayRef = useRef<AutoRelayTracker | null>(null);
 	const autoLoopTerminalFingerprintRef = useRef("");
 	const autoLoopWorkerFingerprintRef = useRef("");
+	const autoLoopWorkerPaneIdAtArmRef = useRef<string | null>(null);
+	const autoLoopTerminalIdAtArmRef = useRef<string | null>(null);
+	const autoLoopWorkerBindingStatusAtArmRef =
+		useRef<DoyDeckWorkerBindingStatus>("unbound");
 	const autoLoopDiagnosticEventIdRef = useRef(0);
+	const workerBindingRef = useRef(workerBinding);
+
+	useEffect(() => {
+		workerBindingRef.current = workerBinding;
+	}, [workerBinding]);
 
 	const appendAutoLoopEvent = useCallback((label: string) => {
 		const at = Date.now();
@@ -1645,7 +1687,12 @@ export function usePromptTransfer({
 			armedBrowserSlot.key,
 		);
 		const commanderRuntime = getCommanderBrowserRuntimeSnapshot();
+		const armedWorkerBinding = workerBindingRef.current;
 		activeTabIdAtArmRef.current = armedTabId;
+		autoLoopWorkerPaneIdAtArmRef.current = armedWorkerBinding.workerPaneId;
+		autoLoopTerminalIdAtArmRef.current = armedWorkerBinding.terminalId;
+		autoLoopWorkerBindingStatusAtArmRef.current =
+			armedWorkerBinding.bindingStatus;
 		tabContextSeenChangedRef.current = null;
 		setAutoLoopTurn(0);
 		setAutoLoopStopReason(null);
@@ -1699,10 +1746,29 @@ export function usePromptTransfer({
 			commanderRuntimeUsableWidth: commanderRuntime.usableWidth,
 			commanderRuntimeVisualStatus: commanderRuntime.visualStatus,
 			commanderRuntimeBridgeAvailable: commanderRuntime.bridgeAvailable,
+			activeTerminalPaneId: armedWorkerBinding.activeTerminalPaneId,
+			activeTerminalId: armedWorkerBinding.activeTerminalId,
+			boundWorkerPaneId: armedWorkerBinding.boundWorkerPaneId,
+			boundTerminalId: armedWorkerBinding.boundTerminalId,
+			currentWorkerPaneId: armedWorkerBinding.workerPaneId,
+			currentWorkerTerminalId: armedWorkerBinding.terminalId,
+			workerPaneIdAtArm: armedWorkerBinding.workerPaneId,
+			terminalIdAtArm: armedWorkerBinding.terminalId,
+			workerType: armedWorkerBinding.workerType,
+			workerBindingStatus: armedWorkerBinding.bindingStatus,
+			workerBindingStatusAtArm: armedWorkerBinding.bindingStatus,
+			workerBindingMismatch: armedWorkerBinding.workerBindingMismatch,
+			workerBindingReason: armedWorkerBinding.reason,
 		});
+		if (armedWorkerBinding.bindingStatus !== "bound") {
+			appendAutoLoopEvent(
+				`worker binding ${armedWorkerBinding.bindingStatus}: ${armedWorkerBinding.reason ?? "no explicit binding"}`,
+			);
+		}
 		autoLoopTerminalFingerprintRef.current = "";
 		autoLoopWorkerFingerprintRef.current = "";
 	}, [
+		appendAutoLoopEvent,
 		getCommanderBrowserRuntimeSnapshot,
 		getBrowserSlotForTab,
 		getBrowserSlotRegistryDiagnostics,
@@ -1762,7 +1828,17 @@ export function usePromptTransfer({
 				prev.commanderRuntimeVisualStatus ===
 					currentCommanderRuntime.visualStatus &&
 				prev.commanderRuntimeBridgeAvailable ===
-					currentCommanderRuntime.bridgeAvailable
+					currentCommanderRuntime.bridgeAvailable &&
+				prev.activeTerminalPaneId === workerBinding.activeTerminalPaneId &&
+				prev.activeTerminalId === workerBinding.activeTerminalId &&
+				prev.boundWorkerPaneId === workerBinding.boundWorkerPaneId &&
+				prev.boundTerminalId === workerBinding.boundTerminalId &&
+				prev.currentWorkerPaneId === workerBinding.workerPaneId &&
+				prev.currentWorkerTerminalId === workerBinding.terminalId &&
+				prev.workerType === workerBinding.workerType &&
+				prev.workerBindingStatus === workerBinding.bindingStatus &&
+				prev.workerBindingMismatch === workerBinding.workerBindingMismatch &&
+				prev.workerBindingReason === workerBinding.reason
 			) {
 				return prev;
 			}
@@ -1800,6 +1876,16 @@ export function usePromptTransfer({
 				commanderRuntimeVisualStatus: currentCommanderRuntime.visualStatus,
 				commanderRuntimeBridgeAvailable:
 					currentCommanderRuntime.bridgeAvailable,
+				activeTerminalPaneId: workerBinding.activeTerminalPaneId,
+				activeTerminalId: workerBinding.activeTerminalId,
+				boundWorkerPaneId: workerBinding.boundWorkerPaneId,
+				boundTerminalId: workerBinding.boundTerminalId,
+				currentWorkerPaneId: workerBinding.workerPaneId,
+				currentWorkerTerminalId: workerBinding.terminalId,
+				workerType: workerBinding.workerType,
+				workerBindingStatus: workerBinding.bindingStatus,
+				workerBindingMismatch: workerBinding.workerBindingMismatch,
+				workerBindingReason: workerBinding.reason,
 			};
 		});
 		// S5.10 Phase 1: emit a discrete recent event the moment the tab
@@ -1839,6 +1925,7 @@ export function usePromptTransfer({
 		getBrowserSlotForTab,
 		getBrowserSlotRegistryDiagnostics,
 		stopAutoLoop,
+		workerBinding,
 	]);
 
 	// S5.9 Phase 1 — surface Superset EventBus lifecycle signals in the
@@ -2665,7 +2752,7 @@ export function usePromptTransfer({
 			}
 			cancelAutoCapture("active-terminal-lost");
 			cancelAutoRelay("active-terminal-lost");
-			if (autoRelayMode === "loop") {
+			if (autoRelayMode === "loop" && !autoLoopWorkerPaneIdAtArmRef.current) {
 				setAutoLoopStopReason("no active terminal");
 				setAutoLoopPhase("stopped");
 				setAutoLoopLastAction("no active terminal");
@@ -2703,16 +2790,20 @@ export function usePromptTransfer({
 		if (autoRelayMode !== "preview" && autoRelayMode !== "loop") return;
 		if (autoRelayMode === "loop" && autoLoopStopReason) return;
 		if (autoRelayMode === "loop" && autoLoopPhase !== "waiting-worker") return;
-		if (!activeTerminal) return;
+		const relayPaneId =
+			autoRelayMode === "loop"
+				? autoLoopWorkerPaneIdAtArmRef.current
+				: activeTerminal;
+		if (!relayPaneId) return;
 		if (workerResponsePreview.visible) return;
 		const currentRelay = autoRelayRef.current;
-		if (currentRelay?.paneId === activeTerminal) return;
-		const markerOffset = getOutputLogOffset(activeTerminal);
+		if (currentRelay?.paneId === relayPaneId) return;
+		const markerOffset = getOutputLogOffset(relayPaneId);
 		console.log("[S3.13-stream] passive auto relay armed from current offset", {
-			paneId: activeTerminal,
+			paneId: relayPaneId,
 			markerOffset,
 		});
-		startAutoRelayPreview(activeTerminal, markerOffset, "mode-armed");
+		startAutoRelayPreview(relayPaneId, markerOffset, "mode-armed");
 	}, [
 		activeTerminal,
 		autoLoopPhase,
@@ -2880,8 +2971,13 @@ export function usePromptTransfer({
 		const fingerprint = fingerprintText(`terminal:${text}`);
 		if (autoLoopTerminalFingerprintRef.current === fingerprint) return;
 
-		if (!activeTerminal) {
-			stopAutoLoop("no active terminal");
+		const workerPaneId = autoLoopWorkerPaneIdAtArmRef.current;
+		if (autoLoopWorkerBindingStatusAtArmRef.current === "stale") {
+			stopAutoLoop("bound worker terminal is stale");
+			return;
+		}
+		if (!workerPaneId) {
+			stopAutoLoop("no bound or active worker terminal");
 			return;
 		}
 		if (!detectProvider(getLiveUrl() || currentUrl)) {
@@ -2912,15 +3008,17 @@ export function usePromptTransfer({
 		setAutoLoopPhase("sending-worker");
 		setAutoLoopLastAction(`Sending turn ${nextTurn}/${autoLoopMaxTurns} to Worker`);
 		cancelAutoCapture("sending-to-worker");
-		const startRelay = handleTerminalSubmitBeforeSend(activeTerminal);
+		const startRelay = handleTerminalSubmitBeforeSend(workerPaneId);
 		void (async () => {
 			console.log("[S5.2] auto loop terminal send start", {
 				turn: nextTurn,
 				maxTurns: autoLoopMaxTurns,
-				paneId: activeTerminal,
+				paneId: workerPaneId,
+				terminalId: autoLoopTerminalIdAtArmRef.current,
+				workerBindingStatus: autoLoopWorkerBindingStatusAtArmRef.current,
 				textLength: text.length,
 			});
-			const ok = await sendToTerminal(activeTerminal, text, { submit: true });
+			const ok = await sendToTerminal(workerPaneId, text, { submit: true });
 			if (!ok) {
 				stopAutoLoop("terminal submit failed");
 				return;
@@ -2936,7 +3034,6 @@ export function usePromptTransfer({
 			});
 		})();
 	}, [
-		activeTerminal,
 		autoLoopMaxTurns,
 		autoLoopStopReason,
 		autoLoopTurn,

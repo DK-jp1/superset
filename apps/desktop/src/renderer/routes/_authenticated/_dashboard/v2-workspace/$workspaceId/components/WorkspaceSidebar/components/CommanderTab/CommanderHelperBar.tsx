@@ -11,6 +11,7 @@ import { cn } from "@superset/ui/utils";
 import { toast } from "@superset/ui/sonner";
 import { useCallback, useEffect, useState } from "react";
 import { useDoyDeckDropdownClose } from "renderer/stores/doydeck-dropdown-close-events";
+import type { DoyDeckWorkerBindingSnapshot } from "renderer/stores/doydeck-worker-bindings";
 import {
 	LuChevronDown,
 	LuClipboard,
@@ -74,6 +75,9 @@ export function CommanderHelperBar({
 	autoLoopStopReason,
 	onStopAutoLoop,
 	onTerminalSubmitBeforeSend,
+	workerBinding,
+	onBindActiveTerminalToTab,
+	onUnbindWorkerFromTab,
 	providerLabel,
 	hasProvider,
 }: {
@@ -106,6 +110,9 @@ export function CommanderHelperBar({
 	autoLoopStopReason: string | null;
 	onStopAutoLoop: (reason: string) => void;
 	onTerminalSubmitBeforeSend: (paneId: string) => (() => void) | null;
+	workerBinding: DoyDeckWorkerBindingSnapshot;
+	onBindActiveTerminalToTab: () => void;
+	onUnbindWorkerFromTab: () => void;
 	providerLabel: string;
 	hasProvider: boolean;
 }) {
@@ -148,6 +155,7 @@ export function CommanderHelperBar({
 		typeof offset === "number" ? offset.toString() : "-";
 	const formatSlotKey = (key: string | null) => key || "-";
 	const formatBrowserUrl = (url: string | null) => url || "-";
+	const formatShortId = (id: string | null) => (id ? id.slice(-8) : "-");
 
 	const handleTerminalSend = useCallback(
 		(type: "worker" | "review") => {
@@ -216,6 +224,25 @@ export function CommanderHelperBar({
 					data-testid="terminal-active-marker"
 				>
 					{activeTerminal ? "Term ✓" : "Term ✗"}
+				</span>
+				<span
+					className={cn(
+						"shrink-0 rounded px-1 py-0.5 text-[9px] font-medium",
+						workerBinding.bindingStatus === "bound"
+							? "bg-green-500/10 text-green-600 dark:text-green-400"
+							: workerBinding.bindingStatus === "stale"
+								? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+								: "bg-muted text-muted-foreground",
+					)}
+					data-testid="worker-binding-marker"
+					title={workerBinding.reason ?? undefined}
+				>
+					Worker{" "}
+					{workerBinding.bindingStatus === "bound"
+						? "✓"
+						: workerBinding.bindingStatus === "stale"
+							? "!"
+							: "-"}
 				</span>
 				<select
 					value={autoRelayMode}
@@ -338,6 +365,26 @@ export function CommanderHelperBar({
 							<LuTrash2 className="size-3.5" />
 							Clear Session
 						</DropdownMenuItem>
+						<DropdownMenuSeparator />
+						<DropdownMenuLabel className="text-[10px] font-normal text-muted-foreground">
+							Worker Binding
+						</DropdownMenuLabel>
+						<DropdownMenuItem
+							disabled={!activeTerminal}
+							onSelect={onBindActiveTerminalToTab}
+							data-testid="commander-bind-worker-terminal"
+						>
+							<LuTerminal className="size-3.5" />
+							Bind active terminal to this tab
+						</DropdownMenuItem>
+						<DropdownMenuItem
+							disabled={!workerBinding.boundWorkerPaneId}
+							onSelect={onUnbindWorkerFromTab}
+							data-testid="commander-unbind-worker-terminal"
+						>
+							<LuTrash2 className="size-3.5" />
+							Unbind worker from this tab
+						</DropdownMenuItem>
 						{autoRelayMode === "loop" && (
 							<DropdownMenuItem
 								onSelect={() => setDiagnosticsOpen((open) => !open)}
@@ -452,6 +499,12 @@ export function CommanderHelperBar({
 									Worker watcher:{" "}
 									{autoLoopDiagnostics.workerWatcherActive ? "on" : "off"}
 								</span>
+								<span data-testid="auto-loop-worker-binding-status">
+									Worker binding: {autoLoopDiagnostics.workerBindingStatus}
+								</span>
+								<span data-testid="auto-loop-worker-type">
+									Worker type: {autoLoopDiagnostics.workerType}
+								</span>
 								<span>
 									Browser activity:{" "}
 									{formatAgo(autoLoopDiagnostics.browserActivityAt)}
@@ -493,6 +546,26 @@ export function CommanderHelperBar({
 									{autoLoopDiagnostics.currentActiveTabId
 										? autoLoopDiagnostics.currentActiveTabId.slice(-8)
 										: "-"}
+								</span>
+								<span data-testid="auto-loop-active-terminal-pane">
+									Active terminal:{" "}
+									{formatShortId(autoLoopDiagnostics.activeTerminalPaneId)}
+								</span>
+								<span data-testid="auto-loop-bound-worker-pane">
+									Bound worker:{" "}
+									{formatShortId(autoLoopDiagnostics.boundWorkerPaneId)}
+								</span>
+								<span data-testid="auto-loop-bound-terminal-id">
+									Bound terminal:{" "}
+									{formatShortId(autoLoopDiagnostics.boundTerminalId)}
+								</span>
+								<span data-testid="auto-loop-worker-pane-at-arm">
+									Worker at arm:{" "}
+									{formatShortId(autoLoopDiagnostics.workerPaneIdAtArm)}
+								</span>
+								<span data-testid="auto-loop-worker-binding-at-arm">
+									Worker binding at arm:{" "}
+									{autoLoopDiagnostics.workerBindingStatusAtArm}
 								</span>
 								<span className="min-[460px]:col-span-2">
 									Tab context: {autoLoopDiagnostics.tabContextStatus}
@@ -628,6 +701,14 @@ export function CommanderHelperBar({
 								>
 									Commander runtime reason:{" "}
 									{autoLoopDiagnostics.commanderRuntimeReason || "-"}
+								</span>
+								<span
+									className="break-all min-[460px]:col-span-2"
+									data-testid="auto-loop-worker-binding-reason"
+									title={autoLoopDiagnostics.workerBindingReason ?? ""}
+								>
+									Worker binding reason:{" "}
+									{autoLoopDiagnostics.workerBindingReason || "-"}
 								</span>
 								<span className="text-foreground/60 min-[460px]:col-span-2">
 									Browser AI: shared webview (S5.10 Phase 1; per-tab slot

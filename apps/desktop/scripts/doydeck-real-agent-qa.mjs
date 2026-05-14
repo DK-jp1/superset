@@ -698,6 +698,21 @@ function parseDiagnosticsSnapshot(text) {
 		"Browser AI:",
 	]);
 	const commanderRuntimeReason = matchField("Commander runtime reason", [
+		"Worker binding reason:",
+		"Browser AI:",
+	]);
+	const workerBindingStatus = matchField("Worker binding", ["Worker type:"]);
+	const workerType = matchField("Worker type", ["Browser activity:"]);
+	const activeTerminalPaneId = matchField("Active terminal", ["Bound worker:"]);
+	const boundWorkerPaneId = matchField("Bound worker", ["Bound terminal:"]);
+	const boundTerminalId = matchField("Bound terminal", ["Worker at arm:"]);
+	const workerPaneIdAtArm = matchField("Worker at arm", [
+		"Worker binding at arm:",
+	]);
+	const workerBindingStatusAtArm = matchField("Worker binding at arm", [
+		"Tab context:",
+	]);
+	const workerBindingReason = matchField("Worker binding reason", [
 		"Browser AI:",
 	]);
 	return {
@@ -732,6 +747,14 @@ function parseDiagnosticsSnapshot(text) {
 		commanderRuntimeSlotKey,
 		commanderRuntimeUrl,
 		commanderRuntimeReason,
+		workerBindingStatus,
+		workerType,
+		activeTerminalPaneId,
+		boundWorkerPaneId,
+		boundTerminalId,
+		workerPaneIdAtArm,
+		workerBindingStatusAtArm,
+		workerBindingReason,
 	};
 }
 
@@ -1408,6 +1431,38 @@ async function readBrowserAiState(page, label, screenshotPath = "") {
 			commanderRuntimeReason: fieldText(
 				'[data-testid="auto-loop-commander-runtime-reason"]',
 				"Commander runtime reason",
+			),
+			workerBindingStatus: fieldText(
+				'[data-testid="auto-loop-worker-binding-status"]',
+				"Worker binding",
+			),
+			workerType: fieldText(
+				'[data-testid="auto-loop-worker-type"]',
+				"Worker type",
+			),
+			activeTerminalPaneId: fieldText(
+				'[data-testid="auto-loop-active-terminal-pane"]',
+				"Active terminal",
+			),
+			boundWorkerPaneId: fieldText(
+				'[data-testid="auto-loop-bound-worker-pane"]',
+				"Bound worker",
+			),
+			boundTerminalId: fieldText(
+				'[data-testid="auto-loop-bound-terminal-id"]',
+				"Bound terminal",
+			),
+			workerPaneIdAtArm: fieldText(
+				'[data-testid="auto-loop-worker-pane-at-arm"]',
+				"Worker at arm",
+			),
+			workerBindingStatusAtArm: fieldText(
+				'[data-testid="auto-loop-worker-binding-at-arm"]',
+				"Worker binding at arm",
+			),
+			workerBindingReason: fieldText(
+				'[data-testid="auto-loop-worker-binding-reason"]',
+				"Worker binding reason",
 			),
 			browserSlotRegistrySlotKey: fieldText(
 				'[data-testid="auto-loop-browser-slot-registry-slot-key"]',
@@ -2351,6 +2406,16 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 		for (const snapshot of browserAiStateSnapshots) {
 			body.push(
 				`- ${snapshot.label}: owner=\`${snapshot.browserRuntimeOwner || "(not visible)"}\`; status=\`${snapshot.commanderRuntimeStatus || "(not visible)"}\`; slotKey=\`${snapshot.commanderRuntimeSlotKey || "(not visible)"}\`; webContentsId=\`${snapshot.commanderRuntimeWebContentsId || "(not visible)"}\`; provider=\`${snapshot.commanderRuntimeProvider || "(not visible)"}\`; url=\`${snapshot.commanderRuntimeUrl || "(not visible)"}\`; usableWidth=\`${snapshot.commanderRuntimeUsableWidth || "(not visible)"}\`; visual=\`${snapshot.commanderRuntimeVisualStatus || "(not visible)"}\`; bridge=\`${snapshot.commanderRuntimeBridge || "(not visible)"}\`; registryStatus=\`${snapshot.browserSlotRegistryStatus || "(not visible)"}\`; registryReason=\`${snapshot.browserSlotRegistryReason || "(not visible)"}\``,
+			);
+		}
+	}
+	body.push("", "## Worker binding", "");
+	if (browserAiStateSnapshots.length === 0) {
+		body.push("- none");
+	} else {
+		for (const snapshot of browserAiStateSnapshots) {
+			body.push(
+				`- ${snapshot.label}: status=\`${snapshot.workerBindingStatus || "(not visible)"}\`; type=\`${snapshot.workerType || "(not visible)"}\`; activeTerminal=\`${snapshot.activeTerminalPaneId || "(not visible)"}\`; boundWorker=\`${snapshot.boundWorkerPaneId || "(not visible)"}\`; boundTerminal=\`${snapshot.boundTerminalId || "(not visible)"}\`; workerAtArm=\`${snapshot.workerPaneIdAtArm || "(not visible)"}\`; statusAtArm=\`${snapshot.workerBindingStatusAtArm || "(not visible)"}\`; reason=\`${snapshot.workerBindingReason || "(not visible)"}\``,
 			);
 		}
 	}

@@ -3,13 +3,25 @@ import { toast } from "@superset/ui/sonner";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { LuLoader, LuX } from "react-icons/lu";
 import { registerDoyDeckCommanderActionBridge } from "renderer/stores/doydeck-commander-actions";
+import {
+	inferDoyDeckWorkerTypeFromText,
+	makeDoyDeckWorkerBindingKey,
+	resolveDoyDeckWorkerBindingSnapshot,
+	useDoyDeckWorkerBindingsStore,
+} from "renderer/stores/doydeck-worker-bindings";
 import { useTabsStore } from "renderer/stores/tabs/store";
+import { getOutputLogSince } from "renderer/screens/main/components/WorkspaceView/ContentView/TabsContent/Terminal/v1-terminal-cache";
 import type {
 	CommanderSession,
 	CommanderState,
 	CommanderView,
 } from "./commander-types";
-import { useActiveTerminal, getTerminalSelection } from "./useActiveTerminal";
+import {
+	useActiveTerminal,
+	useActiveTerminalInfo,
+	getTerminalIdFromPane,
+	getTerminalSelection,
+} from "./useActiveTerminal";
 import { useCommanderWebview } from "./useCommanderWebview";
 import { detectProvider, getProviderLabel } from "./browser-adapters";
 import {
@@ -69,8 +81,30 @@ export function CommanderTab({
 	);
 
 	const activeTerminal = useActiveTerminal();
+	const activeTerminalInfo = useActiveTerminalInfo();
 	const activeTabId = useTabsStore(
 		(s) => (workspaceId ? s.activeTabIds[workspaceId] ?? null : null),
+	);
+	const panes = useTabsStore((s) => s.panes);
+	const workerBindingKey =
+		workspaceId && activeTabId
+			? makeDoyDeckWorkerBindingKey(workspaceId, activeTabId)
+			: null;
+	const storedWorkerBinding = useDoyDeckWorkerBindingsStore((s) =>
+		workerBindingKey ? s.bindings[workerBindingKey] ?? null : null,
+	);
+	const bindWorker = useDoyDeckWorkerBindingsStore((s) => s.bindWorker);
+	const unbindWorker = useDoyDeckWorkerBindingsStore((s) => s.unbindWorker);
+	const workerBinding = useMemo(
+		() =>
+			resolveDoyDeckWorkerBindingSnapshot({
+				workspaceId,
+				tabId: activeTabId,
+				activeTerminalInfo,
+				binding: storedWorkerBinding,
+				getPaneTerminalId: (paneId) => getTerminalIdFromPane(panes[paneId]),
+			}),
+		[workspaceId, activeTabId, activeTerminalInfo, storedWorkerBinding, panes],
 	);
 	const webview = useCommanderWebview({ workspaceId, activeTabId });
 	const sessionPersistence = useCommanderSessionPersistence(workspaceId);
@@ -111,6 +145,7 @@ export function CommanderTab({
 		state,
 		session,
 		activeTerminal,
+		workerBinding,
 		autoRelayMode,
 		getLiveUrl: webview.getLiveUrl,
 		currentUrl: webview.currentUrl,
@@ -153,6 +188,33 @@ export function CommanderTab({
 		);
 		sendSelectionToBrowserAI(text);
 	}, [activeTerminal]);
+
+	const handleBindActiveTerminalToTab = useCallback(() => {
+		if (!workspaceId || !activeTabId || !activeTerminalInfo) {
+			toast.error("Bindingできるactive terminalがありません");
+			return;
+		}
+		const terminalOutput = getOutputLogSince(activeTerminalInfo.paneId, 0);
+		const workerType = inferDoyDeckWorkerTypeFromText(terminalOutput);
+		bindWorker({
+			workspaceId,
+			tabId: activeTabId,
+			workerPaneId: activeTerminalInfo.paneId,
+			terminalId: activeTerminalInfo.terminalId,
+			workerType,
+			bindingMode: "bound",
+			boundAt: Date.now(),
+		});
+		toast.success(
+			`このtabにWorker terminalをbindingしました (${workerType})`,
+		);
+	}, [workspaceId, activeTabId, activeTerminalInfo, bindWorker]);
+
+	const handleUnbindWorkerFromTab = useCallback(() => {
+		if (!workspaceId || !activeTabId) return;
+		unbindWorker(workspaceId, activeTabId);
+		toast.success("このtabのWorker bindingを解除しました");
+	}, [workspaceId, activeTabId, unbindWorker]);
 
 	useEffect(() => {
 		console.log(
@@ -332,6 +394,9 @@ export function CommanderTab({
 					autoLoopStopReason={transfer.autoLoopStopReason}
 					onStopAutoLoop={transfer.stopAutoLoop}
 					onTerminalSubmitBeforeSend={transfer.handleTerminalSubmitBeforeSend}
+					workerBinding={workerBinding}
+					onBindActiveTerminalToTab={handleBindActiveTerminalToTab}
+					onUnbindWorkerFromTab={handleUnbindWorkerFromTab}
 					providerLabel={providerLabel}
 					hasProvider={!!currentProvider}
 				/>
