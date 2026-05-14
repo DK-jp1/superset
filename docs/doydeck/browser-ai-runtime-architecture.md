@@ -444,6 +444,156 @@ Next boundary:
   from `paneId` to `BrowserSlotKey` while still keeping a single live webview.
 * Phase 3 is the first phase that may keep multiple hidden webviews alive.
 
+## 10f. S5.11 Phase 2B — runtime key migration planning
+
+Status: **planning only**. Do not change the registry primary key in this
+phase.
+
+### Current registry key model
+
+`browserRuntimeRegistry` is still pane-owned:
+
+* `entries: Map<string, RegistryEntry>` is keyed by `paneId`.
+* `listenersByPaneId: Map<string, Set<() => void>>` is keyed by `paneId`.
+* `attach`, `detach`, `destroy`, `navigate`, `goBack`, `goForward`,
+  `reload`, `getState`, `getSlotIdentity`, and `onStateChange` all receive
+  `paneId`.
+* `BrowserPane` and `usePersistentWebview` pass the active pane id into all
+  runtime calls.
+* Electron `browser.register` / `browser.unregister` still send `paneId` to
+  the main process.
+* `useGlobalBrowserLifecycle` and `useDashboardSidebarState` destroy browser
+  runtimes through ids that currently resolve to pane ids.
+* Phase 2A only added optional `slotIdentity` metadata to each registry entry.
+  The metadata is observable in Diagnostics / QA, but it does not drive
+  allocation, visibility, persistence, or cleanup.
+
+The practical result is that runtime ownership is still "the Browser pane".
+The visible slot key describes where that pane is mounted, but it is not yet
+the lookup key for the actual webview.
+
+### Migration options
+
+| Option | Shape | Benefits | Costs / risks |
+| --- | --- | --- | --- |
+| A. Keep `paneId` primary, slot key metadata only | Current model with better reports | Safest; no lifecycle risk; enough for diagnostics | Does not materially advance one-tab-one-Browser-AI because the runtime still cannot distinguish tab slots |
+| B. Make `browserSlotKey` the registry primary key now | Replace all pane-keyed maps and APIs with slot-keyed equivalents | Cleanest final model; aligns runtime identity with future per-tab sessions | Large blast radius; `browser.register` / `unregister`, lifecycle cleanup, navigation, listeners, and QA can all break if any caller still has only `paneId` |
+| C. Dual-key map | Primary runtime entry by slot key, compatibility alias from `paneId` | Best migration bridge; callers can move gradually; Diagnostics can detect alias mismatch | More bookkeeping; stale aliases can destroy or update the wrong webview if not carefully invalidated |
+| D. Slot manager above registry | Leave registry pane-keyed; add `BrowserSlotManager` to map tab slots to pane/webview ownership | Keeps low-level registry stable; can model parking and max kept slots outside the registry | Adds a second lifecycle owner; can defer necessary registry cleanup and make debug paths harder to follow |
+
+### Recommendation
+
+Do **not** flip the real registry key to `browserSlotKey` yet.
+
+The lowest-risk path is a **C-lite** migration: keep `paneId` as the primary
+key for mutations, but add a read-only slot index and mismatch diagnostics.
+This gives DoyDeck a real migration surface without introducing multiple
+webviews or a second lifecycle owner. A full dual-key map can follow once the
+read-only index proves stable in Electron QA and Real Agent QA.
+
+Do not add a separate Slot Manager in Phase 2B. Option D becomes attractive
+only when Phase 3 needs inactive-slot parking, eviction, and memory policies.
+Until then, keeping identity checks close to `browserRuntimeRegistry` is easier
+to reason about.
+
+### Phase 2B minimal implementation proposal
+
+If Phase 2B becomes code, keep behaviour unchanged and add only observation
+and compatibility helpers:
+
+1. Store a derived `browserSlotKey` alongside `slotIdentity` on
+   `RegistryEntry`.
+2. Maintain read-only indexes:
+   * `slotKeyByPaneId: Map<string, BrowserSlotKey>`
+   * `paneIdBySlotKey: Map<BrowserSlotKey, string>`
+3. Add registry helpers:
+   * `getRuntimeIdentityByPaneId(paneId)`
+   * `getRuntimeIdentityBySlotKey(slotKey)`
+   * `getRuntimeIdentitySnapshot()`
+4. Refresh the indexes during `attach` and clear them during `destroy`.
+   `detach` should leave the mapping in place while the parked webview remains
+   alive.
+5. Report mismatch states instead of changing behaviour:
+   * pane has no slot key,
+   * slot key points to a different pane,
+   * visible `BrowserPane` data attributes do not match the registry snapshot,
+   * duplicate slot key appears.
+6. Keep all mutation and navigation methods pane-id based.
+7. Keep Electron main-process payloads pane-id based; add slot key only to
+   renderer diagnostics / QA reports unless the main-process routing is
+   explicitly audited.
+
+This phase should produce better evidence, not new routing.
+
+### Phase 3 connection
+
+Phase 3 can move toward real per-tab Browser AI only after Phase 2B can prove
+the slot index is stable:
+
+* create one runtime entry per active `(workspaceId, tabId, paneId)` slot,
+* park non-active slots instead of destroying them,
+* cap retained slots with a `MAX_KEPT_SLOTS` policy,
+* evict old slots with explicit `browser.unregister` and webview removal,
+* detect duplicate or leaked `webContentsId` values,
+* switch visible webviews on active-tab changes,
+* decide whether provider/session state is shared or separated per slot.
+
+At that point the primary key can move from `paneId` to `browserSlotKey`, or a
+full dual-key map can become the compatibility layer while callers migrate.
+
+### Auto Loop connection
+
+Today Auto Loop safety is tab-owned:
+
+* `activeTabIdAtArm` is captured when Auto Loop arms.
+* A tab switch aborts the loop.
+* `browserSlotKeyAtArm` and `currentBrowserSlotKey` are diagnostic fields only.
+
+Phase 2B should keep that behaviour. It can add mismatch reporting when the
+armed slot key differs from the current registry slot key, but it should not
+change routing or stop logic yet.
+
+Phase 3 should bind Browser AI capture and Worker Response return to the
+armed `browserSlotKey`. The difference matters:
+
+* `activeTabId` answers "which UI tab owns this loop?"
+* `browserSlotKey` answers "which concrete Browser AI webview/conversation is
+  the target?"
+
+Once multiple webviews exist, both must match before an automatic
+Worker-response return is allowed.
+
+### QA plan
+
+Phase 2B should be verified as an observation-only change:
+
+* ChatGPT provider loads and remains visually usable.
+* Claude provider loads and remains visually usable.
+* `electron-qa:doydeck` reports a slot key and no registry mismatch.
+* Real Agent QA attach reports:
+  * visible `browserSlotKey`,
+  * registry slot snapshot,
+  * webview identity / URL,
+  * no stale alias or duplicate slot key.
+* Diagnostics keeps showing tab context and shared-webview mode.
+* Console output has no duplicate-key warnings, registry mismatch errors, or
+  `browser.register` / `browser.unregister` regressions.
+* Auto Loop still stops on tab switch and does not use slot-key mismatch as a
+  hard stop until Phase 3.
+
+### Risks to watch
+
+* A stale `paneId -> slotKey` alias can route navigation to an old webview.
+* A stale `slotKey -> paneId` alias can destroy the wrong webview.
+* HMR can preserve old registry maps; mismatch diagnostics must tolerate this
+  during dev without masking real leaks.
+* Main-process browser routing still speaks `paneId`; adding slot keys to the
+  renderer does not make IPC slot-safe.
+* Bootstrap states may have workspace or tab identity missing; fallback mode
+  must be visible in Diagnostics.
+* Hidden webviews need explicit cleanup before Phase 3, otherwise per-tab
+  parking can leak `webContentsId` values.
+
 ## 11. Out of scope (for now)
 
 * Deleting the legacy `screens/main` Browser AI tree.
