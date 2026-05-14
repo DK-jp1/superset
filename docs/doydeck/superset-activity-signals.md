@@ -1,7 +1,10 @@
 # Superset Activity Signals — DoyDeck Auto Loop からの流用可能性調査
 
-> Status: **investigation only, no code change**. Tracked as S5.9. Companion
-> reading: `docs/doydeck/browser-ai-runtime-architecture.md`.
+> Status: **S5.9 Phase 1 implemented (observation-only).** Auto Loop now
+> subscribes to `agent:lifecycle` and `terminal:lifecycle` while it is in
+> `waiting-worker` and writes received signals into the Diagnostics
+> recent-events log. Phase transitions and stop decisions are NOT touched
+> yet. Companion reading: `docs/doydeck/browser-ai-runtime-architecture.md`.
 
 ## 1. なぜこの調査をしたか
 
@@ -196,8 +199,53 @@ useEffect(() => {
 4. `Stop` event 受信時に「envelope 即時試行」フラグを立てる
 5. activity timeout の代わりに event 受信を待つ option を Diag panel から切替可能に
 
-**Phase 0 (今このタスク)**：
+**Phase 0 (前回タスク)**：
 6. ここまでをドキュメント化（本ファイル）。Doy / GPT 判断で Phase 1 着手の go/no-go を決定。
+
+## 10b. S5.9 Phase 1 — lifecycle signal を Diagnostics に流す (IMPLEMENTED)
+
+Status: **landed**. Observation-only。判定にはまだ使わない。
+
+What ships:
+
+* `usePromptTransfer.ts` が `useWorkspaceEvent("agent:lifecycle", ...)`
+  と `useWorkspaceEvent("terminal:lifecycle", ...)` を呼ぶ。
+* `enabled` フラグ:
+  `autoRelayMode === "loop" && autoLoopPhase === "waiting-worker" && !!workspaceId`
+  これにより waiting-worker 中だけ subscribe、それ以外は
+  `useWorkspaceEvent` が `getEventBus().on(...)` を呼ばない。
+  WebSocket 自体の参照カウントも `bus.retain()` が `enabled=false` 時は
+  作られないので、メモリリークしない。
+* 受信時の挙動: **`appendAutoLoopEvent` で recent events に記録するだけ**。
+  * `agent:lifecycle` → `"agent lifecycle: <eventType> (terminal=<suffix>)"`
+  * `terminal:lifecycle` → `"terminal lifecycle: <eventType> exit=<code> (terminal=<suffix>)"`
+* `terminalId` は末尾 8 文字に切って表示（既存 tabId 表示と同じ視認性ルール）。
+
+What does NOT change:
+
+* 既存の output offset polling は触らない。activity timeout も従来通り。
+* `Stop` event を見ても **Worker 完了確定には使わない**。
+* `terminal:lifecycle exit` を見ても **即停止には使わない**。
+* phase 遷移ロジック (`waiting-browser-ai → waiting-worker → sending-browser-ai`)
+  は全て output ベース。
+* Manual モード / Auto Relay Preview には一切影響しない (`autoRelayMode === "loop"`
+  でガードしてる)。
+
+Why observation-only first:
+
+* Phase 0 docs (上の §10) で「方式 C 併用」を推奨理由と共に書いた通り、
+  まずは既存 single-tab Real Agent QA の挙動を **byte-for-byte 維持**しつつ
+  実データで signal の信頼性を観測するのが安全。
+* `agent:lifecycle Stop` が来ない Worker 実装が見つかった時、判定に組み込んで
+  いると loop が止まらなくなる。観測ログが先にあれば原因究明が容易。
+
+Future Phase 2 candidates (NOT in this change):
+
+* `agent:lifecycle Stop` 受信を「envelope 即時試行」のヒントに使う。
+* `terminal:lifecycle exit` 受信時に Auto Loop も停止する (PTY 落ち = Worker
+  存続不可)。
+* `agent:lifecycle PermissionRequest` を `"permission wait"` phase として
+  Diag に明示する。
 
 ## 11. 今回の判断
 

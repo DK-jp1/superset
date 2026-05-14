@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "@superset/ui/sonner";
 import { electronTrpcClient } from "renderer/lib/trpc-client";
 import { useTabsStore } from "renderer/stores/tabs/store";
+import { useWorkspaceEvent } from "renderer/hooks/host-service/useWorkspaceEvent";
 import {
 	getOutputLogOffset,
 	getOutputLogSince,
@@ -1623,6 +1624,46 @@ export function usePromptTransfer({
 		appendAutoLoopEvent,
 		stopAutoLoop,
 	]);
+
+	// S5.9 Phase 1 — surface Superset EventBus lifecycle signals in the
+	// Auto Loop Diagnostics panel. We only subscribe while the loop is in
+	// `waiting-worker`; outside of that phase the hooks are still called
+	// (rules-of-hooks) but `enabled=false` so the underlying
+	// `getEventBus().on()` is not actually attached. We DELIBERATELY do
+	// NOT use these signals for phase transitions or stop decisions —
+	// today they only feed the recent-events log. Phase 2 may later use
+	// `agent:lifecycle Stop` as a Worker-completion hint, but that is
+	// out of scope here.
+	const lifecycleSubscriptionEnabled =
+		autoRelayMode === "loop" &&
+		autoLoopPhase === "waiting-worker" &&
+		!!workspaceId;
+	useWorkspaceEvent(
+		"agent:lifecycle",
+		workspaceId ?? "",
+		(payload) => {
+			const terminalSuffix = payload.terminalId
+				? payload.terminalId.slice(-8)
+				: "?";
+			appendAutoLoopEvent(
+				`agent lifecycle: ${payload.eventType} (terminal=${terminalSuffix})`,
+			);
+		},
+		lifecycleSubscriptionEnabled,
+	);
+	useWorkspaceEvent(
+		"terminal:lifecycle",
+		workspaceId ?? "",
+		(payload) => {
+			const terminalSuffix = payload.terminalId
+				? payload.terminalId.slice(-8)
+				: "?";
+			appendAutoLoopEvent(
+				`terminal lifecycle: ${payload.eventType} exit=${payload.exitCode} (terminal=${terminalSuffix})`,
+			);
+		},
+		lifecycleSubscriptionEnabled,
+	);
 
 	const startAutoRelayPreview = useCallback(
 		(
