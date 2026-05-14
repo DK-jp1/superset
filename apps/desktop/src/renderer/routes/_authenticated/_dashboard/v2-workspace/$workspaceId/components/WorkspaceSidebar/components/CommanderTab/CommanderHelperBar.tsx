@@ -476,6 +476,21 @@ export function CommanderHelperBar({
 								<span className="col-span-2">
 									Stop reason: {autoLoopStopReason || "-"}
 								</span>
+								<span>
+									Armed tab:{" "}
+									{autoLoopDiagnostics.activeTabIdAtArm
+										? autoLoopDiagnostics.activeTabIdAtArm.slice(-8)
+										: "-"}
+								</span>
+								<span>
+									Current tab:{" "}
+									{autoLoopDiagnostics.currentActiveTabId
+										? autoLoopDiagnostics.currentActiveTabId.slice(-8)
+										: "-"}
+								</span>
+								<span className="col-span-2">
+									Tab context: {autoLoopDiagnostics.tabContextStatus}
+								</span>
 							</div>
 							{autoLoopDiagnostics.recentEvents.length > 0 && (
 								<div className="mt-1 border-t pt-1">

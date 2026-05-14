@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "@superset/ui/sonner";
 import { electronTrpcClient } from "renderer/lib/trpc-client";
+import { useTabsStore } from "renderer/stores/tabs/store";
 import {
 	getOutputLogOffset,
 	getOutputLogSince,
@@ -176,6 +177,13 @@ export type AutoLoopDiagnosticEvent = {
 	at: number;
 	label: string;
 };
+// S5.8 Phase 1 (active-tab-only guard): tab context status surfaced in the
+// Diagnostics panel. Auto Loop snapshots `activeTabIdAtArm` when it arms and
+// aborts with `auto loop aborted by tab switch` if the user moves to another
+// tab while a loop is running. See
+// docs/doydeck/browser-ai-runtime-architecture.md.
+export type TabContextStatus = "same" | "changed" | "unknown";
+
 export type AutoLoopDiagnostics = {
 	browserWatcherActive: boolean;
 	workerWatcherActive: boolean;
@@ -189,6 +197,9 @@ export type AutoLoopDiagnostics = {
 	noActivityDeadlineAt: number | null;
 	hardMaxDeadlineAt: number | null;
 	recentEvents: AutoLoopDiagnosticEvent[];
+	activeTabIdAtArm: string | null;
+	currentActiveTabId: string | null;
+	tabContextStatus: TabContextStatus;
 };
 
 type CaptureForTerminalPreviewSource =
@@ -245,6 +256,9 @@ const EMPTY_AUTO_LOOP_DIAGNOSTICS: AutoLoopDiagnostics = {
 	noActivityDeadlineAt: null,
 	hardMaxDeadlineAt: null,
 	recentEvents: [],
+	activeTabIdAtArm: null,
+	currentActiveTabId: null,
+	tabContextStatus: "unknown",
 };
 
 const DANGEROUS_TERMINAL_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
@@ -1388,6 +1402,16 @@ export function usePromptTransfer({
 	const [autoLoopPhase, setAutoLoopPhaseState] =
 		useState<AutoLoopPhase>("idle");
 	const [autoLoopLastAction, setAutoLoopLastAction] = useState("");
+
+	// S5.8 Phase 1: tab context snapshot. `activeTabIdAtArmRef` freezes the tab
+	// id at the moment the loop arms; `currentActiveTabId` is a reactive read
+	// of the same store key. If they diverge while a loop is running we abort
+	// to keep Auto Loop from sending Worker prompts to a tab the user has
+	// already moved away from.
+	const activeTabIdAtArmRef = useRef<string | null>(null);
+	const currentActiveTabId = useTabsStore(
+		(s) => (workspaceId ? s.activeTabIds[workspaceId] ?? null : null),
+	);
 	const [autoLoopLastActivityAt, setAutoLoopLastActivityAt] =
 		useState<number | null>(null);
 	const [autoLoopDiagnostics, setAutoLoopDiagnostics] =
@@ -1522,6 +1546,13 @@ export function usePromptTransfer({
 
 	const resetAutoLoopState = useCallback(() => {
 		const now = Date.now();
+		// S5.8 Phase 1: snapshot the active tab at arm time. Reads via
+		// `useTabsStore.getState()` because this callback runs outside of the
+		// React subscription path and we want the value at the call site.
+		const armedTabId = workspaceId
+			? useTabsStore.getState().activeTabIds[workspaceId] ?? null
+			: null;
+		activeTabIdAtArmRef.current = armedTabId;
 		setAutoLoopTurn(0);
 		setAutoLoopStopReason(null);
 		setAutoLoopPhase("waiting-browser-ai");
@@ -1535,10 +1566,63 @@ export function usePromptTransfer({
 			noActivityDeadlineAt: now + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
 			hardMaxDeadlineAt: now + AUTO_LOOP_HARD_MAX_WAIT_MS,
 			recentEvents: [{ at: now, label: "auto loop armed" }],
+			activeTabIdAtArm: armedTabId,
+			currentActiveTabId: armedTabId,
+			tabContextStatus: armedTabId ? "same" : "unknown",
 		});
 		autoLoopTerminalFingerprintRef.current = "";
 		autoLoopWorkerFingerprintRef.current = "";
-	}, [setAutoLoopPhase]);
+	}, [setAutoLoopPhase, workspaceId]);
+
+	// S5.8 Phase 1: while an Auto Loop is running, mirror the current active
+	// tab into diagnostics and abort if it diverges from the arm-time tab.
+	// We deliberately scope this to autoRelayMode === "loop" and phases that
+	// can actually relay (anything other than idle/stopped) so manual mode
+	// and stopped loops don't churn state.
+	useEffect(() => {
+		if (autoRelayMode !== "loop") return;
+		if (autoLoopPhase === "idle" || autoLoopPhase === "stopped") return;
+		const armed = activeTabIdAtArmRef.current;
+		// Reflect current tab id in diagnostics every time the active tab id
+		// changes; this keeps the Diag panel readable while the loop is live.
+		setAutoLoopDiagnostics((prev) => {
+			const status: TabContextStatus =
+				armed && currentActiveTabId
+					? currentActiveTabId === armed
+						? "same"
+						: "changed"
+					: "unknown";
+			if (
+				prev.currentActiveTabId === currentActiveTabId &&
+				prev.tabContextStatus === status &&
+				prev.activeTabIdAtArm === armed
+			) {
+				return prev;
+			}
+			return {
+				...prev,
+				activeTabIdAtArm: armed,
+				currentActiveTabId,
+				tabContextStatus: status,
+			};
+		});
+		if (
+			armed &&
+			currentActiveTabId &&
+			currentActiveTabId !== armed
+		) {
+			appendAutoLoopEvent(
+				`tab switched from ${armed} to ${currentActiveTabId}, aborting auto loop`,
+			);
+			stopAutoLoop("auto loop aborted by tab switch");
+		}
+	}, [
+		currentActiveTabId,
+		autoRelayMode,
+		autoLoopPhase,
+		appendAutoLoopEvent,
+		stopAutoLoop,
+	]);
 
 	const startAutoRelayPreview = useCallback(
 		(

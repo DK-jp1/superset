@@ -1,7 +1,7 @@
 # Browser AI Runtime Architecture
 
-> Status: **Phase 0 (design only)**. No code changes yet. This document is the
-> reference for the Per-Tab Browser AI Session work tracked as S5.7.
+> Status: **Phase 0 (design) + S5.8 Phase 1 (active-tab-only guard) implemented.**
+> S5.7 Per-Tab Browser AI Session body and S5.8 Phase 2+ remain design-only.
 
 ## 1. Why this document exists
 
@@ -200,6 +200,54 @@ Start with Phase 1. Do not skip ahead. The Phase 1 output (`activeTabId`
 visible in Diagnostics + abort-on-tab-switch) is small, reversible, and
 gives Real Agent QA a stable observation surface for the Phase 2 + Phase 3
 work that will actually change the webview lifecycle.
+
+## 10b. S5.8 Phase 1 — active-tab-only guard (IMPLEMENTED)
+
+Status: **landed**. Tracked as S5.8 Phase 1 ("Multi-Task Auto Loop —
+Active-tab-only model"). The Per-Tab Browser AI Session body (S5.7
+Phase 2+) is still design-only; this change only prevents wrong-tab
+relay accidents while a single Auto Loop is in flight.
+
+What ships:
+
+* `usePromptTransfer.ts` snapshots `activeTabIdAtArm` from
+  `useTabsStore.getState().activeTabIds[workspaceId]` when the loop arms
+  (inside `resetAutoLoopState`).
+* The hook subscribes to the same store key (`currentActiveTabId`) and,
+  while `autoRelayMode === "loop"` and the phase is neither `idle` nor
+  `stopped`, mirrors that into `AutoLoopDiagnostics.currentActiveTabId`
+  with `tabContextStatus` ∈ `"same" | "changed" | "unknown"`.
+* On `currentActiveTabId !== activeTabIdAtArm` it emits a recent event
+  `tab switched from <armed> to <current>, aborting auto loop` and
+  calls `stopAutoLoop("auto loop aborted by tab switch")`.
+* Commander Diagnostics now shows `Armed tab`, `Current tab`, and
+  `Tab context: same|changed|unknown` next to the existing watcher
+  state.
+
+What does NOT change:
+
+* No webview lifecycle changes — `browserRuntimeRegistry` is untouched.
+* No multi-Auto-Loop. A loop running in workspace W is still a single
+  instance; this guard simply makes that explicit and safe.
+* Pause/resume is not implemented — the chosen model is **stop, do not
+  pause**. Resume requires the user to re-arm.
+* The single-tab Real Agent QA path is byte-for-byte unchanged because
+  `currentActiveTabId === activeTabIdAtArm` for the whole run.
+
+Why "stop, not pause" for MVP:
+
+* Pause introduces a parallel state (paused vs idle vs stopped) and a
+  pause-flush question (what happens to the in-flight Worker?) that we
+  can't answer without Per-Tab Phase 2+.
+* Stop is reversible by the user (re-arm) and observable in the same
+  Diagnostics surface.
+
+Next phase boundary (NOT in this change):
+
+* S5.7 Phase 2: composite `(workspaceId, tabId, paneId)` key in
+  `browserRuntimeRegistry`.
+* S5.8 Phase 2: derive `activeTabIdAtArm` from the same composite key
+  so multi-tab parallel loops become well-defined.
 
 ## 11. Out of scope (for now)
 
