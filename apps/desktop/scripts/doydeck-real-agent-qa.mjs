@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { _electron as electron } from "playwright";
+import { _electron as electron, chromium } from "playwright";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -59,6 +59,24 @@ const composerWaitMs = Number(
 );
 const codexReadinessProbePrompt =
 	"Codex Worker readiness checkです。次の1行だけ返してください: CODEX_WORKER_READY";
+
+// Run mode: "launch" (default) spawns a fresh Electron via
+// Playwright `_electron.launch()`. "attach" connects to a DoyDeck dev
+// instance the user is already running (`dev:doydeck-safe`) via the
+// CDP port exposed with `DESKTOP_AUTOMATION_PORT`. attach mode is
+// required when the live dev is holding the doydeck-dev user-data-dir
+// / SQLite lock; launch mode would BLOCK in that case.
+const runModeRaw = (
+	process.env.DOYDECK_REAL_AGENT_QA_MODE ||
+	(process.env.DOYDECK_REAL_AGENT_QA_ATTACH === "1" ? "attach" : "launch")
+).toLowerCase();
+const runMode = runModeRaw === "attach" ? "attach" : "launch";
+const cdpPortRaw =
+	process.env.DOYDECK_REAL_AGENT_QA_CDP_PORT ||
+	process.env.DESKTOP_AUTOMATION_PORT ||
+	"9223";
+const cdpPort = Number(cdpPortRaw);
+const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
 
 rmSync(screenshotsDir, { recursive: true, force: true });
 mkdirSync(screenshotsDir, { recursive: true });
@@ -1602,7 +1620,27 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 	const body = [];
 	body.push("# DoyDeck Real Agent Auto Loop QA Report", "");
 	body.push(`- 実行日時: ${runAt}`);
-	body.push("- 起動方式: Playwright _electron.launch + apps/desktop app path");
+	body.push(`- Run mode: \`${runMode}\``);
+	if (runMode === "attach") {
+		body.push(
+			"- 起動方式: Playwright `chromium.connectOverCDP` + 既存 DoyDeck dev に attach",
+		);
+		body.push(`- CDP endpoint: \`${cdpEndpoint}\``);
+		body.push("- Attached to existing DoyDeck: `yes`");
+		body.push(
+			"- 前提: DoyDeck dev が `DESKTOP_AUTOMATION_PORT=" +
+				cdpPort +
+				" bun run --cwd apps/desktop dev:doydeck-safe` で起動済であること",
+		);
+		body.push(
+			"- 注意: attach 先 dev の preload で `window.doydeckQa.terminalOutputLogAccessorEnabled` が `true` になっている必要があります。`true` でないと QA が Terminal pane に書き込めず Worker prepare が `No terminal paneId available for QA terminal write` で BLOCKED になります。dev 起動時に `DOYDECK_REAL_AGENT_QA=1` (または `DOYDECK_ELECTRON_QA=1`) を併用してください。例: `DOYDECK_REAL_AGENT_QA=1 DESKTOP_AUTOMATION_PORT=" +
+				cdpPort +
+				" bun run --cwd apps/desktop dev:doydeck-safe`",
+		);
+	} else {
+		body.push("- 起動方式: Playwright `_electron.launch` + apps/desktop app path");
+		body.push("- Attached to existing DoyDeck: `no` (spawned a fresh Electron)");
+	}
 	body.push(`- Self prepare: \`${selfPrepare ? "yes" : "no"}\``);
 	body.push(`- Real send allowed: \`${allowRealSend ? "yes" : "no"}\``);
 	body.push(
@@ -1918,7 +1956,13 @@ function killProcessTree(pid) {
 	} catch {}
 }
 
-if (!existsSync(mainEntry) || !existsSync(rendererEntry)) {
+// Build artifacts are only required for launch mode (they back the
+// dist that Electron loads). In attach mode we connect to an already-
+// running DoyDeck dev, which is using its own electron-vite build.
+if (
+	runMode === "launch" &&
+	(!existsSync(mainEntry) || !existsSync(rendererEntry))
+) {
 	record(
 		"FAIL",
 		"Build artifacts",
@@ -1929,22 +1973,74 @@ if (!existsSync(mainEntry) || !existsSync(rendererEntry)) {
 	process.exit(1);
 }
 
-let app;
+let app; // launch mode only — undefined in attach mode
+let cdpBrowser; // attach mode only — Playwright Browser handle
 try {
-	app = await electron.launch({
-		executablePath: electronPath,
-		args: [appLaunchTarget],
-		cwd: desktopDir,
-		env: {
-			...process.env,
-			...safeDevEnv,
-		},
-		timeout: 60_000,
-	});
-	record("PASS", "Electron app launched", "Playwright _electron.launch completed");
+	let page;
+	if (runMode === "attach") {
+		try {
+			cdpBrowser = await chromium.connectOverCDP(cdpEndpoint, {
+				timeout: 10_000,
+			});
+		} catch (error) {
+			record(
+				"FAIL",
+				"CDP attach",
+				`Could not connect to ${cdpEndpoint}: ${error.message}. Start DoyDeck dev first: DESKTOP_AUTOMATION_PORT=${cdpPort} bun run --cwd apps/desktop dev:doydeck-safe`,
+			);
+			writeReport({ failedBeforeLaunch: true });
+			console.error(
+				`[doydeck-real-agent-qa] CDP attach failed at ${cdpEndpoint}: ${error.message}`,
+			);
+			process.exit(1);
+		}
+		const contexts = cdpBrowser.contexts();
+		const allPages = contexts.flatMap((ctx) => ctx.pages());
+		// The DoyDeck renderer page is the one served from electron-vite at
+		// localhost:<port>. Ignore webview targets (chatgpt.com etc.) and
+		// service workers.
+		const rendererPage = allPages.find((p) => {
+			const url = p.url();
+			return url.startsWith("http://localhost") || url.startsWith("file://");
+		});
+		if (!rendererPage) {
+			record(
+				"FAIL",
+				"CDP attach",
+				`Connected to ${cdpEndpoint} but no DoyDeck renderer page was found (pages: ${allPages.map((p) => p.url()).join(", ") || "none"})`,
+			);
+			writeReport({ failedBeforeLaunch: true });
+			console.error(
+				"[doydeck-real-agent-qa] CDP attach: no renderer page found",
+			);
+			process.exit(1);
+		}
+		page = rendererPage;
+		record(
+			"PASS",
+			"CDP attach",
+			`Connected to ${cdpEndpoint} (page: ${page.url()})`,
+		);
+	} else {
+		app = await electron.launch({
+			executablePath: electronPath,
+			args: [appLaunchTarget],
+			cwd: desktopDir,
+			env: {
+				...process.env,
+				...safeDevEnv,
+			},
+			timeout: 60_000,
+		});
+		record(
+			"PASS",
+			"Electron app launched",
+			"Playwright _electron.launch completed",
+		);
 
-	const page = await app.firstWindow({ timeout: 60_000 });
-	record("PASS", "firstWindow", "Main BrowserWindow acquired");
+		page = await app.firstWindow({ timeout: 60_000 });
+		record("PASS", "firstWindow", "Main BrowserWindow acquired");
+	}
 	page.on("console", (message) => {
 		if (["error", "warning"].includes(message.type())) {
 			consoleErrors.push({
@@ -2407,6 +2503,7 @@ try {
 	process.exitCode = 1;
 } finally {
 	if (app) {
+		// launch mode — we own the Electron process, so kill it.
 		const childProcess = app.process();
 		const pid = childProcess?.pid;
 		await Promise.race([
@@ -2416,5 +2513,16 @@ try {
 		if (pid && !childProcess.killed) {
 			killProcessTree(pid);
 		}
+	}
+	if (cdpBrowser) {
+		// attach mode — disconnect the CDP browser handle WITHOUT killing
+		// the underlying Electron (that's the live DoyDeck dev the user is
+		// using). Playwright's Browser.close() over a CDP connection only
+		// tears down the client-side connection, but we still wrap with a
+		// timeout in case it hangs.
+		await Promise.race([
+			cdpBrowser.close().catch(() => {}),
+			new Promise((resolve) => setTimeout(resolve, 5000)),
+		]);
 	}
 }
