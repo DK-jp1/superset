@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "@superset/ui/sonner";
+import {
+	COMMANDER_BROWSER_AI_PANE_ID,
+	CURRENT_BROWSER_SLOT_MODE,
+	createBrowserSlotIdentity,
+	createBrowserSlotKey,
+	type BrowserSlotMode,
+} from "renderer/lib/doydeck-browser-slot-key";
 import { electronTrpcClient } from "renderer/lib/trpc-client";
 import { useTabsStore } from "renderer/stores/tabs/store";
 import { useWorkspaceEvent } from "renderer/hooks/host-service/useWorkspaceEvent";
@@ -202,6 +209,11 @@ export type AutoLoopDiagnostics = {
 	activeTabIdAtArm: string | null;
 	currentActiveTabId: string | null;
 	tabContextStatus: TabContextStatus;
+	browserSlotKeyAtArm: string | null;
+	currentBrowserSlotKey: string | null;
+	browserSlotWorkspaceId: string | null;
+	browserSlotPaneId: string | null;
+	browserSlotMode: BrowserSlotMode;
 };
 
 type CaptureForTerminalPreviewSource =
@@ -261,6 +273,11 @@ const EMPTY_AUTO_LOOP_DIAGNOSTICS: AutoLoopDiagnostics = {
 	activeTabIdAtArm: null,
 	currentActiveTabId: null,
 	tabContextStatus: "unknown",
+	browserSlotKeyAtArm: null,
+	currentBrowserSlotKey: null,
+	browserSlotWorkspaceId: null,
+	browserSlotPaneId: null,
+	browserSlotMode: CURRENT_BROWSER_SLOT_MODE,
 };
 
 const DANGEROUS_TERMINAL_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
@@ -1416,6 +1433,20 @@ export function usePromptTransfer({
 	const currentActiveTabId = useTabsStore(
 		(s) => (workspaceId ? s.activeTabIds[workspaceId] ?? null : null),
 	);
+	const getBrowserSlotForTab = useCallback(
+		(tabId: string | null) => {
+			const identity = createBrowserSlotIdentity({
+				workspaceId,
+				tabId,
+				paneId: COMMANDER_BROWSER_AI_PANE_ID,
+			});
+			return {
+				identity,
+				key: createBrowserSlotKey(identity),
+			};
+		},
+		[workspaceId],
+	);
 	// S5.10 Phase 1: track the tab id we've already logged a `tab context
 	// changed` event for, so we don't append a duplicate every poll while the
 	// user is on the wrong tab.
@@ -1562,6 +1593,7 @@ export function usePromptTransfer({
 		const armedTabId = workspaceId
 			? useTabsStore.getState().activeTabIds[workspaceId] ?? null
 			: null;
+		const armedBrowserSlot = getBrowserSlotForTab(armedTabId);
 		activeTabIdAtArmRef.current = armedTabId;
 		tabContextSeenChangedRef.current = null;
 		setAutoLoopTurn(0);
@@ -1593,10 +1625,15 @@ export function usePromptTransfer({
 			activeTabIdAtArm: armedTabId,
 			currentActiveTabId: armedTabId,
 			tabContextStatus: armedTabId ? "same" : "unknown",
+			browserSlotKeyAtArm: armedBrowserSlot.key,
+			currentBrowserSlotKey: armedBrowserSlot.key,
+			browserSlotWorkspaceId: armedBrowserSlot.identity?.workspaceId ?? null,
+			browserSlotPaneId: COMMANDER_BROWSER_AI_PANE_ID,
+			browserSlotMode: CURRENT_BROWSER_SLOT_MODE,
 		});
 		autoLoopTerminalFingerprintRef.current = "";
 		autoLoopWorkerFingerprintRef.current = "";
-	}, [setAutoLoopPhase, workspaceId]);
+	}, [getBrowserSlotForTab, setAutoLoopPhase, workspaceId]);
 
 	// S5.8 Phase 1: while an Auto Loop is running, mirror the current active
 	// tab into diagnostics and abort if it diverges from the arm-time tab.
@@ -1607,6 +1644,8 @@ export function usePromptTransfer({
 		if (autoRelayMode !== "loop") return;
 		if (autoLoopPhase === "idle" || autoLoopPhase === "stopped") return;
 		const armed = activeTabIdAtArmRef.current;
+		const armedBrowserSlot = getBrowserSlotForTab(armed);
+		const currentBrowserSlot = getBrowserSlotForTab(currentActiveTabId);
 		// Reflect current tab id in diagnostics every time the active tab id
 		// changes; this keeps the Diag panel readable while the loop is live.
 		setAutoLoopDiagnostics((prev) => {
@@ -1619,7 +1658,9 @@ export function usePromptTransfer({
 			if (
 				prev.currentActiveTabId === currentActiveTabId &&
 				prev.tabContextStatus === status &&
-				prev.activeTabIdAtArm === armed
+				prev.activeTabIdAtArm === armed &&
+				prev.browserSlotKeyAtArm === armedBrowserSlot.key &&
+				prev.currentBrowserSlotKey === currentBrowserSlot.key
 			) {
 				return prev;
 			}
@@ -1628,6 +1669,14 @@ export function usePromptTransfer({
 				activeTabIdAtArm: armed,
 				currentActiveTabId,
 				tabContextStatus: status,
+				browserSlotKeyAtArm: armedBrowserSlot.key,
+				currentBrowserSlotKey: currentBrowserSlot.key,
+				browserSlotWorkspaceId:
+					currentBrowserSlot.identity?.workspaceId ??
+					armedBrowserSlot.identity?.workspaceId ??
+					null,
+				browserSlotPaneId: COMMANDER_BROWSER_AI_PANE_ID,
+				browserSlotMode: CURRENT_BROWSER_SLOT_MODE,
 			};
 		});
 		// S5.10 Phase 1: emit a discrete recent event the moment the tab
@@ -1663,6 +1712,7 @@ export function usePromptTransfer({
 		autoRelayMode,
 		autoLoopPhase,
 		appendAutoLoopEvent,
+		getBrowserSlotForTab,
 		stopAutoLoop,
 	]);
 

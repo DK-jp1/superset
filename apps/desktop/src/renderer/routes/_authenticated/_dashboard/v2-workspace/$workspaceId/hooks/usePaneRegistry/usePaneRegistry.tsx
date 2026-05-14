@@ -413,7 +413,7 @@ export function usePaneRegistry({
 					return "Browser";
 				},
 				renderPane: (ctx: RendererContext<PaneViewerData>) => (
-					<BrowserPane ctx={ctx} />
+					<BrowserPane ctx={ctx} workspaceId={workspaceId} />
 				),
 				renderToolbar: (ctx: RendererContext<PaneViewerData>) => (
 					<BrowserPaneToolbar ctx={ctx} />

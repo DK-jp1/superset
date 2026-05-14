@@ -3,6 +3,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@superset/ui/tooltip";
 import { GlobeIcon } from "lucide-react";
 import { useCallback, useSyncExternalStore } from "react";
 import { TbDeviceDesktop } from "react-icons/tb";
+import {
+	createBrowserSlotIdentity,
+	createBrowserSlotKey,
+	CURRENT_BROWSER_SLOT_MODE,
+} from "renderer/lib/doydeck-browser-slot-key";
 import { electronTrpcClient } from "renderer/lib/trpc-client";
 import type { BrowserPaneData, PaneViewerData } from "../../../../types";
 
@@ -32,6 +37,7 @@ export function renderBrowserTabIcon(tab: Tab<PaneViewerData>) {
 
 interface BrowserPaneProps {
 	ctx: RendererContext<PaneViewerData>;
+	workspaceId: string;
 }
 
 function useBrowserState(paneId: string) {
@@ -44,16 +50,35 @@ function useBrowserState(paneId: string) {
 	);
 }
 
-export function BrowserPane({ ctx }: BrowserPaneProps) {
+export function BrowserPane({ ctx, workspaceId }: BrowserPaneProps) {
 	const paneId = ctx.pane.id;
+	const slotIdentity = createBrowserSlotIdentity({
+		workspaceId,
+		tabId: ctx.tab.id,
+		paneId,
+	});
+	const browserSlotKey = createBrowserSlotKey(slotIdentity);
 	const state = useBrowserState(paneId);
-	const { placeholderRef, reload } = usePersistentWebview({ paneId, ctx });
+	const { placeholderRef, reload } = usePersistentWebview({
+		paneId,
+		ctx,
+		slotIdentity,
+	});
 
 	const isBlankPage = !state.currentUrl || state.currentUrl === "about:blank";
 
 	return (
 		<div className="relative flex flex-1 h-full">
-			<div ref={placeholderRef} className="w-full h-full" style={{ flex: 1 }} />
+			<div
+				ref={placeholderRef}
+				className="w-full h-full"
+				data-browser-slot-key={browserSlotKey ?? undefined}
+				data-browser-slot-mode={CURRENT_BROWSER_SLOT_MODE}
+				data-browser-slot-workspace-id={slotIdentity?.workspaceId}
+				data-browser-slot-tab-id={slotIdentity?.tabId}
+				data-browser-slot-pane-id={slotIdentity?.paneId}
+				style={{ flex: 1 }}
+			/>
 			{state.error && !state.isLoading && (
 				<BrowserErrorOverlay error={state.error} onRetry={reload} />
 			)}

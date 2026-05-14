@@ -1,4 +1,5 @@
 import { electronTrpcClient } from "renderer/lib/trpc-client";
+import type { BrowserSlotIdentity } from "renderer/lib/doydeck-browser-slot-key";
 import { isDoyDeckNativeFileDragActive } from "renderer/stores/doydeck-native-file-drag";
 import type { BrowserLoadError } from "shared/tabs-types";
 import { sanitizeUrl } from "./sanitizeUrl";
@@ -28,6 +29,7 @@ interface RegistryEntry {
 	placeholder: HTMLElement | null;
 	resizeObserver: ResizeObserver | null;
 	visible: boolean;
+	slotIdentity: BrowserSlotIdentity | null;
 }
 
 const EMPTY_STATE: BrowserRuntimeState = Object.freeze({
@@ -191,7 +193,11 @@ class BrowserRuntimeRegistryImpl {
 		this.setState(paneId, { canGoBack, canGoForward });
 	}
 
-	private createEntry(paneId: string, initialUrl: string): RegistryEntry {
+	private createEntry(
+		paneId: string,
+		initialUrl: string,
+		slotIdentity?: BrowserSlotIdentity | null,
+	): RegistryEntry {
 		const webview = document.createElement("webview") as Electron.WebviewTag;
 		webview.setAttribute("partition", "persist:superset");
 		webview.setAttribute("allowpopups", "");
@@ -216,6 +222,7 @@ class BrowserRuntimeRegistryImpl {
 			placeholder: null,
 			resizeObserver: null,
 			visible: false,
+			slotIdentity: slotIdentity ?? null,
 		};
 
 		const firePersist = () => {
@@ -372,15 +379,17 @@ class BrowserRuntimeRegistryImpl {
 		placeholder: HTMLElement,
 		initialUrl: string,
 		onPersist: (state: PersistableBrowserState) => void,
+		slotIdentity?: BrowserSlotIdentity | null,
 	): void {
 		const root = this.ensureRootContainer();
 		let entry = this.entries.get(paneId);
 		if (!entry) {
-			entry = this.createEntry(paneId, initialUrl);
+			entry = this.createEntry(paneId, initialUrl, slotIdentity);
 			this.entries.set(paneId, entry);
 			root.appendChild(entry.webview);
 		} else {
 			this.refreshNavState(paneId);
+			entry.slotIdentity = slotIdentity ?? null;
 		}
 		entry.onPersist = onPersist;
 		entry.placeholder = placeholder;
@@ -445,6 +454,10 @@ class BrowserRuntimeRegistryImpl {
 
 	getState(paneId: string): BrowserRuntimeState {
 		return this.entries.get(paneId)?.state ?? EMPTY_STATE;
+	}
+
+	getSlotIdentity(paneId: string): BrowserSlotIdentity | null {
+		return this.entries.get(paneId)?.slotIdentity ?? null;
 	}
 
 	onStateChange(paneId: string, listener: () => void): () => void {

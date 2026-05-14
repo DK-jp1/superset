@@ -1,5 +1,6 @@
 import type { RendererContext } from "@superset/panes";
 import { useCallback, useEffect, useRef } from "react";
+import type { BrowserSlotIdentity } from "renderer/lib/doydeck-browser-slot-key";
 import { electronTrpcClient } from "renderer/lib/trpc-client";
 import type {
 	BrowserPaneData,
@@ -11,11 +12,13 @@ import { DEFAULT_BROWSER_URL } from "../../constants";
 interface UsePersistentWebviewOptions {
 	paneId: string;
 	ctx: RendererContext<PaneViewerData>;
+	slotIdentity?: BrowserSlotIdentity | null;
 }
 
 export function usePersistentWebview({
 	paneId,
 	ctx,
+	slotIdentity,
 }: UsePersistentWebviewOptions) {
 	const placeholderRef = useRef<HTMLDivElement | null>(null);
 	const ctxRef = useRef(ctx);
@@ -47,12 +50,13 @@ export function usePersistentWebview({
 					faviconUrl,
 				});
 			},
+			slotIdentity,
 		);
 
 		return () => {
 			browserRuntimeRegistry.detach(paneId);
 		};
-	}, [paneId]);
+	}, [paneId, slotIdentity?.workspaceId, slotIdentity?.tabId, slotIdentity?.paneId]);
 
 	useEffect(() => {
 		const newWindowSub = electronTrpcClient.browser.onNewWindow.subscribe(

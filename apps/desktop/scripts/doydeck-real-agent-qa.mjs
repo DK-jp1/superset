@@ -600,7 +600,8 @@ async function sampleDiagnostics(page, label) {
 		.getByTestId("commander-diagnostics-panel")
 		.textContent({ timeout: 1000 })
 		.catch(() => "");
-	const item = { at: new Date().toISOString(), label, text: text || "" };
+	const parsed = parseDiagnosticsSnapshot(text || "");
+	const item = { at: new Date().toISOString(), label, text: text || "", parsed };
 	diagnosticsLog.push(item);
 	return item;
 }
@@ -631,6 +632,26 @@ function parseDiagnosticsSnapshot(text) {
 	const phase = (phaseMatch?.[1] || "").trim() || "unknown";
 	const stopReason = (stopReasonMatch?.[1] || "").trim();
 	const hasStopReason = Boolean(stopReason && !/^[-–—]$/.test(stopReason));
+	const matchField = (label, nextLabels) => {
+		const escapedNext = nextLabels.map((item) =>
+			item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+		);
+		const pattern = new RegExp(
+			`${label}:\\s*(.*?)(?:${escapedNext.join("|")}|Recent events|$)`,
+			"i",
+		);
+		return (normalized.match(pattern)?.[1] || "").trim();
+	};
+	const browserSlotKey = matchField("Browser slot", [
+		"Browser slot at arm:",
+		"Browser AI:",
+	]);
+	const browserSlotKeyAtArm = matchField("Browser slot at arm", [
+		"Browser AI:",
+	]);
+	const browserSlotMode = matchField("Slot mode", ["Slot pane:"]);
+	const browserSlotPaneId = matchField("Slot pane", ["Workspace:"]);
+	const browserSlotWorkspaceId = matchField("Workspace", ["Active tab:"]);
 	return {
 		normalized,
 		phase,
@@ -643,6 +664,11 @@ function parseDiagnosticsSnapshot(text) {
 				normalized,
 			),
 		hasStopReason,
+		browserSlotKey,
+		browserSlotKeyAtArm,
+		browserSlotMode,
+		browserSlotPaneId,
+		browserSlotWorkspaceId,
 	};
 }
 
@@ -1161,6 +1187,8 @@ async function readBrowserAiState(page, label, screenshotPath = "") {
 		const textOf = (selector) =>
 			document.querySelector(selector)?.textContent?.replace(/\s+/g, " ").trim() ||
 			"";
+		const fieldText = (selector, label) =>
+			textOf(selector).replace(new RegExp(`^${label}:\\s*`, "i"), "");
 		const rectOf = (selector) => {
 			const element = document.querySelector(selector);
 			if (!(element instanceof HTMLElement)) return null;
@@ -1246,6 +1274,30 @@ async function readBrowserAiState(page, label, screenshotPath = "") {
 			providerStatus: textOf('[data-testid="browser-provider-status"]'),
 			autoMode: textOf('[data-testid="commander-auto-mode-selector"]'),
 			diagnosticsText: textOf('[data-testid="commander-diagnostics-panel"]'),
+			browserSlotKey: fieldText(
+				'[data-testid="auto-loop-browser-slot-key"]',
+				"Browser slot",
+			),
+			browserSlotKeyAtArm: fieldText(
+				'[data-testid="auto-loop-browser-slot-key-at-arm"]',
+				"Browser slot at arm",
+			),
+			browserSlotMode: fieldText(
+				'[data-testid="auto-loop-browser-slot-mode"]',
+				"Slot mode",
+			),
+			browserSlotWorkspaceId: fieldText(
+				'[data-testid="auto-loop-browser-slot-workspace-id"]',
+				"Workspace",
+			),
+			browserSlotActiveTabId: fieldText(
+				'[data-testid="auto-loop-browser-slot-active-tab-id"]',
+				"Active tab",
+			),
+			browserSlotPaneId: fieldText(
+				'[data-testid="auto-loop-browser-slot-pane-id"]',
+				"Slot pane",
+			),
 			commanderRootRect,
 			browserAreaRect,
 			webviews,
@@ -2155,7 +2207,7 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 	} else {
 		for (const snapshot of browserAiStateSnapshots) {
 			body.push(
-				`- ${snapshot.label}: provider=\`${snapshot.providerStatus || "(empty)"}\`; url=\`${snapshot.currentUrl || "(blank)"}\`; webContentsId=\`${snapshot.webContentsId ?? "(unknown)"}\`; webviewCount=\`${snapshot.webviewCount}\`; autoMode=\`${snapshot.autoMode || "(empty)"}\`; usableWidth=\`${snapshot.usableWidth ?? 0}px\`; visual=\`${snapshot.visualStatus || "UNKNOWN"}\`; cleanup performed=\`${snapshot.cleanupPerformed}\``,
+				`- ${snapshot.label}: provider=\`${snapshot.providerStatus || "(empty)"}\`; url=\`${snapshot.currentUrl || "(blank)"}\`; webContentsId=\`${snapshot.webContentsId ?? "(unknown)"}\`; webviewCount=\`${snapshot.webviewCount}\`; autoMode=\`${snapshot.autoMode || "(empty)"}\`; usableWidth=\`${snapshot.usableWidth ?? 0}px\`; visual=\`${snapshot.visualStatus || "UNKNOWN"}\`; browserSlotKey=\`${snapshot.browserSlotKey || "(not visible)"}\`; browserSlotMode=\`${snapshot.browserSlotMode || "(not visible)"}\`; cleanup performed=\`${snapshot.cleanupPerformed}\``,
 			);
 		}
 	}
@@ -2216,7 +2268,10 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 		body.push("- none");
 	} else {
 		for (const item of diagnosticsLog.slice(-10)) {
-			body.push(`- ${item.label}: ${item.text.replace(/\\s+/g, " ").trim().slice(0, 500) || "(empty)"}`);
+			const slotSummary = item.parsed?.browserSlotKey
+				? `; browserSlotKey=\`${item.parsed.browserSlotKey}\`; browserSlotMode=\`${item.parsed.browserSlotMode || "(unknown)"}\`; browserSlotPane=\`${item.parsed.browserSlotPaneId || "(unknown)"}\``
+				: "";
+			body.push(`- ${item.label}${slotSummary}: ${item.text.replace(/\\s+/g, " ").trim().slice(0, 500) || "(empty)"}`);
 		}
 	}
 	body.push("", "## Console errors", "");
@@ -2584,10 +2639,15 @@ try {
 			)
 		) {
 			const diagnosticsOpened = await ensureDiagnosticsOpen(page);
-			await capture(page, "03-diagnostics-open");
+			const diagnosticsScreenshot = await capture(page, "03-diagnostics-open");
 			if (diagnosticsOpened) {
 				record("PASS", "Diagnostics panel", "Diagnostics panel opened");
 				await sampleDiagnostics(page, "after-auto-loop-armed");
+				await readBrowserAiState(
+					page,
+					"after diagnostics open",
+					rel(diagnosticsScreenshot),
+				);
 			} else {
 				record("UNKNOWN", "Diagnostics panel", "Diagnostics panel did not open");
 			}

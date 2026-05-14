@@ -146,6 +146,7 @@ export function CommanderHelperBar({
 			: "-";
 	const formatOffset = (offset: number | null) =>
 		typeof offset === "number" ? offset.toString() : "-";
+	const formatSlotKey = (key: string | null) => key || "-";
 
 	const handleTerminalSend = useCallback(
 		(type: "worker" | "review") => {
@@ -494,6 +495,42 @@ export function CommanderHelperBar({
 								</span>
 								<span className="min-[460px]:col-span-2">
 									Tab context: {autoLoopDiagnostics.tabContextStatus}
+								</span>
+								<span data-testid="auto-loop-browser-slot-mode">
+									Slot mode: {autoLoopDiagnostics.browserSlotMode}
+								</span>
+								<span data-testid="auto-loop-browser-slot-pane-id">
+									Slot pane: {autoLoopDiagnostics.browserSlotPaneId || "-"}
+								</span>
+								<span data-testid="auto-loop-browser-slot-workspace-id">
+									Workspace:{" "}
+									{autoLoopDiagnostics.browserSlotWorkspaceId
+										? autoLoopDiagnostics.browserSlotWorkspaceId.slice(-8)
+										: "-"}
+								</span>
+								<span data-testid="auto-loop-browser-slot-active-tab-id">
+									Active tab:{" "}
+									{autoLoopDiagnostics.currentActiveTabId
+										? autoLoopDiagnostics.currentActiveTabId.slice(-8)
+										: "-"}
+								</span>
+								<span
+									className="break-all min-[460px]:col-span-2"
+									data-testid="auto-loop-browser-slot-key"
+									title={formatSlotKey(
+										autoLoopDiagnostics.currentBrowserSlotKey,
+									)}
+								>
+									Browser slot:{" "}
+									{formatSlotKey(autoLoopDiagnostics.currentBrowserSlotKey)}
+								</span>
+								<span
+									className="break-all min-[460px]:col-span-2"
+									data-testid="auto-loop-browser-slot-key-at-arm"
+									title={formatSlotKey(autoLoopDiagnostics.browserSlotKeyAtArm)}
+								>
+									Browser slot at arm:{" "}
+									{formatSlotKey(autoLoopDiagnostics.browserSlotKeyAtArm)}
 								</span>
 								<span className="text-foreground/60 min-[460px]:col-span-2">
 									Browser AI: shared webview (S5.10 Phase 1; per-tab slot

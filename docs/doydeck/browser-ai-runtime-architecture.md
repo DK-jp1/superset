@@ -398,6 +398,52 @@ Only move to multiple kept webviews after Phase 2 can prove:
 * Regression: Auto Loop still aborts on tab switch until Phase 3 defines a
   per-tab loop ownership model.
 
+## 10e. S5.11 Phase 2A — slot key scaffolding (IMPLEMENTED)
+
+Status: **landed as scaffolding only**. Behaviour is intentionally unchanged.
+
+What ships:
+
+* A shared `BrowserSlotIdentity` / `BrowserSlotKey` helper can now derive an
+  opaque key from `workspaceId`, `tabId`, and `paneId`.
+* v2 `BrowserPane` computes and annotates its placeholder with
+  `data-browser-slot-*` attributes. This gives QA a stable observation surface
+  without changing the runtime key.
+* `browserRuntimeRegistry` stores optional slot identity metadata on its
+  existing entry, but the actual maps and listener lookups still use `paneId`.
+* Auto Loop Diagnostics now records:
+  * browser slot key at arm time,
+  * current browser slot key,
+  * workspace id,
+  * active tab id,
+  * pane id,
+  * slot mode.
+* Real Agent QA includes visible slot key / mode data in the report when the
+  Diagnostics panel is open.
+
+Current mode:
+
+* `shared-webview`
+* Pane id for the Commander Browser AI diagnostic slot:
+  `commander-browser-ai`
+* Per-tab slot identity is visible, but it does not yet drive webview
+  allocation, preservation, or routing.
+
+What did NOT change:
+
+* No multiple webviews.
+* No registry-wide key migration.
+* No per-tab ChatGPT / Claude conversation separation.
+* No parallel Auto Loop.
+* No cookie/session partition split.
+* Commander `parkedWebview` remains a separate layer.
+
+Next boundary:
+
+* Phase 2B should decide whether to migrate `browserRuntimeRegistry` internals
+  from `paneId` to `BrowserSlotKey` while still keeping a single live webview.
+* Phase 3 is the first phase that may keep multiple hidden webviews alive.
+
 ## 11. Out of scope (for now)
 
 * Deleting the legacy `screens/main` Browser AI tree.
