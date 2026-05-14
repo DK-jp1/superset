@@ -46,8 +46,8 @@ interface WorkspaceSearch {
 }
 
 const DEFAULT_RIGHT_SIDEBAR_WIDTH = 340;
-const PRACTICAL_RIGHT_SIDEBAR_MIN_WIDTH = 480;
-const PRACTICAL_RIGHT_SIDEBAR_DEFAULT_WIDTH = 520;
+const COMPACT_RIGHT_SIDEBAR_MIN_WIDTH = 320;
+const COMPACT_RIGHT_SIDEBAR_DEFAULT_WIDTH = 420;
 
 function parseOpenUrlTarget(
 	value: unknown,
@@ -179,7 +179,7 @@ function V2WorkspacePage() {
 		v2UserPreferences.rightSidebarWidth ?? DEFAULT_RIGHT_SIDEBAR_WIDTH;
 	const sidebarWidth = Math.max(
 		configuredSidebarWidth,
-		PRACTICAL_RIGHT_SIDEBAR_DEFAULT_WIDTH,
+		COMPACT_RIGHT_SIDEBAR_MIN_WIDTH,
 	);
 	const [isSidebarResizing, setIsSidebarResizing] = useState(false);
 	const { onSidebarResizeDragging, onWorkspaceInteractionStateChange } =
@@ -268,11 +268,11 @@ function V2WorkspacePage() {
 						onWidthChange={setRightSidebarWidth}
 						isResizing={isSidebarResizing}
 						onResizingChange={handleSidebarResizingChange}
-						minWidth={PRACTICAL_RIGHT_SIDEBAR_MIN_WIDTH}
+						minWidth={COMPACT_RIGHT_SIDEBAR_MIN_WIDTH}
 						maxWidth={640}
 						handleSide="left"
 						onDoubleClickHandle={() =>
-							setRightSidebarWidth(PRACTICAL_RIGHT_SIDEBAR_DEFAULT_WIDTH)
+							setRightSidebarWidth(COMPACT_RIGHT_SIDEBAR_DEFAULT_WIDTH)
 						}
 					>
 						<WorkspaceSidebar

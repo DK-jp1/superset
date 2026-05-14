@@ -297,6 +297,107 @@ Next phase boundary (NOT in this change):
 * S5.8 Phase 2: derive `activeTabIdAtArm` from the same composite key
   so multi-tab parallel loops become well-defined.
 
+## 10d. S5.11 Phase 2 planning — slot key migration
+
+Status: **planning only**. Do not multiply webviews in this phase.
+
+### Current key model
+
+`browserRuntimeRegistry` currently uses `paneId` as the only key for:
+
+* `entries: Map<string, RegistryEntry>`
+* `listenersByPaneId: Map<string, Set<() => void>>`
+* Electron `browser.register` / `browser.unregister` calls
+* Browser state reads from `BrowserPane` through `useBrowserState(paneId)`
+* `usePersistentWebview({ paneId, ctx })` attach / detach / navigate calls
+
+This means the runtime identity is still "this pane", not "this workspace tab
+slot". It is safe for the current single shared Browser AI model, but it is
+not enough to keep separate Browser AI sessions per center tab.
+
+### Proposed slot key
+
+Introduce an explicit opaque slot key:
+
+```ts
+type BrowserSlotKey = string;
+
+type BrowserSlotIdentity = {
+  workspaceId: string;
+  tabId: string;
+  paneId: string;
+};
+
+function createBrowserSlotKey(identity: BrowserSlotIdentity): BrowserSlotKey {
+  return `${identity.workspaceId}:${identity.tabId}:${identity.paneId}`;
+}
+```
+
+The registry should treat `BrowserSlotKey` as the canonical key. The identity
+object should remain available for Diagnostics / QA reporting so the app can
+show which workspace, tab, and pane a webview belongs to.
+
+### Phase 2 migration steps
+
+1. Add `BrowserSlotIdentity` / `BrowserSlotKey` helpers next to
+   `browserRuntimeRegistry`.
+2. Extend `usePersistentWebview` to accept `{ workspaceId, tabId, paneId }`
+   while still allowing a compatibility path that derives `slotKey = paneId`
+   when the tab identity is unavailable.
+3. Change internal registry maps from `paneId` names to `slotKey` names, but
+   keep public method names close to today's API until callers are migrated.
+4. Keep webview count at **one**. When the active tab changes, detach the old
+   visible slot and attach the current one; do not keep inactive slots alive
+   yet.
+5. Add `browserSlotKey`, `workspaceId`, `tabId`, and `paneId` to Diagnostics
+   and Real Agent QA reports.
+6. Keep Electron `browser.register` / `unregister` payloads compatible with
+   `paneId` until main-process routing is audited. Add `slotKey` only as
+   optional metadata first.
+
+### No behaviour change in Phase 2
+
+Phase 2 is identity plumbing only:
+
+* one Browser AI webview remains visible / alive,
+* shared session partition remains `persist:superset`,
+* Auto Loop still stops on active-tab switch,
+* Commander `parkedWebview` remains out of scope,
+* no provider-per-tab UI is introduced.
+
+### Phase 3 entry criteria
+
+Only move to multiple kept webviews after Phase 2 can prove:
+
+* single-tab Real Agent QA still passes,
+* two-tab manual switching reports the expected `browserSlotKey`,
+* `browser.register` and `browser.unregister` do not leak stale
+  `webContentsId` values,
+* hidden webviews preserve conversation URL while detached,
+* memory / CPU impact is measured with at least three parked tabs.
+
+### Risks
+
+* A slot-key rename can silently break Electron IPC if main-process handlers
+  still expect `paneId`.
+* Active tab identity may be missing during bootstrap / empty workspace states.
+* Reusing `paneId` as fallback can mask bugs; Diagnostics must show when the
+  fallback is active.
+* QA attach mode needs to report both the legacy pane id and future slot key
+  during migration.
+
+### QA plan
+
+* Electron QA: assert `browserSlotKey` is present when available and fallback
+  is reported when not.
+* Real Agent QA: single-tab attach run must preserve current Browser AI
+  provider, URL, composer readiness, and visual usability.
+* Manual two-tab smoke: open two browser tabs, switch between them, confirm
+  Diagnostics changes `current tab` and future `browserSlotKey` without
+  sending Worker output to the wrong tab.
+* Regression: Auto Loop still aborts on tab switch until Phase 3 defines a
+  per-tab loop ownership model.
+
 ## 11. Out of scope (for now)
 
 * Deleting the legacy `screens/main` Browser AI tree.

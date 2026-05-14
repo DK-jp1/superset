@@ -192,10 +192,10 @@ export function CommanderHelperBar({
 					onCancel={() => setPendingSend(null)}
 				/>
 			)}
-			<div className="border-t px-1.5 py-0.5 flex items-center gap-1.5">
+			<div className="flex min-w-0 flex-wrap items-center gap-1 border-t px-1.5 py-0.5">
 				<span
 					className={cn(
-						"text-[9px] font-medium px-1 py-0.5 rounded",
+						"shrink-0 rounded px-1 py-0.5 text-[9px] font-medium",
 						hasProvider
 							? "bg-primary/10 text-primary"
 							: "bg-muted text-muted-foreground",
@@ -206,7 +206,7 @@ export function CommanderHelperBar({
 				</span>
 				<span
 					className={cn(
-						"text-[9px] font-medium px-1 py-0.5 rounded",
+						"shrink-0 rounded px-1 py-0.5 text-[9px] font-medium",
 						activeTerminal
 							? "bg-green-500/10 text-green-600 dark:text-green-400"
 							: "bg-muted text-muted-foreground",
@@ -220,7 +220,7 @@ export function CommanderHelperBar({
 					onChange={(event) =>
 						onAutoRelayModeChange(event.target.value as AutoRelayMode)
 					}
-					className="h-5 max-w-28 rounded border border-border bg-background px-1 text-[9px]"
+					className="h-5 min-w-[7rem] max-w-full flex-[1_1_8rem] truncate rounded border border-border bg-background px-1 text-[9px]"
 					title="Auto Mode"
 					data-testid="commander-auto-mode-selector"
 				>
@@ -229,7 +229,7 @@ export function CommanderHelperBar({
 					<option value="loop">Auto Loop Preview</option>
 				</select>
 				{autoRelayMode === "loop" && (
-					<>
+					<div className="flex min-w-0 flex-[2_1_12rem] flex-wrap items-center gap-1">
 						<select
 							value={autoLoopMaxTurns}
 							onChange={(event) =>
@@ -250,7 +250,7 @@ export function CommanderHelperBar({
 						<span className="whitespace-nowrap rounded bg-muted px-1 py-0.5 text-[9px] text-muted-foreground">
 							{autoLoopTurn}/{autoLoopMaxTurns}
 						</span>
-						<span className="max-w-32 truncate rounded bg-primary/10 px-1 py-0.5 text-[9px] text-primary">
+						<span className="min-w-0 flex-[1_1_7rem] truncate rounded bg-primary/10 px-1 py-0.5 text-[9px] text-primary">
 							{AUTO_LOOP_PHASE_LABELS[autoLoopPhase]}
 						</span>
 						<Button
@@ -262,15 +262,15 @@ export function CommanderHelperBar({
 						>
 							Stop
 						</Button>
-					</>
+					</div>
 				)}
-				<div className="flex-1" />
+				<div className="min-w-0 flex-1" />
 				<DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
 					<DropdownMenuTrigger asChild>
 						<Button
 							variant="ghost"
 							size="sm"
-							className="h-5 gap-0.5 text-[10px] px-1.5"
+							className="ml-auto h-5 shrink-0 gap-0.5 px-1.5 text-[10px]"
 							data-testid="commander-actions-button"
 						>
 							Actions
@@ -399,39 +399,43 @@ export function CommanderHelperBar({
 				</DropdownMenu>
 			</div>
 			{autoRelayMode === "loop" && (
-				<div className="border-t bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground">
-					<Button
-						variant="ghost"
-						size="sm"
-						className="mr-1 h-5 px-1 text-[9px]"
-						onClick={() => setDiagnosticsOpen((open) => !open)}
-						data-testid="commander-diag-button"
-					>
-						Diag
-					</Button>
-					<span data-testid="auto-loop-phase">
-						Phase: {AUTO_LOOP_PHASE_LABELS[autoLoopPhase]}
-					</span>
-					{autoLoopLastAction && (
-						<span className="ml-2">Last: {autoLoopLastAction}</span>
-					)}
-					{lastActivityLabel && (
-						<span className="ml-2">Activity: {lastActivityLabel}</span>
-					)}
-					{autoLoopStopReason && (
-						<span
-							className="ml-2 text-amber-600 dark:text-amber-400"
-							data-testid="auto-loop-stop-reason"
+				<div className="min-w-0 border-t bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground">
+					<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+						<Button
+							variant="ghost"
+							size="sm"
+							className="h-5 shrink-0 px-1 text-[9px]"
+							onClick={() => setDiagnosticsOpen((open) => !open)}
+							data-testid="commander-diag-button"
 						>
-							Stopped: {autoLoopStopReason}
+							Diag
+						</Button>
+						<span className="min-w-0 truncate" data-testid="auto-loop-phase">
+							Phase: {AUTO_LOOP_PHASE_LABELS[autoLoopPhase]}
 						</span>
-					)}
+						{autoLoopLastAction && (
+							<span className="min-w-0 max-w-full truncate">
+								Last: {autoLoopLastAction}
+							</span>
+						)}
+						{lastActivityLabel && (
+							<span className="shrink-0">Activity: {lastActivityLabel}</span>
+						)}
+						{autoLoopStopReason && (
+							<span
+								className="min-w-0 max-w-full truncate text-amber-600 dark:text-amber-400"
+								data-testid="auto-loop-stop-reason"
+							>
+								Stopped: {autoLoopStopReason}
+							</span>
+						)}
+					</div>
 					{diagnosticsOpen && (
 						<div
-							className="mt-1 max-h-36 overflow-y-auto rounded border bg-background/80 p-1.5 text-[9px] leading-4"
+							className="mt-1 max-h-36 overflow-auto rounded border bg-background/80 p-1.5 text-[9px] leading-4"
 							data-testid="commander-diagnostics-panel"
 						>
-							<div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+							<div className="grid grid-cols-1 gap-x-3 gap-y-0.5 min-[460px]:grid-cols-2">
 								<span>
 									Phase: {AUTO_LOOP_PHASE_LABELS[autoLoopPhase]}
 								</span>
@@ -473,7 +477,7 @@ export function CommanderHelperBar({
 									Hard max:{" "}
 									{formatRemaining(autoLoopDiagnostics.hardMaxDeadlineAt)}
 								</span>
-								<span className="col-span-2">
+								<span className="min-[460px]:col-span-2">
 									Stop reason: {autoLoopStopReason || "-"}
 								</span>
 								<span>
@@ -488,10 +492,10 @@ export function CommanderHelperBar({
 										? autoLoopDiagnostics.currentActiveTabId.slice(-8)
 										: "-"}
 								</span>
-								<span className="col-span-2">
+								<span className="min-[460px]:col-span-2">
 									Tab context: {autoLoopDiagnostics.tabContextStatus}
 								</span>
-								<span className="col-span-2 text-foreground/60">
+								<span className="text-foreground/60 min-[460px]:col-span-2">
 									Browser AI: shared webview (S5.10 Phase 1; per-tab slot
 									pending S5.7 Phase 2)
 								</span>

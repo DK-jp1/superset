@@ -222,6 +222,26 @@ async function checkVisible(name, locator, detail = "visible", timeout = 5000) {
 	}
 }
 
+async function clickCommanderProviderButton(page, provider) {
+	const label = providerLabel(provider);
+	const root = page.getByTestId("commander-root");
+	const buttons = await root.getByRole("button", { name: label }).all();
+	let bestButton = null;
+	let bestArea = -1;
+	for (const button of buttons) {
+		const box = await button.boundingBox().catch(() => null);
+		if (!box || box.width <= 0 || box.height <= 0) continue;
+		const area = box.width * box.height;
+		if (area > bestArea) {
+			bestArea = area;
+			bestButton = button;
+		}
+	}
+	if (!bestButton) return false;
+	await bestButton.click();
+	return true;
+}
+
 async function isVisible(locator, timeout = 2500) {
 	try {
 		await locator.waitFor({ state: "visible", timeout });
@@ -1188,14 +1208,23 @@ async function readBrowserAiState(page, label, screenshotPath = "") {
 		const commanderRootRect = rectOf('[data-testid="commander-root"]');
 		const browserAreaRect = rectOf('[data-testid="commander-browser-area"]');
 		const primaryRect = primary?.rect || null;
+		const primaryRight = primaryRect ? primaryRect.x + primaryRect.width : 0;
+		const primaryBottom = primaryRect ? primaryRect.y + primaryRect.height : 0;
+		const browserAreaRight = browserAreaRect
+			? browserAreaRect.x + browserAreaRect.width
+			: 0;
+		const browserAreaBottom = browserAreaRect
+			? browserAreaRect.y + browserAreaRect.height
+			: 0;
 		const contentClipped =
 			Boolean(primaryRect && browserAreaRect) &&
 			(primaryRect.x < browserAreaRect.x - 1 ||
-				primaryRect.right > browserAreaRect.right + 1 ||
+				primaryRight > browserAreaRight + 1 ||
 				primaryRect.y < browserAreaRect.y - 1 ||
-				primaryRect.bottom > browserAreaRect.bottom + 1);
+				primaryBottom > browserAreaBottom + 1);
 		const usableWidth = primaryRect?.width ?? 0;
-		const tooNarrow = usableWidth > 0 && usableWidth < 480;
+		const tooNarrow = usableWidth > 0 && usableWidth < 320;
+		const compactWidth = usableWidth >= 320 && usableWidth < 420;
 		const visualStatus = !primary
 			? "UNKNOWN"
 			: contentClipped || tooNarrow
@@ -1203,11 +1232,13 @@ async function readBrowserAiState(page, label, screenshotPath = "") {
 				: "PASS";
 		const visualReason = !primary
 			? "no visible Browser AI webview"
-			: contentClipped
-				? "webview is clipped outside commander browser area"
+				: contentClipped
+					? "webview is clipped outside commander browser area"
 				: tooNarrow
-					? `webview usable width ${usableWidth}px is below 480px`
-					: `webview usable width ${usableWidth}px is acceptable`;
+					? `webview usable width ${usableWidth}px is below compact minimum 320px`
+					: compactWidth
+						? `webview usable width ${usableWidth}px is compact; responsive controls should wrap or truncate`
+						: `webview usable width ${usableWidth}px is acceptable`;
 		return {
 			label: snapshotLabel,
 			at: new Date().toISOString(),
@@ -2412,6 +2443,7 @@ try {
 
 	const initialUrl = await getWebviewUrl(page);
 	let provider = detectProviderFromUrl(initialUrl);
+	const preferredProvider = normalizedProviderPreference();
 	if (provider === "gemini") {
 		record(
 			"BLOCKED",
@@ -2420,13 +2452,8 @@ try {
 		);
 		provider = null;
 	}
-	const preferredProvider = normalizedProviderPreference();
-	if (!provider && providerUrls[preferredProvider]) {
-		const preset = page.getByRole("button", {
-			name: providerLabel(preferredProvider),
-		}).first();
-		if (await isVisible(preset, 5000)) {
-			await preset.click();
+	if (provider !== preferredProvider && providerUrls[preferredProvider]) {
+		if (await clickCommanderProviderButton(page, preferredProvider)) {
 			await page.waitForTimeout(5000);
 			const providerScreenshot = await capture(page, "01-provider-navigation");
 			provider = detectProviderFromUrl(await getWebviewUrl(page));
