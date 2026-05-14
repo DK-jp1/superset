@@ -1,4 +1,5 @@
 export type BrowserSlotMode = "shared-webview" | "per-tab-pending";
+export type BrowserSlotKey = string;
 
 export type BrowserSlotIdentity = {
 	workspaceId: string;

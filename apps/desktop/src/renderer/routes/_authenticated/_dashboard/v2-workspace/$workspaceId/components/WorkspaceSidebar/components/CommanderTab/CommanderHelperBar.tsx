@@ -502,6 +502,30 @@ export function CommanderHelperBar({
 								<span data-testid="auto-loop-browser-slot-pane-id">
 									Slot pane: {autoLoopDiagnostics.browserSlotPaneId || "-"}
 								</span>
+								<span data-testid="auto-loop-browser-slot-registry-status">
+									Slot registry:{" "}
+									{autoLoopDiagnostics.browserSlotRegistryStatus}
+								</span>
+								<span data-testid="auto-loop-browser-slot-registry-webcontents-id">
+									WebContents:{" "}
+									{autoLoopDiagnostics.browserSlotRegistryWebContentsId ?? "-"}
+								</span>
+								<span
+									className="break-all min-[460px]:col-span-2"
+									data-testid="auto-loop-browser-slot-registry-slot-key"
+									title={formatSlotKey(
+										autoLoopDiagnostics.browserSlotRegistrySlotKey,
+									)}
+								>
+									Registry slot:{" "}
+									{formatSlotKey(
+										autoLoopDiagnostics.browserSlotRegistrySlotKey,
+									)}
+								</span>
+								<span data-testid="auto-loop-browser-slot-registry-resolved-pane-id">
+									Resolved pane:{" "}
+									{autoLoopDiagnostics.browserSlotRegistryResolvedPaneId || "-"}
+								</span>
 								<span data-testid="auto-loop-browser-slot-workspace-id">
 									Workspace:{" "}
 									{autoLoopDiagnostics.browserSlotWorkspaceId
@@ -531,6 +555,14 @@ export function CommanderHelperBar({
 								>
 									Browser slot at arm:{" "}
 									{formatSlotKey(autoLoopDiagnostics.browserSlotKeyAtArm)}
+								</span>
+								<span
+									className="break-all min-[460px]:col-span-2"
+									data-testid="auto-loop-browser-slot-registry-reason"
+									title={autoLoopDiagnostics.browserSlotRegistryReason ?? ""}
+								>
+									Slot registry reason:{" "}
+									{autoLoopDiagnostics.browserSlotRegistryReason || "-"}
 								</span>
 								<span className="text-foreground/60 min-[460px]:col-span-2">
 									Browser AI: shared webview (S5.10 Phase 1; per-tab slot

@@ -594,6 +594,59 @@ Phase 2B should be verified as an observation-only change:
 * Hidden webviews need explicit cleanup before Phase 3, otherwise per-tab
   parking can leak `webContentsId` values.
 
+## 10g. S5.11 Phase 2B — slot registry diagnostics (IMPLEMENTED)
+
+Status: **landed as observation-only migration scaffolding**. Behaviour is
+intentionally unchanged.
+
+What ships:
+
+* `browserRuntimeRegistry` still uses `paneId` as its primary key.
+* A read-only slot index now tracks:
+  * `slotKeyByPaneId`,
+  * `paneIdBySlotKey`.
+* Registry snapshots expose:
+  * `paneId`,
+  * `browserSlotKey`,
+  * `workspaceId`,
+  * `tabId`,
+  * `webContentsId`,
+  * current URL / title,
+  * visible state,
+  * `registeredAt` / `updatedAt`.
+* Slot diagnostics can compare the expected active-tab slot key against the
+  registry entry and report:
+  * `ok`,
+  * `unknown`,
+  * `mismatch`,
+  * reason text,
+  * resolved pane id,
+  * registry webContents id.
+* Auto Loop Diagnostics now surfaces the slot registry status, reason, resolved
+  pane, registry slot key, and webContents id.
+* Real Agent QA and Electron QA can include the slot registry status in their
+  reports when the Diagnostics panel is open.
+* Commander `parkedWebview` remains a separate layer. It can report
+  `unknown` registry status until that layer is explicitly unified with the
+  v2 `browserRuntimeRegistry`; this is not treated as a mismatch.
+
+What did NOT change:
+
+* No registry primary-key migration.
+* No multiple webviews.
+* No per-tab Browser AI conversation split.
+* No hidden-slot parking.
+* No cookie/session partition split.
+* No Auto Loop routing change.
+* Electron `browser.register` / `browser.unregister` remains pane-id based.
+
+Phase 3 entry signal:
+
+Only consider changing the registry primary key or keeping multiple webviews
+after QA shows the read-only index remains stable across ChatGPT, Claude,
+Diagnostics open/closed, Auto Loop mode changes, tab switching, and Real Agent
+QA attach runs.
+
 ## 11. Out of scope (for now)
 
 * Deleting the legacy `screens/main` Browser AI tree.

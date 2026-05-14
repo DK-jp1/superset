@@ -307,6 +307,28 @@ try {
 				page.getByTestId("commander-diagnostics-panel"),
 				"Diagnostics panel opened",
 			);
+			const slotRegistryStatus = await page
+				.getByTestId("auto-loop-browser-slot-registry-status")
+				.textContent({ timeout: 1000 })
+				.catch(() => "");
+			record(
+				slotRegistryStatus ? "PASS" : "UNKNOWN",
+				"Browser slot registry status",
+				slotRegistryStatus
+					? slotRegistryStatus.trim()
+					: "Slot registry status not found in diagnostics",
+			);
+			const slotWebContentsId = await page
+				.getByTestId("auto-loop-browser-slot-registry-webcontents-id")
+				.textContent({ timeout: 1000 })
+				.catch(() => "");
+			record(
+				slotWebContentsId ? "PASS" : "UNKNOWN",
+				"Browser slot webContents id",
+				slotWebContentsId
+					? slotWebContentsId.trim()
+					: "Slot webContents id not found in diagnostics",
+			);
 		}
 	}
 

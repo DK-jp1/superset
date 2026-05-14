@@ -1,5 +1,9 @@
 import { electronTrpcClient } from "renderer/lib/trpc-client";
-import type { BrowserSlotIdentity } from "renderer/lib/doydeck-browser-slot-key";
+import {
+	createBrowserSlotKey,
+	type BrowserSlotIdentity,
+	type BrowserSlotKey,
+} from "renderer/lib/doydeck-browser-slot-key";
 import { isDoyDeckNativeFileDragActive } from "renderer/stores/doydeck-native-file-drag";
 import type { BrowserLoadError } from "shared/tabs-types";
 import { sanitizeUrl } from "./sanitizeUrl";
@@ -20,6 +24,30 @@ export interface PersistableBrowserState {
 	faviconUrl: string | null;
 }
 
+export type BrowserSlotRegistryStatus = "ok" | "mismatch" | "unknown";
+
+export interface BrowserRuntimeSlotSnapshot {
+	paneId: string;
+	browserSlotKey: BrowserSlotKey | null;
+	workspaceId: string | null;
+	tabId: string | null;
+	webContentsId: number | null;
+	currentUrl: string;
+	pageTitle: string;
+	visible: boolean;
+	registeredAt: number;
+	updatedAt: number;
+}
+
+export interface BrowserSlotRegistryDiagnostics
+	extends BrowserRuntimeSlotSnapshot {
+	registrySlotKeyForPaneId: BrowserSlotKey | null;
+	paneIdResolvedFromSlotKey: string | null;
+	expectedBrowserSlotKey: BrowserSlotKey | null;
+	status: BrowserSlotRegistryStatus;
+	reason: string;
+}
+
 interface RegistryEntry {
 	webview: Electron.WebviewTag;
 	state: BrowserRuntimeState;
@@ -30,6 +58,8 @@ interface RegistryEntry {
 	resizeObserver: ResizeObserver | null;
 	visible: boolean;
 	slotIdentity: BrowserSlotIdentity | null;
+	registeredAt: number;
+	updatedAt: number;
 }
 
 const EMPTY_STATE: BrowserRuntimeState = Object.freeze({
@@ -47,6 +77,8 @@ const ROOT_CONTAINER_ID = "browser-runtime-root";
 class BrowserRuntimeRegistryImpl {
 	private entries = new Map<string, RegistryEntry>();
 	private listenersByPaneId = new Map<string, Set<() => void>>();
+	private slotKeyByPaneId = new Map<string, BrowserSlotKey>();
+	private paneIdBySlotKey = new Map<BrowserSlotKey, string>();
 	private rootContainer: HTMLDivElement | null = null;
 	private globalListenersInstalled = false;
 	private windowDragPassthrough = false;
@@ -178,7 +210,58 @@ class BrowserRuntimeRegistryImpl {
 		}
 		if (!changed) return;
 		entry.state = { ...entry.state, ...patch };
+		entry.updatedAt = Date.now();
 		this.notify(paneId);
+	}
+
+	private updateSlotIndex(
+		paneId: string,
+		slotIdentity?: BrowserSlotIdentity | null,
+	): BrowserSlotKey | null {
+		const previousSlotKey = this.slotKeyByPaneId.get(paneId);
+		if (
+			previousSlotKey &&
+			this.paneIdBySlotKey.get(previousSlotKey) === paneId
+		) {
+			this.paneIdBySlotKey.delete(previousSlotKey);
+		}
+		const nextSlotKey = createBrowserSlotKey(slotIdentity);
+		if (!nextSlotKey) {
+			this.slotKeyByPaneId.delete(paneId);
+			return null;
+		}
+		this.slotKeyByPaneId.set(paneId, nextSlotKey);
+		this.paneIdBySlotKey.set(nextSlotKey, paneId);
+		return nextSlotKey;
+	}
+
+	private clearSlotIndex(paneId: string) {
+		const slotKey = this.slotKeyByPaneId.get(paneId);
+		if (slotKey && this.paneIdBySlotKey.get(slotKey) === paneId) {
+			this.paneIdBySlotKey.delete(slotKey);
+		}
+		this.slotKeyByPaneId.delete(paneId);
+	}
+
+	private buildSnapshot(
+		paneId: string,
+		entry: RegistryEntry,
+	): BrowserRuntimeSlotSnapshot {
+		const slotIdentity = entry.slotIdentity;
+		const browserSlotKey =
+			this.slotKeyByPaneId.get(paneId) ?? createBrowserSlotKey(slotIdentity);
+		return {
+			paneId,
+			browserSlotKey,
+			workspaceId: slotIdentity?.workspaceId ?? null,
+			tabId: slotIdentity?.tabId ?? null,
+			webContentsId: entry.webContentsId,
+			currentUrl: entry.state.currentUrl,
+			pageTitle: entry.state.pageTitle,
+			visible: entry.visible,
+			registeredAt: entry.registeredAt,
+			updatedAt: entry.updatedAt,
+		};
 	}
 
 	private refreshNavState(paneId: string) {
@@ -212,6 +295,7 @@ class BrowserRuntimeRegistryImpl {
 		webview.style.visibility = "hidden";
 		webview.style.pointerEvents = "auto";
 		webview.src = sanitizeUrl(initialUrl);
+		const now = Date.now();
 
 		const entry: RegistryEntry = {
 			webview,
@@ -223,6 +307,8 @@ class BrowserRuntimeRegistryImpl {
 			resizeObserver: null,
 			visible: false,
 			slotIdentity: slotIdentity ?? null,
+			registeredAt: now,
+			updatedAt: now,
 		};
 
 		const firePersist = () => {
@@ -237,6 +323,7 @@ class BrowserRuntimeRegistryImpl {
 			const webContentsId = webview.getWebContentsId();
 			if (entry.webContentsId !== webContentsId) {
 				entry.webContentsId = webContentsId;
+				entry.updatedAt = Date.now();
 				electronTrpcClient.browser.register
 					.mutate({ paneId, webContentsId })
 					.catch((err) => {
@@ -391,6 +478,8 @@ class BrowserRuntimeRegistryImpl {
 			this.refreshNavState(paneId);
 			entry.slotIdentity = slotIdentity ?? null;
 		}
+		entry.updatedAt = Date.now();
+		this.updateSlotIndex(paneId, entry.slotIdentity);
 		entry.onPersist = onPersist;
 		entry.placeholder = placeholder;
 		entry.visible = true;
@@ -416,6 +505,7 @@ class BrowserRuntimeRegistryImpl {
 		entry.resizeObserver = null;
 		entry.visible = false;
 		entry.webview.style.visibility = "hidden";
+		entry.updatedAt = Date.now();
 	}
 
 	destroy(paneId: string): void {
@@ -426,6 +516,7 @@ class BrowserRuntimeRegistryImpl {
 		entry.webview.remove();
 		this.entries.delete(paneId);
 		this.listenersByPaneId.delete(paneId);
+		this.clearSlotIndex(paneId);
 		electronTrpcClient.browser.unregister.mutate({ paneId }).catch(() => {});
 	}
 
@@ -458,6 +549,85 @@ class BrowserRuntimeRegistryImpl {
 
 	getSlotIdentity(paneId: string): BrowserSlotIdentity | null {
 		return this.entries.get(paneId)?.slotIdentity ?? null;
+	}
+
+	getRuntimeIdentityByPaneId(
+		paneId: string,
+	): BrowserRuntimeSlotSnapshot | null {
+		const entry = this.entries.get(paneId);
+		if (!entry) return null;
+		return this.buildSnapshot(paneId, entry);
+	}
+
+	getRuntimeIdentityBySlotKey(
+		slotKey: BrowserSlotKey,
+	): BrowserRuntimeSlotSnapshot | null {
+		const paneId = this.paneIdBySlotKey.get(slotKey);
+		if (!paneId) return null;
+		return this.getRuntimeIdentityByPaneId(paneId);
+	}
+
+	getRuntimeIdentitySnapshot(): BrowserRuntimeSlotSnapshot[] {
+		return Array.from(this.entries.entries()).map(([paneId, entry]) =>
+			this.buildSnapshot(paneId, entry),
+		);
+	}
+
+	getSlotDiagnostics(
+		paneId: string,
+		expectedBrowserSlotKey?: BrowserSlotKey | null,
+	): BrowserSlotRegistryDiagnostics {
+		const entry = this.entries.get(paneId);
+		const registrySlotKeyForPaneId = this.slotKeyByPaneId.get(paneId) ?? null;
+		const lookupSlotKey = expectedBrowserSlotKey ?? registrySlotKeyForPaneId;
+		const paneIdResolvedFromSlotKey = lookupSlotKey
+			? this.paneIdBySlotKey.get(lookupSlotKey) ?? null
+			: null;
+		const base: BrowserRuntimeSlotSnapshot = entry
+			? this.buildSnapshot(paneId, entry)
+			: {
+					paneId,
+					browserSlotKey: null,
+					workspaceId: null,
+					tabId: null,
+					webContentsId: null,
+					currentUrl: EMPTY_STATE.currentUrl,
+					pageTitle: EMPTY_STATE.pageTitle,
+					visible: false,
+					registeredAt: 0,
+					updatedAt: 0,
+				};
+
+		let status: BrowserSlotRegistryStatus = "ok";
+		let reason = "slot registry ok";
+		if (!entry) {
+			status = "unknown";
+			reason = "registry entry not found for paneId; runtime may be parked or not registry-owned";
+		} else if (!registrySlotKeyForPaneId) {
+			status = "unknown";
+			reason = "paneId has no slot metadata";
+		} else if (
+			expectedBrowserSlotKey &&
+			registrySlotKeyForPaneId !== expectedBrowserSlotKey
+		) {
+			status = "mismatch";
+			reason = "registry slotKey differs from expected active-tab slotKey";
+		} else if (paneIdResolvedFromSlotKey && paneIdResolvedFromSlotKey !== paneId) {
+			status = "mismatch";
+			reason = "slotKey resolves to a different paneId";
+		} else if (lookupSlotKey && !paneIdResolvedFromSlotKey) {
+			status = "mismatch";
+			reason = "slotKey is not indexed to any paneId";
+		}
+
+		return {
+			...base,
+			registrySlotKeyForPaneId,
+			paneIdResolvedFromSlotKey,
+			expectedBrowserSlotKey: expectedBrowserSlotKey ?? null,
+			status,
+			reason,
+		};
 	}
 
 	onStateChange(paneId: string, listener: () => void): () => void {

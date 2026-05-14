@@ -650,8 +650,23 @@ function parseDiagnosticsSnapshot(text) {
 		"Browser AI:",
 	]);
 	const browserSlotMode = matchField("Slot mode", ["Slot pane:"]);
-	const browserSlotPaneId = matchField("Slot pane", ["Workspace:"]);
+	const browserSlotPaneId = matchField("Slot pane", ["Slot registry:"]);
+	const browserSlotRegistryStatus = matchField("Slot registry", [
+		"WebContents:",
+	]);
+	const browserSlotRegistryWebContentsId = matchField("WebContents", [
+		"Registry slot:",
+	]);
+	const browserSlotRegistrySlotKey = matchField("Registry slot", [
+		"Resolved pane:",
+	]);
+	const browserSlotRegistryResolvedPaneId = matchField("Resolved pane", [
+		"Workspace:",
+	]);
 	const browserSlotWorkspaceId = matchField("Workspace", ["Active tab:"]);
+	const browserSlotRegistryReason = matchField("Slot registry reason", [
+		"Browser AI:",
+	]);
 	return {
 		normalized,
 		phase,
@@ -669,6 +684,11 @@ function parseDiagnosticsSnapshot(text) {
 		browserSlotMode,
 		browserSlotPaneId,
 		browserSlotWorkspaceId,
+		browserSlotRegistryStatus,
+		browserSlotRegistryWebContentsId,
+		browserSlotRegistrySlotKey,
+		browserSlotRegistryResolvedPaneId,
+		browserSlotRegistryReason,
 	};
 }
 
@@ -1297,6 +1317,26 @@ async function readBrowserAiState(page, label, screenshotPath = "") {
 			browserSlotPaneId: fieldText(
 				'[data-testid="auto-loop-browser-slot-pane-id"]',
 				"Slot pane",
+			),
+			browserSlotRegistryStatus: fieldText(
+				'[data-testid="auto-loop-browser-slot-registry-status"]',
+				"Slot registry",
+			),
+			browserSlotRegistryWebContentsId: fieldText(
+				'[data-testid="auto-loop-browser-slot-registry-webcontents-id"]',
+				"WebContents",
+			),
+			browserSlotRegistrySlotKey: fieldText(
+				'[data-testid="auto-loop-browser-slot-registry-slot-key"]',
+				"Registry slot",
+			),
+			browserSlotRegistryResolvedPaneId: fieldText(
+				'[data-testid="auto-loop-browser-slot-registry-resolved-pane-id"]',
+				"Resolved pane",
+			),
+			browserSlotRegistryReason: fieldText(
+				'[data-testid="auto-loop-browser-slot-registry-reason"]',
+				"Slot registry reason",
 			),
 			commanderRootRect,
 			browserAreaRect,
@@ -2207,7 +2247,7 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 	} else {
 		for (const snapshot of browserAiStateSnapshots) {
 			body.push(
-				`- ${snapshot.label}: provider=\`${snapshot.providerStatus || "(empty)"}\`; url=\`${snapshot.currentUrl || "(blank)"}\`; webContentsId=\`${snapshot.webContentsId ?? "(unknown)"}\`; webviewCount=\`${snapshot.webviewCount}\`; autoMode=\`${snapshot.autoMode || "(empty)"}\`; usableWidth=\`${snapshot.usableWidth ?? 0}px\`; visual=\`${snapshot.visualStatus || "UNKNOWN"}\`; browserSlotKey=\`${snapshot.browserSlotKey || "(not visible)"}\`; browserSlotMode=\`${snapshot.browserSlotMode || "(not visible)"}\`; cleanup performed=\`${snapshot.cleanupPerformed}\``,
+				`- ${snapshot.label}: provider=\`${snapshot.providerStatus || "(empty)"}\`; url=\`${snapshot.currentUrl || "(blank)"}\`; webContentsId=\`${snapshot.webContentsId ?? "(unknown)"}\`; webviewCount=\`${snapshot.webviewCount}\`; autoMode=\`${snapshot.autoMode || "(empty)"}\`; usableWidth=\`${snapshot.usableWidth ?? 0}px\`; visual=\`${snapshot.visualStatus || "UNKNOWN"}\`; browserSlotKey=\`${snapshot.browserSlotKey || "(not visible)"}\`; browserSlotMode=\`${snapshot.browserSlotMode || "(not visible)"}\`; browserSlotRegistry=\`${snapshot.browserSlotRegistryStatus || "(not visible)"}\`; registryWebContentsId=\`${snapshot.browserSlotRegistryWebContentsId || "(not visible)"}\`; registryReason=\`${snapshot.browserSlotRegistryReason || "(not visible)"}\`; cleanup performed=\`${snapshot.cleanupPerformed}\``,
 			);
 		}
 	}
@@ -2271,7 +2311,10 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 			const slotSummary = item.parsed?.browserSlotKey
 				? `; browserSlotKey=\`${item.parsed.browserSlotKey}\`; browserSlotMode=\`${item.parsed.browserSlotMode || "(unknown)"}\`; browserSlotPane=\`${item.parsed.browserSlotPaneId || "(unknown)"}\``
 				: "";
-			body.push(`- ${item.label}${slotSummary}: ${item.text.replace(/\\s+/g, " ").trim().slice(0, 500) || "(empty)"}`);
+			const registrySummary = item.parsed?.browserSlotRegistryStatus
+				? `; slotRegistry=\`${item.parsed.browserSlotRegistryStatus}\`; registrySlot=\`${item.parsed.browserSlotRegistrySlotKey || "(unknown)"}\`; resolvedPane=\`${item.parsed.browserSlotRegistryResolvedPaneId || "(unknown)"}\`; registryReason=\`${item.parsed.browserSlotRegistryReason || "(unknown)"}\``
+				: "";
+			body.push(`- ${item.label}${slotSummary}${registrySummary}: ${item.text.replace(/\\s+/g, " ").trim().slice(0, 500) || "(empty)"}`);
 		}
 	}
 	body.push("", "## Console errors", "");
