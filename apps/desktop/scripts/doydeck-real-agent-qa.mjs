@@ -132,6 +132,8 @@ const prepareSummary = {
 	composerReadinessAttempts: [],
 	composerWaitMs,
 	composerFinalResult: "(not evaluated)",
+	composerBlockedReason: "",
+	composerNextAction: "",
 };
 
 function record(status, name, detail) {
@@ -290,7 +292,7 @@ const composerProbeScript = `(function() {
     var el = document.querySelector(selectors[i]);
     if (el) return { ok: true, selector: selectors[i], text: (el.innerText || el.textContent || '').slice(0, 80) };
   }
-  return { ok: false, selector: null, title: document.title, bodyText: (document.body && document.body.innerText || '').slice(0, 500) };
+  return { ok: false, selector: null, title: document.title, bodyText: (document.body && document.body.innerText || '').slice(0, 2000) };
 })()`;
 
 const openNewChatScript = `(function() {
@@ -384,6 +386,29 @@ async function sampleDiagnostics(page, label) {
 	return item;
 }
 
+function detectBrowserHumanVerification(probe) {
+	const value = probe?.value || {};
+	const haystack = [
+		value.title,
+		value.bodyText,
+		value.text,
+		probe?.error,
+	]
+		.filter(Boolean)
+		.join("\n")
+		.toLowerCase();
+	if (!haystack) return false;
+	return [
+		/あなたはロボットではありません/i,
+		/ロボットではありません/i,
+		/verify you are human/i,
+		/human verification/i,
+		/captcha/i,
+		/cloudflare/i,
+		/security check/i,
+	].some((pattern) => pattern.test(haystack));
+}
+
 async function waitForBrowserComposerReady(page, provider) {
 	const startedAt = Date.now();
 	let attempt = 0;
@@ -393,6 +418,26 @@ async function waitForBrowserComposerReady(page, provider) {
 		attempt += 1;
 		lastProbe = await executeInWebview(page, composerProbeScript);
 		const elapsedMs = Date.now() - startedAt;
+		if (detectBrowserHumanVerification(lastProbe)) {
+			const detail = lastProbe.ok
+				? JSON.stringify(lastProbe.value).slice(0, 500)
+				: lastProbe.error;
+			const screenshot = await capture(page, `composer-human-verification-attempt-${attempt}`);
+			prepareSummary.composerReadinessAttempts.push({
+				attempt,
+				status: "blocked",
+				elapsedMs,
+				detail: `browser ai human verification required: ${detail}`,
+				screenshot,
+			});
+			prepareSummary.composerBlockedReason =
+				"browser ai human verification required";
+			prepareSummary.composerFinalResult =
+				"browser ai human verification required";
+			prepareSummary.composerNextAction =
+				"DoyDeck内Browser AIで「あなたはロボットではありません」を手動確認してください。確認後、real-agent-qa:doydeckを再実行してください。";
+			return { ready: false, probe: lastProbe, reason: "human-verification" };
+		}
 		if (lastProbe.ok && lastProbe.value?.ok) {
 			prepareSummary.composerReadinessAttempts.push({
 				attempt,
@@ -1423,18 +1468,24 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 		);
 	}
 	body.push(`- composer final result: ${prepareSummary.composerFinalResult}`);
+	if (prepareSummary.composerBlockedReason) {
+		body.push(`- composer blocked reason: ${prepareSummary.composerBlockedReason}`);
+	}
 	body.push(`- prepare result: ${prepareSummary.prepareResult}`);
 	if (prepareSummary.blockedReason) {
 		body.push(`- blocked reason: ${prepareSummary.blockedReason}`);
 	}
-	if (prepareSummary.nextAction) {
+	if (prepareSummary.nextAction || prepareSummary.composerNextAction) {
 		body.push("", "### Next action", "");
 		if (prepareSummary.hooksReviewRequired === "yes") {
 			body.push("- DoyDeck Terminalで `/hooks` を開く");
 			body.push("- hooksを確認/承認する");
 			body.push("- その後、Real Agent QAを再実行する");
-		} else {
+		} else if (prepareSummary.nextAction) {
 			body.push(`- ${prepareSummary.nextAction}`);
+		}
+		if (prepareSummary.composerNextAction) {
+			body.push(`- ${prepareSummary.composerNextAction}`);
 		}
 	}
 	if (prepareSummary.hooksReviewRequired === "yes") {
