@@ -643,10 +643,12 @@ function parseDiagnosticsSnapshot(text) {
 		return (normalized.match(pattern)?.[1] || "").trim();
 	};
 	const browserSlotKey = matchField("Browser slot", [
+		"Commander slot:",
 		"Browser slot at arm:",
 		"Browser AI:",
 	]);
 	const browserSlotKeyAtArm = matchField("Browser slot at arm", [
+		"Slot registry reason:",
 		"Browser AI:",
 	]);
 	const browserSlotMode = matchField("Slot mode", ["Slot pane:"]);
@@ -655,6 +657,27 @@ function parseDiagnosticsSnapshot(text) {
 		"WebContents:",
 	]);
 	const browserSlotRegistryWebContentsId = matchField("WebContents", [
+		"Runtime owner:",
+	]);
+	const browserRuntimeOwner = matchField("Runtime owner", [
+		"Commander runtime:",
+	]);
+	const commanderRuntimeStatus = matchField("Commander runtime", [
+		"Commander WebContents:",
+	]);
+	const commanderRuntimeWebContentsId = matchField("Commander WebContents", [
+		"Browser provider:",
+	]);
+	const commanderRuntimeProvider = matchField("Browser provider", [
+		"Browser width:",
+	]);
+	const commanderRuntimeUsableWidth = matchField("Browser width", [
+		"Browser visual:",
+	]);
+	const commanderRuntimeVisualStatus = matchField("Browser visual", [
+		"Bridge:",
+	]);
+	const commanderRuntimeBridge = matchField("Bridge", [
 		"Registry slot:",
 	]);
 	const browserSlotRegistrySlotKey = matchField("Registry slot", [
@@ -664,7 +687,17 @@ function parseDiagnosticsSnapshot(text) {
 		"Workspace:",
 	]);
 	const browserSlotWorkspaceId = matchField("Workspace", ["Active tab:"]);
+	const commanderRuntimeSlotKey = matchField("Commander slot", [
+		"Browser URL:",
+	]);
+	const commanderRuntimeUrl = matchField("Browser URL", [
+		"Browser slot at arm:",
+	]);
 	const browserSlotRegistryReason = matchField("Slot registry reason", [
+		"Commander runtime reason:",
+		"Browser AI:",
+	]);
+	const commanderRuntimeReason = matchField("Commander runtime reason", [
 		"Browser AI:",
 	]);
 	return {
@@ -689,6 +722,16 @@ function parseDiagnosticsSnapshot(text) {
 		browserSlotRegistrySlotKey,
 		browserSlotRegistryResolvedPaneId,
 		browserSlotRegistryReason,
+		browserRuntimeOwner,
+		commanderRuntimeStatus,
+		commanderRuntimeWebContentsId,
+		commanderRuntimeProvider,
+		commanderRuntimeUsableWidth,
+		commanderRuntimeVisualStatus,
+		commanderRuntimeBridge,
+		commanderRuntimeSlotKey,
+		commanderRuntimeUrl,
+		commanderRuntimeReason,
 	};
 }
 
@@ -1325,6 +1368,46 @@ async function readBrowserAiState(page, label, screenshotPath = "") {
 			browserSlotRegistryWebContentsId: fieldText(
 				'[data-testid="auto-loop-browser-slot-registry-webcontents-id"]',
 				"WebContents",
+			),
+			browserRuntimeOwner: fieldText(
+				'[data-testid="auto-loop-browser-runtime-owner"]',
+				"Runtime owner",
+			),
+			commanderRuntimeStatus: fieldText(
+				'[data-testid="auto-loop-commander-runtime-status"]',
+				"Commander runtime",
+			),
+			commanderRuntimeWebContentsId: fieldText(
+				'[data-testid="auto-loop-commander-runtime-webcontents-id"]',
+				"Commander WebContents",
+			),
+			commanderRuntimeProvider: fieldText(
+				'[data-testid="auto-loop-commander-runtime-provider"]',
+				"Browser provider",
+			),
+			commanderRuntimeUsableWidth: fieldText(
+				'[data-testid="auto-loop-commander-runtime-width"]',
+				"Browser width",
+			),
+			commanderRuntimeVisualStatus: fieldText(
+				'[data-testid="auto-loop-commander-runtime-visual-status"]',
+				"Browser visual",
+			),
+			commanderRuntimeBridge: fieldText(
+				'[data-testid="auto-loop-commander-runtime-bridge"]',
+				"Bridge",
+			),
+			commanderRuntimeSlotKey: fieldText(
+				'[data-testid="auto-loop-commander-runtime-slot-key"]',
+				"Commander slot",
+			),
+			commanderRuntimeUrl: fieldText(
+				'[data-testid="auto-loop-commander-runtime-url"]',
+				"Browser URL",
+			),
+			commanderRuntimeReason: fieldText(
+				'[data-testid="auto-loop-commander-runtime-reason"]',
+				"Commander runtime reason",
 			),
 			browserSlotRegistrySlotKey: fieldText(
 				'[data-testid="auto-loop-browser-slot-registry-slot-key"]',
@@ -2247,7 +2330,7 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 	} else {
 		for (const snapshot of browserAiStateSnapshots) {
 			body.push(
-				`- ${snapshot.label}: provider=\`${snapshot.providerStatus || "(empty)"}\`; url=\`${snapshot.currentUrl || "(blank)"}\`; webContentsId=\`${snapshot.webContentsId ?? "(unknown)"}\`; webviewCount=\`${snapshot.webviewCount}\`; autoMode=\`${snapshot.autoMode || "(empty)"}\`; usableWidth=\`${snapshot.usableWidth ?? 0}px\`; visual=\`${snapshot.visualStatus || "UNKNOWN"}\`; browserSlotKey=\`${snapshot.browserSlotKey || "(not visible)"}\`; browserSlotMode=\`${snapshot.browserSlotMode || "(not visible)"}\`; browserSlotRegistry=\`${snapshot.browserSlotRegistryStatus || "(not visible)"}\`; registryWebContentsId=\`${snapshot.browserSlotRegistryWebContentsId || "(not visible)"}\`; registryReason=\`${snapshot.browserSlotRegistryReason || "(not visible)"}\`; cleanup performed=\`${snapshot.cleanupPerformed}\``,
+				`- ${snapshot.label}: provider=\`${snapshot.providerStatus || "(empty)"}\`; url=\`${snapshot.currentUrl || "(blank)"}\`; webContentsId=\`${snapshot.webContentsId ?? "(unknown)"}\`; webviewCount=\`${snapshot.webviewCount}\`; autoMode=\`${snapshot.autoMode || "(empty)"}\`; usableWidth=\`${snapshot.usableWidth ?? 0}px\`; visual=\`${snapshot.visualStatus || "UNKNOWN"}\`; browserSlotKey=\`${snapshot.browserSlotKey || "(not visible)"}\`; browserSlotMode=\`${snapshot.browserSlotMode || "(not visible)"}\`; browserSlotRegistry=\`${snapshot.browserSlotRegistryStatus || "(not visible)"}\`; registryWebContentsId=\`${snapshot.browserSlotRegistryWebContentsId || "(not visible)"}\`; registryReason=\`${snapshot.browserSlotRegistryReason || "(not visible)"}\`; runtimeOwner=\`${snapshot.browserRuntimeOwner || "(not visible)"}\`; commanderRuntime=\`${snapshot.commanderRuntimeStatus || "(not visible)"}\`; commanderSlot=\`${snapshot.commanderRuntimeSlotKey || "(not visible)"}\`; commanderWebContentsId=\`${snapshot.commanderRuntimeWebContentsId || "(not visible)"}\`; commanderProvider=\`${snapshot.commanderRuntimeProvider || "(not visible)"}\`; commanderUrl=\`${snapshot.commanderRuntimeUrl || "(not visible)"}\`; commanderWidth=\`${snapshot.commanderRuntimeUsableWidth || "(not visible)"}\`; commanderVisual=\`${snapshot.commanderRuntimeVisualStatus || "(not visible)"}\`; cleanup performed=\`${snapshot.cleanupPerformed}\``,
 			);
 		}
 	}
@@ -2258,6 +2341,16 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 		for (const snapshot of browserAiStateSnapshots) {
 			body.push(
 				`- ${snapshot.label}: status=\`${snapshot.visualStatus || "UNKNOWN"}\`; reason=${snapshot.visualReason || "(unknown)"}; screenshot=\`${snapshot.screenshot || "(not captured)"}\`; provider=\`${snapshot.providerStatus || "(empty)"}\`; composer visible=\`${snapshot.composerVisible || "unknown"}\`; content clipped=\`${snapshot.contentClipped || "unknown"}\`; too narrow=\`${snapshot.tooNarrow || "unknown"}\`; commander width=\`${snapshot.commanderRootRect?.width ?? 0}px\`; browser area width=\`${snapshot.browserAreaRect?.width ?? 0}px\`; webview width=\`${snapshot.usableWidth ?? 0}px\`; webContentsId=\`${snapshot.webContentsId ?? "(unknown)"}\``,
+			);
+		}
+	}
+	body.push("", "## Commander Browser runtime", "");
+	if (browserAiStateSnapshots.length === 0) {
+		body.push("- none");
+	} else {
+		for (const snapshot of browserAiStateSnapshots) {
+			body.push(
+				`- ${snapshot.label}: owner=\`${snapshot.browserRuntimeOwner || "(not visible)"}\`; status=\`${snapshot.commanderRuntimeStatus || "(not visible)"}\`; slotKey=\`${snapshot.commanderRuntimeSlotKey || "(not visible)"}\`; webContentsId=\`${snapshot.commanderRuntimeWebContentsId || "(not visible)"}\`; provider=\`${snapshot.commanderRuntimeProvider || "(not visible)"}\`; url=\`${snapshot.commanderRuntimeUrl || "(not visible)"}\`; usableWidth=\`${snapshot.commanderRuntimeUsableWidth || "(not visible)"}\`; visual=\`${snapshot.commanderRuntimeVisualStatus || "(not visible)"}\`; bridge=\`${snapshot.commanderRuntimeBridge || "(not visible)"}\`; registryStatus=\`${snapshot.browserSlotRegistryStatus || "(not visible)"}\`; registryReason=\`${snapshot.browserSlotRegistryReason || "(not visible)"}\``,
 			);
 		}
 	}
@@ -2314,7 +2407,10 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 			const registrySummary = item.parsed?.browserSlotRegistryStatus
 				? `; slotRegistry=\`${item.parsed.browserSlotRegistryStatus}\`; registrySlot=\`${item.parsed.browserSlotRegistrySlotKey || "(unknown)"}\`; resolvedPane=\`${item.parsed.browserSlotRegistryResolvedPaneId || "(unknown)"}\`; registryReason=\`${item.parsed.browserSlotRegistryReason || "(unknown)"}\``
 				: "";
-			body.push(`- ${item.label}${slotSummary}${registrySummary}: ${item.text.replace(/\\s+/g, " ").trim().slice(0, 500) || "(empty)"}`);
+			const commanderSummary = item.parsed?.browserRuntimeOwner
+				? `; runtimeOwner=\`${item.parsed.browserRuntimeOwner}\`; commanderRuntime=\`${item.parsed.commanderRuntimeStatus || "(unknown)"}\`; commanderSlot=\`${item.parsed.commanderRuntimeSlotKey || "(unknown)"}\`; commanderWebContentsId=\`${item.parsed.commanderRuntimeWebContentsId || "(unknown)"}\`; commanderProvider=\`${item.parsed.commanderRuntimeProvider || "(unknown)"}\`; commanderVisual=\`${item.parsed.commanderRuntimeVisualStatus || "(unknown)"}\``
+				: "";
+			body.push(`- ${item.label}${slotSummary}${registrySummary}${commanderSummary}: ${item.text.replace(/\\s+/g, " ").trim().slice(0, 500) || "(empty)"}`);
 		}
 	}
 	body.push("", "## Console errors", "");

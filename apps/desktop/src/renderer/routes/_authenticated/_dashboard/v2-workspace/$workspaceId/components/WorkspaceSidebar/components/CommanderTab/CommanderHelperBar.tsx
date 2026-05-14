@@ -147,6 +147,7 @@ export function CommanderHelperBar({
 	const formatOffset = (offset: number | null) =>
 		typeof offset === "number" ? offset.toString() : "-";
 	const formatSlotKey = (key: string | null) => key || "-";
+	const formatBrowserUrl = (url: string | null) => url || "-";
 
 	const handleTerminalSend = useCallback(
 		(type: "worker" | "review") => {
@@ -510,6 +511,38 @@ export function CommanderHelperBar({
 									WebContents:{" "}
 									{autoLoopDiagnostics.browserSlotRegistryWebContentsId ?? "-"}
 								</span>
+								<span data-testid="auto-loop-browser-runtime-owner">
+									Runtime owner: {autoLoopDiagnostics.browserRuntimeOwner}
+								</span>
+								<span data-testid="auto-loop-commander-runtime-status">
+									Commander runtime:{" "}
+									{autoLoopDiagnostics.commanderRuntimeStatus}
+								</span>
+								<span data-testid="auto-loop-commander-runtime-webcontents-id">
+									Commander WebContents:{" "}
+									{autoLoopDiagnostics.commanderRuntimeWebContentsId ?? "-"}
+								</span>
+								<span data-testid="auto-loop-commander-runtime-provider">
+									Browser provider:{" "}
+									{autoLoopDiagnostics.commanderRuntimeProvider || "-"}
+								</span>
+								<span data-testid="auto-loop-commander-runtime-width">
+									Browser width:{" "}
+									{typeof autoLoopDiagnostics.commanderRuntimeUsableWidth ===
+									"number"
+										? `${autoLoopDiagnostics.commanderRuntimeUsableWidth}px`
+										: "-"}
+								</span>
+								<span data-testid="auto-loop-commander-runtime-visual-status">
+									Browser visual:{" "}
+									{autoLoopDiagnostics.commanderRuntimeVisualStatus}
+								</span>
+								<span data-testid="auto-loop-commander-runtime-bridge">
+									Bridge:{" "}
+									{autoLoopDiagnostics.commanderRuntimeBridgeAvailable
+										? "available"
+										: "unavailable"}
+								</span>
 								<span
 									className="break-all min-[460px]:col-span-2"
 									data-testid="auto-loop-browser-slot-registry-slot-key"
@@ -550,6 +583,30 @@ export function CommanderHelperBar({
 								</span>
 								<span
 									className="break-all min-[460px]:col-span-2"
+									data-testid="auto-loop-commander-runtime-slot-key"
+									title={formatSlotKey(
+										autoLoopDiagnostics.commanderRuntimeSlotKey,
+									)}
+								>
+									Commander slot:{" "}
+									{formatSlotKey(
+										autoLoopDiagnostics.commanderRuntimeSlotKey,
+									)}
+								</span>
+								<span
+									className="break-all min-[460px]:col-span-2"
+									data-testid="auto-loop-commander-runtime-url"
+									title={formatBrowserUrl(
+										autoLoopDiagnostics.commanderRuntimeUrl,
+									)}
+								>
+									Browser URL:{" "}
+									{formatBrowserUrl(
+										autoLoopDiagnostics.commanderRuntimeUrl,
+									)}
+								</span>
+								<span
+									className="break-all min-[460px]:col-span-2"
 									data-testid="auto-loop-browser-slot-key-at-arm"
 									title={formatSlotKey(autoLoopDiagnostics.browserSlotKeyAtArm)}
 								>
@@ -563,6 +620,14 @@ export function CommanderHelperBar({
 								>
 									Slot registry reason:{" "}
 									{autoLoopDiagnostics.browserSlotRegistryReason || "-"}
+								</span>
+								<span
+									className="break-all min-[460px]:col-span-2"
+									data-testid="auto-loop-commander-runtime-reason"
+									title={autoLoopDiagnostics.commanderRuntimeReason ?? ""}
+								>
+									Commander runtime reason:{" "}
+									{autoLoopDiagnostics.commanderRuntimeReason || "-"}
 								</span>
 								<span className="text-foreground/60 min-[460px]:col-span-2">
 									Browser AI: shared webview (S5.10 Phase 1; per-tab slot

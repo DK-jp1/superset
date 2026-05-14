@@ -3,6 +3,7 @@ import { toast } from "@superset/ui/sonner";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { LuLoader, LuX } from "react-icons/lu";
 import { registerDoyDeckCommanderActionBridge } from "renderer/stores/doydeck-commander-actions";
+import { useTabsStore } from "renderer/stores/tabs/store";
 import type {
 	CommanderSession,
 	CommanderState,
@@ -68,7 +69,10 @@ export function CommanderTab({
 	);
 
 	const activeTerminal = useActiveTerminal();
-	const webview = useCommanderWebview();
+	const activeTabId = useTabsStore(
+		(s) => (workspaceId ? s.activeTabIds[workspaceId] ?? null : null),
+	);
+	const webview = useCommanderWebview({ workspaceId, activeTabId });
 	const sessionPersistence = useCommanderSessionPersistence(workspaceId);
 
 	useEffect(() => {
@@ -111,6 +115,7 @@ export function CommanderTab({
 		getLiveUrl: webview.getLiveUrl,
 		currentUrl: webview.currentUrl,
 		injectIntoPage: webview.injectIntoPage,
+		getCommanderBrowserRuntimeSnapshot: webview.getRuntimeSnapshot,
 		onUpdateState: setState,
 		onUpdateSession: setSession,
 		onSessionApplied: handleSessionApplied,

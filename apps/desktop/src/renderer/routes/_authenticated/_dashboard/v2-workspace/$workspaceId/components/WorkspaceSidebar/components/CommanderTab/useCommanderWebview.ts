@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { requestDoyDeckDropdownClose } from "renderer/stores/doydeck-dropdown-close-events";
+import {
+	buildCommanderBrowserRuntimeSnapshot,
+	type CommanderBrowserRuntimeSnapshot,
+} from "./commander-browser-runtime";
 
 interface WebviewState {
 	currentUrl: string;
@@ -11,7 +15,13 @@ interface WebviewState {
 
 let parkedWebview: Electron.WebviewTag | null = null;
 
-export function useCommanderWebview() {
+export function useCommanderWebview({
+	workspaceId,
+	activeTabId,
+}: {
+	workspaceId?: string | null;
+	activeTabId?: string | null;
+} = {}) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const webviewRef = useRef<Electron.WebviewTag | null>(null);
 	const [state, setState] = useState<WebviewState>({
@@ -146,5 +156,26 @@ export function useCommanderWebview() {
 		[],
 	);
 
-	return { containerRef, navigateTo, goBack, goForward, reload, getLiveUrl, injectIntoPage, ...state };
+	const getRuntimeSnapshot =
+		useCallback((): CommanderBrowserRuntimeSnapshot => {
+			return buildCommanderBrowserRuntimeSnapshot({
+				workspaceId,
+				activeTabId,
+				webview: webviewRef.current,
+				container: containerRef.current,
+				bridgeAvailable: true,
+			});
+		}, [activeTabId, workspaceId]);
+
+	return {
+		containerRef,
+		navigateTo,
+		goBack,
+		goForward,
+		reload,
+		getLiveUrl,
+		injectIntoPage,
+		getRuntimeSnapshot,
+		...state,
+	};
 }

@@ -37,6 +37,7 @@ import {
 	buildExtractionScript,
 } from "../browser-adapters";
 import { sendWorkerResponseToBrowserAI } from "../commander-bridge";
+import type { CommanderBrowserRuntimeSnapshot } from "../commander-browser-runtime";
 import { getTerminalSelection } from "../useActiveTerminal";
 import {
 	BROWSER_AI_STARTER_PROMPT,
@@ -224,6 +225,16 @@ export type AutoLoopDiagnostics = {
 	browserSlotRegistrySlotKey: string | null;
 	browserSlotRegistryResolvedPaneId: string | null;
 	browserSlotRegistryWebContentsId: number | null;
+	browserRuntimeOwner: string;
+	commanderRuntimeStatus: string;
+	commanderRuntimeReason: string | null;
+	commanderRuntimeSlotKey: string | null;
+	commanderRuntimeWebContentsId: number | null;
+	commanderRuntimeProvider: string | null;
+	commanderRuntimeUrl: string | null;
+	commanderRuntimeUsableWidth: number | null;
+	commanderRuntimeVisualStatus: "PASS" | "NEEDS_FIX" | "UNKNOWN";
+	commanderRuntimeBridgeAvailable: boolean;
 };
 
 type CaptureForTerminalPreviewSource =
@@ -294,6 +305,16 @@ const EMPTY_AUTO_LOOP_DIAGNOSTICS: AutoLoopDiagnostics = {
 	browserSlotRegistrySlotKey: null,
 	browserSlotRegistryResolvedPaneId: null,
 	browserSlotRegistryWebContentsId: null,
+	browserRuntimeOwner: "unknown",
+	commanderRuntimeStatus: "unknown",
+	commanderRuntimeReason: null,
+	commanderRuntimeSlotKey: null,
+	commanderRuntimeWebContentsId: null,
+	commanderRuntimeProvider: null,
+	commanderRuntimeUrl: null,
+	commanderRuntimeUsableWidth: null,
+	commanderRuntimeVisualStatus: "UNKNOWN",
+	commanderRuntimeBridgeAvailable: false,
 };
 
 const DANGEROUS_TERMINAL_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
@@ -1362,6 +1383,7 @@ interface UsePromptTransferParams {
 	getLiveUrl: () => string;
 	currentUrl: string;
 	injectIntoPage: (script: string) => Promise<unknown>;
+	getCommanderBrowserRuntimeSnapshot: () => CommanderBrowserRuntimeSnapshot;
 	onUpdateState: (updater: (prev: CommanderState) => CommanderState) => void;
 	onUpdateSession: (
 		updater: (prev: CommanderSession) => CommanderSession,
@@ -1382,6 +1404,7 @@ export function usePromptTransfer({
 	getLiveUrl,
 	currentUrl,
 	injectIntoPage,
+	getCommanderBrowserRuntimeSnapshot,
 	onUpdateState,
 	onUpdateSession,
 	onSessionApplied,
@@ -1621,6 +1644,7 @@ export function usePromptTransfer({
 		const armedSlotDiagnostics = getBrowserSlotRegistryDiagnostics(
 			armedBrowserSlot.key,
 		);
+		const commanderRuntime = getCommanderBrowserRuntimeSnapshot();
 		activeTabIdAtArmRef.current = armedTabId;
 		tabContextSeenChangedRef.current = null;
 		setAutoLoopTurn(0);
@@ -1665,10 +1689,21 @@ export function usePromptTransfer({
 			browserSlotRegistryResolvedPaneId:
 				armedSlotDiagnostics.paneIdResolvedFromSlotKey,
 			browserSlotRegistryWebContentsId: armedSlotDiagnostics.webContentsId,
+			browserRuntimeOwner: commanderRuntime.ownerType,
+			commanderRuntimeStatus: commanderRuntime.status,
+			commanderRuntimeReason: commanderRuntime.reason,
+			commanderRuntimeSlotKey: commanderRuntime.browserSlotKey,
+			commanderRuntimeWebContentsId: commanderRuntime.webContentsId,
+			commanderRuntimeProvider: commanderRuntime.providerLabel,
+			commanderRuntimeUrl: commanderRuntime.currentUrl,
+			commanderRuntimeUsableWidth: commanderRuntime.usableWidth,
+			commanderRuntimeVisualStatus: commanderRuntime.visualStatus,
+			commanderRuntimeBridgeAvailable: commanderRuntime.bridgeAvailable,
 		});
 		autoLoopTerminalFingerprintRef.current = "";
 		autoLoopWorkerFingerprintRef.current = "";
 	}, [
+		getCommanderBrowserRuntimeSnapshot,
 		getBrowserSlotForTab,
 		getBrowserSlotRegistryDiagnostics,
 		setAutoLoopPhase,
@@ -1689,6 +1724,7 @@ export function usePromptTransfer({
 		const currentSlotDiagnostics = getBrowserSlotRegistryDiagnostics(
 			currentBrowserSlot.key,
 		);
+		const currentCommanderRuntime = getCommanderBrowserRuntimeSnapshot();
 		// Reflect current tab id in diagnostics every time the active tab id
 		// changes; this keeps the Diag panel readable while the loop is live.
 		setAutoLoopDiagnostics((prev) => {
@@ -1711,7 +1747,22 @@ export function usePromptTransfer({
 				prev.browserSlotRegistryResolvedPaneId ===
 					currentSlotDiagnostics.paneIdResolvedFromSlotKey &&
 				prev.browserSlotRegistryWebContentsId ===
-					currentSlotDiagnostics.webContentsId
+					currentSlotDiagnostics.webContentsId &&
+				prev.browserRuntimeOwner === currentCommanderRuntime.ownerType &&
+				prev.commanderRuntimeStatus === currentCommanderRuntime.status &&
+				prev.commanderRuntimeReason === currentCommanderRuntime.reason &&
+				prev.commanderRuntimeSlotKey === currentCommanderRuntime.browserSlotKey &&
+				prev.commanderRuntimeWebContentsId ===
+					currentCommanderRuntime.webContentsId &&
+				prev.commanderRuntimeProvider ===
+					currentCommanderRuntime.providerLabel &&
+				prev.commanderRuntimeUrl === currentCommanderRuntime.currentUrl &&
+				prev.commanderRuntimeUsableWidth ===
+					currentCommanderRuntime.usableWidth &&
+				prev.commanderRuntimeVisualStatus ===
+					currentCommanderRuntime.visualStatus &&
+				prev.commanderRuntimeBridgeAvailable ===
+					currentCommanderRuntime.bridgeAvailable
 			) {
 				return prev;
 			}
@@ -1737,6 +1788,18 @@ export function usePromptTransfer({
 					currentSlotDiagnostics.paneIdResolvedFromSlotKey,
 				browserSlotRegistryWebContentsId:
 					currentSlotDiagnostics.webContentsId,
+				browserRuntimeOwner: currentCommanderRuntime.ownerType,
+				commanderRuntimeStatus: currentCommanderRuntime.status,
+				commanderRuntimeReason: currentCommanderRuntime.reason,
+				commanderRuntimeSlotKey: currentCommanderRuntime.browserSlotKey,
+				commanderRuntimeWebContentsId:
+					currentCommanderRuntime.webContentsId,
+				commanderRuntimeProvider: currentCommanderRuntime.providerLabel,
+				commanderRuntimeUrl: currentCommanderRuntime.currentUrl,
+				commanderRuntimeUsableWidth: currentCommanderRuntime.usableWidth,
+				commanderRuntimeVisualStatus: currentCommanderRuntime.visualStatus,
+				commanderRuntimeBridgeAvailable:
+					currentCommanderRuntime.bridgeAvailable,
 			};
 		});
 		// S5.10 Phase 1: emit a discrete recent event the moment the tab
@@ -1772,6 +1835,7 @@ export function usePromptTransfer({
 		autoRelayMode,
 		autoLoopPhase,
 		appendAutoLoopEvent,
+		getCommanderBrowserRuntimeSnapshot,
 		getBrowserSlotForTab,
 		getBrowserSlotRegistryDiagnostics,
 		stopAutoLoop,

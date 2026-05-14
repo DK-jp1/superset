@@ -329,6 +329,39 @@ try {
 					? slotWebContentsId.trim()
 					: "Slot webContents id not found in diagnostics",
 			);
+			const runtimeOwner = await page
+				.getByTestId("auto-loop-browser-runtime-owner")
+				.textContent({ timeout: 1000 })
+				.catch(() => "");
+			record(
+				runtimeOwner ? "PASS" : "UNKNOWN",
+				"Commander Browser runtime owner",
+				runtimeOwner
+					? runtimeOwner.trim()
+					: "Commander runtime owner not found in diagnostics",
+			);
+			const commanderRuntime = await page
+				.getByTestId("auto-loop-commander-runtime-status")
+				.textContent({ timeout: 1000 })
+				.catch(() => "");
+			record(
+				commanderRuntime ? "PASS" : "UNKNOWN",
+				"Commander Browser runtime status",
+				commanderRuntime
+					? commanderRuntime.trim()
+					: "Commander runtime status not found in diagnostics",
+			);
+			const commanderWebContentsId = await page
+				.getByTestId("auto-loop-commander-runtime-webcontents-id")
+				.textContent({ timeout: 1000 })
+				.catch(() => "");
+			record(
+				commanderWebContentsId ? "PASS" : "UNKNOWN",
+				"Commander Browser webContents id",
+				commanderWebContentsId
+					? commanderWebContentsId.trim()
+					: "Commander webContents id not found in diagnostics",
+			);
 		}
 	}
 

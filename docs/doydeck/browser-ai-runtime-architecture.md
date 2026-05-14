@@ -959,6 +959,58 @@ S5.12 is a planning step only. It does not implement the adapter, does not
 unify runtimes, does not add multiple webviews, and does not alter Auto Loop
 send/capture behaviour.
 
+## 10i. S5.12 Phase 1 — Commander Browser runtime adapter (IMPLEMENTED)
+
+Status: **landed as observation-only Commander runtime diagnostics**.
+
+What ships:
+
+* A Commander Browser runtime adapter now exposes the right-side Browser AI as
+  `ownerType: "commander-owned"`.
+* The adapter derives a Commander Browser slot identity from:
+  * workspace id,
+  * active tab id,
+  * fixed pane id `commander-browser-ai`.
+* If the active tab is unavailable, the adapter uses `unknown-tab` so the slot
+  key remains explicit instead of disappearing.
+* The adapter reports:
+  * `browserSlotKey`,
+  * `webContentsId` when the webview exposes it,
+  * provider label,
+  * current URL,
+  * usable width,
+  * visual status,
+  * bridge availability.
+* Auto Loop Diagnostics can show both:
+  * registry status (`ok` / `mismatch` / `unknown`),
+  * Commander runtime owner/status (`commander-owned` / `available` /
+    `unknown`).
+* Real Agent QA and Electron QA can include Commander-owned runtime identity in
+  their reports.
+
+What did NOT change:
+
+* `useCommanderWebview` still owns the Commander Browser AI lifecycle.
+* The module-level `parkedWebview` behaviour is unchanged.
+* `browserRuntimeRegistry` is not used to own the Commander Browser AI.
+* Registry primary keys are still `paneId`.
+* There is still only one Commander Browser AI webview.
+* ChatGPT / Claude conversations are not separated per tab.
+* Auto Loop capture, injection, and Worker Response return paths are unchanged.
+
+Interpretation:
+
+* `registry status: unknown` can be valid for the Commander Browser AI when the
+  same Diagnostics panel also says `runtime owner: commander-owned`.
+* A future mismatch should be judged against the runtime owner first. Missing
+  registry ownership is not automatically a bug for Commander-owned webviews.
+
+Phase 2 entry signal:
+
+Only design slot lifecycle after QA consistently shows the same Commander
+owner, slot key, provider, URL, usable width, and webContents id across
+ChatGPT, Claude, Diagnostics open/closed, attach mode, and Electron QA.
+
 ## 11. Out of scope (for now)
 
 * Deleting the legacy `screens/main` Browser AI tree.
