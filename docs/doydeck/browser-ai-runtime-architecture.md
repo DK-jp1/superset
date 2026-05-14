@@ -647,6 +647,318 @@ after QA shows the read-only index remains stable across ChatGPT, Claude,
 Diagnostics open/closed, Auto Loop mode changes, tab switching, and Real Agent
 QA attach runs.
 
+## 10h. S5.12 — Commander Browser AI runtime unification planning
+
+Status: **planning only**. No runtime ownership changes are included in this
+phase.
+
+S5.11 Phase 2B made the split explicit:
+
+* Right-side Commander Browser AI is **Commander-owned**. It is created and
+  parked by `useCommanderWebview` and observed by the Commander bridge.
+* v2 BrowserPane webviews are **registry-owned**. They are attached, detached,
+  hidden, and diagnosed by `browserRuntimeRegistry`.
+
+The current `unknown` slot registry status for the Commander Browser AI is
+therefore expected. It means "not owned by the v2 browser registry", not a slot
+key mismatch.
+
+### Current Commander Browser AI runtime
+
+Primary files:
+
+* `apps/desktop/src/renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/components/WorkspaceSidebar/components/CommanderTab/useCommanderWebview.ts`
+* `apps/desktop/src/renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/components/WorkspaceSidebar/components/CommanderTab/commander-bridge.ts`
+* `apps/desktop/src/renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/components/WorkspaceSidebar/components/CommanderTab/CommanderBrowser.tsx`
+
+Current behaviour:
+
+* `useCommanderWebview` creates a real `<webview>` directly in the Commander
+  Browser AI container.
+* The webview uses the shared `persist:superset` partition.
+* A module-level `parkedWebview` keeps one Commander webview alive when the
+  Commander tab unmounts, then reattaches it on the next mount.
+* Navigation state is local React state synchronized from the live webview:
+  current URL, page title, loading, back, and forward.
+* Provider selection is a Commander toolbar concern through ChatGPT / Claude
+  presets and normal `navigateTo` calls.
+* Browser AI injection and capture go through `commander-bridge`:
+  `injectIntoPage`, `getLiveUrl`, and `onAutoCaptureTrigger`.
+* Auto Loop, Starter Prompt actions, worker-response return, and Real Agent QA
+  currently depend on this bridge path.
+* The hook does not register with `electronTrpcClient.browser.register`, does
+  not create a registry entry, and does not own a slot index.
+* `webContentsId` is observable from the webview / QA layer, but it is not a
+  first-class Commander runtime state yet.
+
+### Current v2 BrowserPane registry runtime
+
+Primary files:
+
+* `apps/desktop/src/renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/hooks/usePaneRegistry/components/BrowserPane/browserRuntimeRegistry.ts`
+* `apps/desktop/src/renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/hooks/usePaneRegistry/components/BrowserPane/hooks/usePersistentWebview/usePersistentWebview.ts`
+* `apps/desktop/src/renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/hooks/usePaneRegistry/components/BrowserPane/BrowserPane.tsx`
+
+Current behaviour:
+
+* `browserRuntimeRegistry` owns BrowserPane webview lifecycle by `paneId`.
+* It creates fixed-position webviews under a root container and syncs their
+  bounds to a placeholder with `ResizeObserver`.
+* `attach` makes a webview visible and associates it with a placeholder.
+* `detach` hides the webview but keeps it alive.
+* `destroy` removes the webview and unregisters the pane id from the main
+  process browser bridge.
+* `dom-ready` captures `webContentsId` and calls
+  `electronTrpcClient.browser.register`.
+* Browser state is persisted back into pane data.
+* S5.11 added optional `BrowserSlotIdentity`, `browserSlotKey`, read-only slot
+  index, and mismatch diagnostics.
+
+### Runtime differences
+
+| Axis | Commander-owned Browser AI | Registry-owned BrowserPane |
+| --- | --- | --- |
+| Surface | Right Commander sidebar Browser AI | Center-pane browser tabs |
+| Owner | `useCommanderWebview` module state | `browserRuntimeRegistry` |
+| Lifecycle | One parked singleton, detach by DOM removal | Entry map, `attach` / `detach` / `destroy` |
+| State scope | Local React state plus live webview URL | Pane data plus registry state |
+| Bounds | Normal child DOM layout inside Commander | Fixed webview synced to placeholder rect |
+| Provider switching | ChatGPT / Claude presets in Commander UI | Generic browser URL navigation |
+| `webContentsId` | Not first-class state yet | Captured and registered by pane id |
+| Slot identity | Diagnostics-only scaffolding in Commander context | Optional registry metadata and slot index |
+| Auto Loop | Direct dependency through `commander-bridge` | Not the current Browser AI loop path |
+| Real Agent QA | Drives the Commander Browser AI surface | Uses registry diagnostics only for BrowserPane |
+| Per-tab readiness | Needs new Commander slot model | Already has slot-key scaffolding |
+| Risk profile | Low-risk to extend, but split runtime remains | Cleaner long term, higher migration risk |
+
+### Options
+
+#### Option A — Keep Commander Browser AI in `useCommanderWebview`
+
+Extend the existing Commander-owned runtime in place.
+
+Pros:
+
+* Lowest risk to Auto Loop, Starter Prompt, Browser AI injection, and Real
+  Agent QA.
+* Rollback is simple because the current bridge contract stays intact.
+* The existing right sidebar layout and parked-webview behaviour remain
+  unchanged.
+
+Cons:
+
+* Browser AI runtime remains split across two systems.
+* Per-tab Browser AI would need Commander-specific slot parking and eviction.
+* `browserRuntimeRegistry` diagnostics will continue to show Commander Browser
+  AI as not registry-owned.
+
+#### Option B — Move Commander Browser AI into `browserRuntimeRegistry`
+
+Make the v2 registry the single runtime owner for both center BrowserPane and
+right Commander Browser AI.
+
+Pros:
+
+* Single lifecycle owner for slot key, `webContentsId`, hidden/visible state,
+  cleanup, and mismatch diagnostics.
+* Cleanest long-term path to per-tab Browser AI sessions.
+* Auto Loop could eventually route return payloads by browser slot instead of
+  a Commander-only bridge singleton.
+
+Cons:
+
+* High migration risk: Auto Loop, Browser AI injection/capture, Real Agent QA,
+  provider presets, and right sidebar layout all depend on the current
+  Commander bridge.
+* The registry's fixed-position placeholder model is tuned for BrowserPane and
+  may not match the Commander sidebar without layout regressions.
+* A bad migration can break the main working path before Per-Tab Browser AI
+  exists.
+
+#### Option C — Add a Commander Browser runtime adapter
+
+Keep `useCommanderWebview` as the lifecycle owner, but expose a
+registry-compatible diagnostic surface.
+
+The adapter should report:
+
+* `ownerType: "commander-owned"`,
+* `browserSlotKey`,
+* `workspaceId`,
+* `activeTabId`,
+* `paneId`,
+* `webContentsId` when available,
+* provider,
+* current URL,
+* visible bounds / usable width,
+* bridge availability.
+
+Pros:
+
+* Low-risk observation step.
+* Makes Diagnostics and QA tell the truth: Commander Browser AI is not missing
+  from the registry; it is owned by a different runtime.
+* Creates a stable interface that can later be backed by the registry.
+* Lets Auto Loop store owner type and slot identity without changing send /
+  capture behaviour.
+
+Cons:
+
+* Dual runtime remains.
+* The adapter can drift from live webview state unless it is updated from the
+  same events as `useCommanderWebview`.
+* It does not itself solve multiple webviews or per-tab conversation storage.
+
+#### Option D — Do nothing
+
+Keep S5.11 Phase 2B as the only diagnostic surface.
+
+Pros:
+
+* No implementation risk.
+
+Cons:
+
+* Commander Browser AI continues to appear as `unknown`.
+* Per-tab planning remains ambiguous.
+* Real Agent QA cannot explain whether it is looking at a Commander-owned or
+  registry-owned webview.
+
+### Recommendation
+
+Use **Option C first**.
+
+Do not migrate the Commander Browser AI into `browserRuntimeRegistry` yet. The
+right sidebar Browser AI is the live Auto Loop path. A direct registry migration
+would touch the highest-risk surface before we have adapter-level parity.
+
+The next safe step is a Commander Browser runtime adapter that makes ownership
+explicit:
+
+* `commander-owned` means the webview is managed by `useCommanderWebview`.
+* `registry-owned` means the webview is managed by `browserRuntimeRegistry`.
+* `unknown` should be reserved for missing or unobservable state, not for a
+  known Commander-owned runtime.
+
+Once Diagnostics, Electron QA, and Real Agent QA consistently report owner
+type, slot key, URL, provider, and `webContentsId`, we can decide whether
+Phase 3 should keep Commander-owned per-tab slots or migrate to the registry.
+
+### Minimal MVP proposal
+
+If this becomes implementation work, keep it observation-only:
+
+1. Add a small Commander Browser runtime identity helper near
+   `useCommanderWebview`.
+2. Return or publish:
+   * owner type,
+   * browser slot identity,
+   * browser slot key,
+   * current URL,
+   * provider,
+   * `webContentsId` if `getWebContentsId()` is available,
+   * visible bounds / usable width.
+3. Show in Auto Loop Diagnostics:
+   * Browser runtime owner: `commander-owned`,
+   * Browser slot key,
+   * Pane id,
+   * WebContents id,
+   * Provider / URL.
+4. Add the same fields to Real Agent QA reports.
+5. Keep `browserRuntimeRegistry` primary key and lifecycle unchanged.
+
+This should not alter provider switching, capture, injection, parking, or
+Auto Loop send/return paths.
+
+### Per-Tab Browser AI connection
+
+Commander-owned per-tab Browser AI is possible, but it would turn
+`parkedWebview` into a Commander-specific registry:
+
+* replace the singleton `parkedWebview` with a
+  `Map<browserSlotKey, WebviewSlot>`;
+* park inactive tab slots;
+* restore the active tab's slot on tab switch;
+* cap retained slots with `MAX_KEPT_BROWSER_AI_SLOTS`;
+* destroy least-recently-used slots and release `webContentsId` values.
+
+That may be acceptable as an intermediate path, but it duplicates registry
+concepts. A later registry-owned design is cleaner if we need shared cleanup,
+slot eviction, and lifecycle signals across all browser surfaces.
+
+Phase 3 should choose between:
+
+* Commander-owned slot map for the right sidebar only, or
+* registry-owned Commander Browser AI after the adapter proves parity.
+
+Do not start Phase 3 until the adapter can prove which active tab, browser
+slot, provider, and webContents id the Commander bridge is using.
+
+### Auto Loop connection
+
+Auto Loop currently depends on the Commander bridge for Browser AI capture and
+injection. The adapter should make that dependency explicit rather than hiding
+it.
+
+Future Auto Loop context should record:
+
+* `browserRuntimeOwnerAtArm`,
+* `browserSlotKeyAtArm`,
+* `browserWebContentsIdAtArm`,
+* active tab id at arm,
+* provider / URL at arm.
+
+Existing active-tab abort remains the main safety guard. Slot-owner mismatch
+can become a diagnostic first, then a hard stop only after the adapter is
+stable.
+
+Worker Response return should eventually verify that the current Browser AI
+owner + slot still matches the armed context before sending the payload back to
+Browser AI.
+
+### QA impact
+
+Real Agent QA should report:
+
+* runtime owner type,
+* browser slot key,
+* pane id,
+* `webContentsId`,
+* provider,
+* URL,
+* usable width,
+* whether the webview is Commander-owned or registry-owned.
+
+Electron QA can use the same fields to assert that Diagnostics are visible and
+that the Browser AI runtime state is explainable.
+
+Attach-mode QA should compare:
+
+* the URL/provider visible in Doy's right sidebar,
+* the Commander adapter's URL/provider,
+* the webview identity observed through CDP.
+
+Visual usability QA remains separate. A slot identity can be correct while the
+right sidebar is too narrow or clipped; report both dimensions separately.
+
+### Risks
+
+* Adapter state can become stale if it is not sourced from the live webview.
+* `webContentsId` can change after a webview recreation.
+* A Commander-owned slot map can leak webviews if eviction and destroy are not
+  explicit.
+* Registry migration can regress the right sidebar layout because the registry
+  uses fixed-position webviews while Commander currently uses a normal child
+  webview.
+* Auto Loop must not silently send a Worker Response to a different Browser AI
+  owner or tab than the one it armed against.
+
+### Boundary for S5.12
+
+S5.12 is a planning step only. It does not implement the adapter, does not
+unify runtimes, does not add multiple webviews, and does not alter Auto Loop
+send/capture behaviour.
+
 ## 11. Out of scope (for now)
 
 * Deleting the legacy `screens/main` Browser AI tree.
