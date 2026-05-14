@@ -75,6 +75,7 @@ const rendererEntry = join(desktopDir, "dist/renderer/index.html");
 const appLaunchTarget = desktopDir;
 const electronPath = require("electron");
 const safeDevEnv = {
+	NODE_ENV: "production",
 	DOYDECK_REAL_AGENT_QA: "1",
 	DOYDECK_DEV_MODE: "1",
 	SUPERSET_WORKSPACE_NAME: "doydeck-dev",
@@ -134,6 +135,24 @@ const prepareSummary = {
 	composerFinalResult: "(not evaluated)",
 	composerBlockedReason: "",
 	composerNextAction: "",
+};
+
+// Tracks where DoyDeck's Auto Loop pulled the "Workerへ渡す指示:" content from.
+// Filled in around the test prompt send + post-Auto-Loop comparison so the
+// report shows whether the Worker received the fresh test-prompt reply or
+// a stale Starter Prompt echo.
+const instructionSource = {
+	baselineCount: "(not captured)",
+	baselineFingerprint: "(not captured)",
+	baselinePreview: "(not captured)",
+	testPromptSent: "no",
+	newAssistantReplyDetected: "no",
+	newAssistantReplyReason: "",
+	newAssistantReplyPreview: "(not captured)",
+	newAssistantReplyHash: "(not captured)",
+	capturedAssistantReplySource: "unknown",
+	extractedWorkerInstructionSource: "unknown",
+	extractedWorkerInstructionPreview: "(not captured)",
 };
 
 function record(status, name, detail) {
@@ -277,6 +296,56 @@ function buildInjectionWithSubmitScript(text, provider) {
 })()`;
 }
 
+// Snapshot of the Browser AI conversation state. Used as a baseline so we
+// can tell whether the next instruction extracted by DoyDeck's Auto Loop
+// came from the assistant reply produced AFTER our test prompt, or from a
+// stale Starter Prompt response.
+const browserBaselineScript = `(function() {
+  function cyrb53(str) {
+    var h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (var i = 0; i < str.length; i++) {
+      var ch = str.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1>>>16), 2246822507) ^ Math.imul(h2 ^ (h2>>>13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2>>>16), 2246822507) ^ Math.imul(h1 ^ (h1>>>13), 3266489909);
+    return 4294967296 * (2097151 & h2) + (h1>>>0);
+  }
+  // ChatGPT marks each assistant message with data-message-author-role
+  // and data-message-id. Claude/Gemini differ but this is enough for the
+  // chatgpt-only QA flow.
+  var nodes = Array.prototype.slice.call(document.querySelectorAll('[data-message-author-role="assistant"]'));
+  var last = nodes[nodes.length-1];
+  var lastText = last ? (last.innerText || last.textContent || '').trim() : '';
+  return {
+    count: nodes.length,
+    lastId: last ? (last.getAttribute('data-message-id') || '') : '',
+    lastTextLen: lastText.length,
+    lastTextHash: cyrb53(lastText),
+    lastTextPreview: lastText.slice(0, 200)
+  };
+})()`;
+
+// Returns { ok: true } once the Browser AI has finished generating its
+// previous response. While ChatGPT is streaming it shows a Stop button that
+// disappears when generation completes. We poll this to know it's safe to
+// inject the next prompt.
+const generationDoneScript = `(function() {
+  var stopSelectors = [
+    'button[data-testid="stop-button"]',
+    'button[aria-label="Stop generating"]',
+    'button[aria-label="Stop streaming"]',
+    'button[aria-label="生成を停止"]',
+    'button[aria-label*="Stop"]'
+  ];
+  for (var i = 0; i < stopSelectors.length; i++) {
+    var btn = document.querySelector(stopSelectors[i]);
+    if (btn) return { ok: false, reason: 'still_generating', selector: stopSelectors[i] };
+  }
+  return { ok: true };
+})()`;
+
 const composerProbeScript = `(function() {
   var selectors = [
     '#prompt-textarea',
@@ -306,50 +375,63 @@ const openNewChatScript = `(function() {
   return { ok: true, text: String(match.innerText || match.textContent || match.getAttribute('aria-label') || '').trim() };
 })()`;
 
-const testPrompt = `DoyDeck Real Agent Auto Loop QAをします。
-あなたはBrowser AIです。
-Terminal側Workerへ渡す指示だけを作ってください。
-あなた自身が実装したり完了報告を返してはいけません。
+// IMPORTANT envelope contract — keep in sync with
+// `validateWorkerResponseEnvelopeBody` in
+//   apps/desktop/src/renderer/.../CommanderTab/hooks/usePromptTransfer.ts
+// The validator REJECTS the envelope as "incomplete" unless its body contains
+// every one of these section markers (Markdown heading optional but the label
+// must appear on its own line, with an optional colon):
+//   - 実施内容
+//   - 変更ファイル
+//   - 確認結果
+//   - git diff --check           (the literal substring "git diff --check")
+//   - 未解決
+// The template below mirrors that contract section-for-section. Don't drop
+// any section here without first relaxing the validator (separate task).
+const testPrompt = `DoyDeck Real Agent QA の動作確認です。turn 1/1 だけ。
 
-返答の最初の行は必ず:
+重要:
+あなたの返答は、必ず最初の1行を以下にしてください。
+
 Workerへ渡す指示:
 
-Workerには以下を守らせてください。
-- ファイル変更は禁止
-- コマンド実行は禁止
-- Git操作は禁止
-- 外部アクセスは禁止
-- ツール使用は禁止
-- 完了報告はDoyDeck response envelopeで囲む
+それ以外の前置き、解説、自己紹介、役割説明、完了報告は禁止です。
+あなた自身が作業したり、完了報告を返してはいけません。
+Terminal側Workerへ渡す短い指示文だけを書いてください。
 
-Workerが返す完了報告は必ず以下の形式にしてください。
+Worker側に伝える内容は次の1点だけで十分です。
+「何も実行せず、下記の DoyDeck response envelope をそのまま1回返してください」
+
+Worker側に守らせる制約（指示本文に必ず含める）:
+- ファイル変更なし
+- コマンド実行なし
+- Git操作なし
+- 外部アクセスなし
+- ツール使用なし
+
+Worker側に必ず返させる envelope（1回だけ・余計な前後文章なし・全セクション必須）:
 
 <<<DOYDECK_WORKER_RESPONSE_START>>>
 ## 完了報告
 
 ### 実施内容
-- S5.6.1 Real Agent Auto Loop QAの安全な応答テストを行いました。
+- Real Agent QA の短い確認に応答しました
 
 ### 変更ファイル
 - なし
 
 ### 確認結果
+- ファイル変更、コマンド実行、Git操作、外部アクセス、ツール使用を行っていません
 - PASS
 
 ### git diff --check 結果
-- 未実行（コマンド実行禁止のため）
-
-### セルフレビュー
-- ファイル変更、コマンド実行、Git操作、外部アクセス、ツール使用を行っていません。
-
-### 次に改善するなら
-- Browser AI fixture / Worker fixtureによる内部完結QAを追加します。
+- 未実行（このQAではコマンド実行禁止のため）
 
 ### 未解決
 - なし
 <<<DOYDECK_WORKER_RESPONSE_END>>>
 
-まずturn 1/2のWorker指示だけを作ってください。`;
+あなたの返答は必ず「Workerへ渡す指示:」から始めてください。`;
 
 async function getWebviewUrl(page) {
 	return page.evaluate(() => {
@@ -374,6 +456,87 @@ async function executeInWebview(page, script) {
 			return { ok: false, error: String(error && error.message ? error.message : error) };
 		}
 	}, script);
+}
+
+// Poll the Browser AI webview until it's no longer streaming a response.
+// Returns { ready: true, elapsedMs } on success, or { ready: false, reason }
+// on timeout. Used after Starter Prompt send so the next prompt isn't
+// dropped into a composer whose send button is still disabled.
+async function waitForBrowserGenerationDone(page, maxWaitMs = 180000, intervalMs = 1500) {
+	const startedAt = Date.now();
+	let lastReason = "no_probe";
+	while (Date.now() - startedAt <= maxWaitMs) {
+		const probe = await executeInWebview(page, generationDoneScript);
+		if (probe.ok && probe.value && probe.value.ok) {
+			return { ready: true, elapsedMs: Date.now() - startedAt };
+		}
+		lastReason =
+			probe.ok && probe.value && probe.value.reason
+				? probe.value.reason
+				: probe.ok
+					? "unknown_state"
+					: `probe_error: ${probe.error}`;
+		await page.waitForTimeout(intervalMs);
+	}
+	return { ready: false, reason: lastReason, elapsedMs: Date.now() - startedAt };
+}
+
+// Read the Browser AI assistant baseline snapshot (count, last message id,
+// last text hash). Returns the inner probe value or a fallback default.
+async function readBrowserBaseline(page) {
+	const probe = await executeInWebview(page, browserBaselineScript);
+	if (probe.ok && probe.value) return probe.value;
+	return {
+		count: 0,
+		lastId: "",
+		lastTextLen: 0,
+		lastTextHash: 0,
+		lastTextPreview: "",
+	};
+}
+
+// Wait until the Browser AI produces a NEW assistant reply (relative to the
+// baseline) and that reply stabilises for stableMs (proxy for "generation
+// finished"). Returns { detected: true, reply, elapsedMs } on success or
+// { detected: false, reason, elapsedMs } on timeout.
+async function waitForNewAssistantReply(
+	page,
+	baseline,
+	maxWaitMs = 240000,
+	intervalMs = 1500,
+	stableMs = 3000,
+) {
+	const startedAt = Date.now();
+	let lastSeen = null;
+	let lastSeenAt = 0;
+	let reason = "no_new_reply";
+	while (Date.now() - startedAt <= maxWaitMs) {
+		const current = await readBrowserBaseline(page);
+		const isNewer =
+			current.count > baseline.count ||
+			current.lastId !== baseline.lastId ||
+			current.lastTextHash !== baseline.lastTextHash;
+		if (isNewer) {
+			if (!lastSeen || lastSeen.lastTextHash !== current.lastTextHash) {
+				lastSeen = current;
+				lastSeenAt = Date.now();
+				reason = "stabilising";
+			} else if (Date.now() - lastSeenAt >= stableMs) {
+				return {
+					detected: true,
+					reply: current,
+					elapsedMs: Date.now() - startedAt,
+				};
+			}
+		}
+		await page.waitForTimeout(intervalMs);
+	}
+	return {
+		detected: false,
+		reason,
+		elapsedMs: Date.now() - startedAt,
+		lastSeen,
+	};
 }
 
 async function sampleDiagnostics(page, label) {
@@ -581,6 +744,11 @@ async function sendTerminalLineViaRuntime(page, line) {
 	await page.waitForTimeout(150);
 	await writeTerminalViaQaAccessor(page, paneId, "\r");
 	return paneId;
+}
+
+async function hasTerminalWriteTarget(page) {
+	const paneId = await getPrimaryTerminalPaneId(page).catch(() => "");
+	return Boolean(paneId);
 }
 
 async function readTerminalScreenText(page) {
@@ -1362,17 +1530,37 @@ async function maybeStartWorker(page, workerStatus) {
 			approvalPrompt,
 		};
 	}
-	const terminal = page.getByTestId("terminal-pane").first();
-	const startObservation = await observeQaStep(
-		page,
-		"Before worker start command",
-		`send ${workerStartCommand}`,
-	);
-	decideObservation(
-		startObservation,
-		"PROCEED",
-		"Real send and worker-start approval were provided; sending worker start command to active terminal",
-	);
+		const terminal = page.getByTestId("terminal-pane").first();
+		const startObservation = await observeQaStep(
+			page,
+			"Before worker start command",
+			`send ${workerStartCommand}`,
+		);
+		if (!(await hasTerminalWriteTarget(page))) {
+			decideObservation(
+				startObservation,
+				"BLOCKED",
+				"No terminal paneId available for QA terminal write",
+			);
+			return {
+				status: "BLOCKED",
+				selectedWorkerType: workerPreference,
+				readinessState: workerStatus.state,
+				command: workerStartCommand,
+				approvalRequired: true,
+				approvalGranted: true,
+				result:
+					"No terminal paneId available for QA terminal write. DoyDeck UI or active terminal was not ready.",
+				nextAction:
+					"Open or activate a DoyDeck Terminal pane, then rerun real-agent-qa:doydeck.",
+				approvalPrompt,
+			};
+		}
+		decideObservation(
+			startObservation,
+			"PROCEED",
+			"Real send and worker-start approval were provided; sending worker start command to active terminal",
+		);
 	await sendTerminalLineViaRuntime(page, workerStartCommand);
 	record(
 		"PASS",
@@ -1544,6 +1732,44 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 				`- attempt ${attempt.attempt}: ${attempt.status} — ${attempt.detail}; elapsed=${attempt.elapsedMs}ms${attempt.screenshot ? `; screenshot=\`${rel(attempt.screenshot)}\`` : ""}`,
 			);
 		}
+	}
+	body.push("", "## Browser AI instruction source", "");
+	body.push(`- browser instruction baseline count: \`${instructionSource.baselineCount}\``);
+	body.push(
+		`- browser instruction baseline fingerprint: \`${instructionSource.baselineFingerprint}\``,
+	);
+	if (instructionSource.baselinePreview && instructionSource.baselinePreview !== "(not captured)") {
+		body.push(`- baseline preview: \`${instructionSource.baselinePreview.replace(/\s+/g, " ").slice(0, 200)}\``);
+	}
+	body.push(`- testPrompt sent: \`${instructionSource.testPromptSent}\``);
+	body.push(
+		`- new assistant reply detected: \`${instructionSource.newAssistantReplyDetected}\``,
+	);
+	if (instructionSource.newAssistantReplyReason) {
+		body.push(`- new assistant reply reason: ${instructionSource.newAssistantReplyReason}`);
+	}
+	if (
+		instructionSource.newAssistantReplyPreview &&
+		instructionSource.newAssistantReplyPreview !== "(not captured)"
+	) {
+		body.push(
+			`- new assistant reply preview: \`${instructionSource.newAssistantReplyPreview.replace(/\s+/g, " ").slice(0, 200)}\``,
+		);
+	}
+	body.push(
+		`- captured assistant reply source: \`${instructionSource.capturedAssistantReplySource}\``,
+	);
+	body.push(
+		`- extracted worker instruction source: \`${instructionSource.extractedWorkerInstructionSource}\``,
+	);
+	if (
+		instructionSource.extractedWorkerInstructionPreview &&
+		instructionSource.extractedWorkerInstructionPreview !== "(not captured)"
+	) {
+		body.push("- extracted worker instruction preview:");
+		body.push("```");
+		body.push(instructionSource.extractedWorkerInstructionPreview);
+		body.push("```");
 	}
 	body.push("", "## Screenshots", "");
 	if (screenshots.length === 0) {
@@ -1732,21 +1958,31 @@ try {
 		pageErrors.push(error.stack || error.message);
 	});
 
-	await page.waitForLoadState("domcontentloaded", { timeout: 60_000 });
-	await page.waitForTimeout(2500);
-	await capture(page, "00-startup");
+		await page.waitForLoadState("domcontentloaded", { timeout: 60_000 });
+		await page.waitForTimeout(5000);
+		await capture(page, "00-startup");
 
-	await checkVisible("Commander root", page.getByTestId("commander-root"), "Commander mounted");
-	await checkVisible(
-		"Browser AI / Commander area",
-		page.getByTestId("commander-browser-area"),
-		"Browser/Commander area mounted",
-	);
-	await checkVisible(
-		"Terminal area",
-		page.getByTestId("terminal-pane").first(),
-		"Terminal pane mounted",
-	);
+		const commanderVisible = await checkVisible(
+			"Commander root",
+			page.getByTestId("commander-root"),
+			"Commander mounted",
+			60_000,
+		);
+		const browserAreaVisible = await checkVisible(
+			"Browser AI / Commander area",
+			page.getByTestId("commander-browser-area"),
+			"Browser/Commander area mounted",
+			60_000,
+		);
+		const terminalAreaVisible = await checkVisible(
+			"Terminal area",
+			page.getByTestId("terminal-pane").first(),
+			"Terminal pane mounted",
+			60_000,
+		);
+		if (!commanderVisible || !browserAreaVisible || !terminalAreaVisible) {
+			await capture(page, "00-ui-not-ready");
+		}
 
 	const initialUrl = await getWebviewUrl(page);
 	let provider = detectProviderFromUrl(initialUrl);
@@ -1925,7 +2161,24 @@ try {
 			if (await isVisible(starterAction, 3000)) {
 				await starterAction.click();
 				record("PASS", "Starter Prompt real send", "Clicked DoyDeck Send Starter Prompt action");
-				await page.waitForTimeout(12000);
+				// Wait for ChatGPT to finish streaming the Starter Prompt response
+				// BEFORE attempting to inject the test prompt. Without this the
+				// send button is still disabled and the test prompt silently sits
+				// in the composer.
+				const starterReady = await waitForBrowserGenerationDone(page, 180000, 1500);
+				if (starterReady.ready) {
+					record(
+						"PASS",
+						"Browser AI ready after Starter Prompt",
+						`Generation complete after ${starterReady.elapsedMs}ms`,
+					);
+				} else {
+					record(
+						"BLOCKED",
+						"Browser AI ready after Starter Prompt",
+						`browser ai still generating after starter prompt (waited ${starterReady.elapsedMs}ms, last reason: ${starterReady.reason})`,
+					);
+				}
 				await capture(page, "04-starter-prompt-sent");
 			} else {
 				record("UNKNOWN", "Starter Prompt real send", "Send Starter Prompt action was not visible");
@@ -1933,18 +2186,79 @@ try {
 			}
 		}
 
-		const injection = await executeInWebview(
-			page,
-			buildInjectionWithSubmitScript(testPrompt, provider),
-		);
-		if (injection.ok && injection.value === "submitted") {
-			record("PASS", "Browser AI test prompt real send", "Prompt submitted in Browser AI webview");
-		} else if (injection.ok && injection.value === "injected") {
-			record("BLOCKED", "Browser AI test prompt real send", "Prompt injected but send button was unavailable");
+		// Re-confirm the composer can accept input before injecting the test
+		// prompt. If the previous response is still streaming, abort with a
+		// specific BLOCKED reason rather than letting the prompt rot in the
+		// composer.
+		const preInjectionReady = await waitForBrowserGenerationDone(page, 60000, 1500);
+		if (!preInjectionReady.ready) {
+			record(
+				"BLOCKED",
+				"Browser AI test prompt real send",
+				`browser ai send button disabled (waited ${preInjectionReady.elapsedMs}ms, last reason: ${preInjectionReady.reason})`,
+			);
+			await capture(page, "05-test-prompt-sent");
 		} else {
-			record("FAIL", "Browser AI test prompt real send", injection.ok ? String(injection.value) : injection.error);
+			// Snapshot the Browser AI conversation state BEFORE we send the
+			// test prompt. The Auto Loop is supposed to forward the assistant
+			// reply that comes AFTER this baseline to the Worker. If it forwards
+			// something matching the baseline instead, that means it picked up a
+			// stale Starter Prompt echo — we record that as a source mismatch.
+			const browserBaseline = await readBrowserBaseline(page);
+			instructionSource.baselineCount = String(browserBaseline.count);
+			instructionSource.baselineFingerprint = `${browserBaseline.lastId}#${browserBaseline.lastTextHash}`;
+			instructionSource.baselinePreview = browserBaseline.lastTextPreview;
+
+			const injection = await executeInWebview(
+				page,
+				buildInjectionWithSubmitScript(testPrompt, provider),
+			);
+			if (injection.ok && injection.value === "submitted") {
+				record("PASS", "Browser AI test prompt real send", "Prompt submitted in Browser AI webview");
+				instructionSource.testPromptSent = "yes";
+			} else if (injection.ok && injection.value === "injected") {
+				record(
+					"BLOCKED",
+					"Browser AI test prompt real send",
+					"test prompt injected but not sent (send button was not enabled at submit time)",
+				);
+			} else {
+				record("FAIL", "Browser AI test prompt real send", injection.ok ? String(injection.value) : injection.error);
+			}
+			await capture(page, "05-test-prompt-sent");
+
+			// If the test prompt was actually submitted, wait for the next
+			// assistant reply (one we know is a response to OUR prompt, not the
+			// Starter Prompt). This becomes the trusted source for source
+			// judgement against whatever the Auto Loop forwards to the Worker.
+			if (instructionSource.testPromptSent === "yes") {
+				const newReply = await waitForNewAssistantReply(
+					page,
+					browserBaseline,
+					240000,
+					1500,
+					3000,
+				);
+				if (newReply.detected) {
+					instructionSource.newAssistantReplyDetected = "yes";
+					instructionSource.newAssistantReplyHash = String(newReply.reply.lastTextHash);
+					instructionSource.newAssistantReplyPreview =
+						newReply.reply.lastTextPreview;
+					record(
+						"PASS",
+						"Browser AI new reply after test prompt",
+						`Detected after ${newReply.elapsedMs}ms`,
+					);
+				} else {
+					instructionSource.newAssistantReplyReason = newReply.reason;
+					record(
+						"BLOCKED",
+						"Browser AI new reply after test prompt",
+						`no new assistant reply after test prompt (waited ${newReply.elapsedMs}ms, last reason: ${newReply.reason})`,
+					);
+				}
+			}
 		}
-		await capture(page, "05-test-prompt-sent");
 
 		const startedAt = Date.now();
 		let stopped = false;
@@ -1970,6 +2284,97 @@ try {
 			}
 		}
 		await capture(page, "06-final-state");
+
+		// Judge whether the Worker instruction the Auto Loop sent to the
+		// Terminal originated from the post-testPrompt assistant reply
+		// (correct) or from the pre-baseline Starter Prompt echo (stale).
+		// We compare distinctive substrings of each candidate against the
+		// terminal screen text — whichever shows up in the terminal is the
+		// likely source.
+		if (
+			instructionSource.testPromptSent === "yes" &&
+			instructionSource.newAssistantReplyDetected === "yes"
+		) {
+			const terminalScreenForSource = await readTerminalScreenText(page).catch(
+				() => "",
+			);
+			instructionSource.extractedWorkerInstructionPreview = (
+				terminalScreenForSource || ""
+			)
+				.split("\n")
+				.slice(-40)
+				.join("\n")
+				.slice(0, 800);
+
+			const findSubstring = (needle, hay) => {
+				if (!needle || !hay || needle.length < 24) return false;
+				for (let i = 0; i + 24 <= needle.length; i += 12) {
+					const slice = needle.slice(i, i + 24).trim();
+					if (slice.length < 12) continue;
+					if (hay.includes(slice)) return true;
+				}
+				return false;
+			};
+			const baselineSig = (instructionSource.baselinePreview || "").trim();
+			const newReplySig = (
+				instructionSource.newAssistantReplyPreview || ""
+			).trim();
+			const newReplyInTerminal = findSubstring(
+				newReplySig,
+				terminalScreenForSource,
+			);
+			const baselineInTerminal = findSubstring(
+				baselineSig,
+				terminalScreenForSource,
+			);
+
+			if (newReplyInTerminal && !baselineInTerminal) {
+				instructionSource.capturedAssistantReplySource = "testPrompt";
+				instructionSource.extractedWorkerInstructionSource = "testPrompt";
+				record(
+					"PASS",
+					"Worker instruction source",
+					"Worker received fresh assistant reply (post-testPrompt)",
+				);
+			} else if (baselineInTerminal && !newReplyInTerminal) {
+				instructionSource.capturedAssistantReplySource = "starter";
+				instructionSource.extractedWorkerInstructionSource = "starter";
+				record(
+					"BLOCKED",
+					"Worker instruction source",
+					"worker instruction extracted from stale browser response (Starter Prompt echo)",
+				);
+			} else if (newReplyInTerminal && baselineInTerminal) {
+				instructionSource.capturedAssistantReplySource = "testPrompt";
+				instructionSource.extractedWorkerInstructionSource = "testPrompt";
+				record(
+					"UNKNOWN",
+					"Worker instruction source",
+					"both baseline and new reply substrings found in terminal — ambiguous, assuming testPrompt",
+				);
+			} else {
+				instructionSource.capturedAssistantReplySource = "unknown";
+				instructionSource.extractedWorkerInstructionSource = "unknown";
+				record(
+					"BLOCKED",
+					"Worker instruction source",
+					"browser ai instruction source mismatch — neither baseline nor new reply substrings matched the terminal output",
+				);
+			}
+		} else if (instructionSource.testPromptSent !== "yes") {
+			record(
+				"BLOCKED",
+				"Worker instruction source",
+				"test prompt was not sent; cannot judge worker instruction source",
+			);
+		} else {
+			record(
+				"BLOCKED",
+				"Worker instruction source",
+				"no new assistant reply after test prompt; worker instruction cannot be attributed to testPrompt",
+			);
+		}
+
 		record(
 			sawTurnProgress ? "PASS" : "UNKNOWN",
 			"Auto Loop turn progress",

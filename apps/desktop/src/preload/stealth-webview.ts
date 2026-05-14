@@ -248,9 +248,10 @@
 	try {
 		if (typeof AnalyserNode !== "undefined") {
 			const orig = AnalyserNode.prototype.getFloatFrequencyData;
+			type GetFloatFrequencyDataArg = Parameters<typeof orig>[0];
 			AnalyserNode.prototype.getFloatFrequencyData = markNative(function (
 				this: AnalyserNode,
-				array: Float32Array,
+				array: GetFloatFrequencyDataArg,
 			) {
 				orig.call(this, array);
 				for (let i = 0; i < array.length; i++)
