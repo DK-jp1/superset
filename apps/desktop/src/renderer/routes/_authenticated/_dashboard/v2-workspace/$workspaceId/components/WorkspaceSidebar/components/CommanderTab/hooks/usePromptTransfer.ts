@@ -1776,14 +1776,13 @@ export function usePromptTransfer({
 		workspaceId,
 	]);
 
-	// S5.8 Phase 1: while an Auto Loop is running, mirror the current active
-	// tab into diagnostics and abort if it diverges from the arm-time tab.
-	// We deliberately scope this to autoRelayMode === "loop" and phases that
-	// can actually relay (anything other than idle/stopped) so manual mode
-	// and stopped loops don't churn state.
+	// S5.8 Phase 1: mirror current tab/slot/worker context into diagnostics
+	// while Auto Loop UI is selected. Abort behavior is still limited to
+	// phases that can actually relay, but the Diag panel must keep reflecting
+	// current binding state even after a loop is stopped.
 	useEffect(() => {
 		if (autoRelayMode !== "loop") return;
-		if (autoLoopPhase === "idle" || autoLoopPhase === "stopped") return;
+		const loopCanRelay = autoLoopPhase !== "idle" && autoLoopPhase !== "stopped";
 		const armed = activeTabIdAtArmRef.current;
 		const armedBrowserSlot = getBrowserSlotForTab(armed);
 		const currentBrowserSlot = getBrowserSlotForTab(currentActiveTabId);
@@ -1896,6 +1895,7 @@ export function usePromptTransfer({
 		// "changed" statically. We do NOT log "same" each poll — that
 		// would flood the event log.
 		if (
+			loopCanRelay &&
 			armed &&
 			currentActiveTabId &&
 			currentActiveTabId !== armed &&
@@ -1907,6 +1907,7 @@ export function usePromptTransfer({
 			);
 		}
 		if (
+			loopCanRelay &&
 			armed &&
 			currentActiveTabId &&
 			currentActiveTabId !== armed

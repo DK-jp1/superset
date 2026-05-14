@@ -3,6 +3,7 @@ import type { DoyDeckActiveTerminalInfo } from "renderer/stores/doydeck-worker-b
 import { useTerminalCallbacksStore } from "renderer/stores/tabs/terminal-callbacks";
 import { useTabsStore } from "renderer/stores/tabs/store";
 import type { Pane } from "renderer/stores/tabs/types";
+import { useShallow } from "zustand/react/shallow";
 
 export function getTerminalIdFromPane(pane: Pane | null | undefined): string | null {
 	if (!pane || pane.type !== "terminal") return null;
@@ -11,7 +12,7 @@ export function getTerminalIdFromPane(pane: Pane | null | undefined): string | n
 	).data?.terminalId;
 	return typeof terminalId === "string" && terminalId.trim()
 		? terminalId
-		: null;
+		: pane.id;
 }
 
 export function useActiveTerminal(): string | null {
@@ -34,25 +35,27 @@ export function useActiveTerminal(): string | null {
 export function useActiveTerminalInfo(): DoyDeckActiveTerminalInfo | null {
 	const { workspaceId } = useParams({ strict: false });
 
-	return useTabsStore((s) => {
-		if (!workspaceId) return null;
-		const tab = s.getActiveTab(workspaceId);
-		if (!tab) return null;
+	return useTabsStore(
+		useShallow((s) => {
+			if (!workspaceId) return null;
+			const tab = s.getActiveTab(workspaceId);
+			if (!tab) return null;
 
-		const focused = s.getFocusedPane(tab.id);
-		const pane =
-			focused?.type === "terminal"
-				? focused
-				: s.getPanesForTab(tab.id).find((p) => p.type === "terminal");
-		if (!pane) return null;
+			const focused = s.getFocusedPane(tab.id);
+			const pane =
+				focused?.type === "terminal"
+					? focused
+					: s.getPanesForTab(tab.id).find((p) => p.type === "terminal");
+			if (!pane) return null;
 
-		return {
-			workspaceId,
-			tabId: tab.id,
-			paneId: pane.id,
-			terminalId: getTerminalIdFromPane(pane),
-		};
-	});
+			return {
+				workspaceId,
+				tabId: tab.id,
+				paneId: pane.id,
+				terminalId: getTerminalIdFromPane(pane),
+			};
+		}),
+	);
 }
 
 export function getTerminalSelection(paneId: string): string {
