@@ -75,6 +75,7 @@ function V2WorkspacePage() {
 		openUrlTarget,
 		openUrlRequestId,
 	} = Route.useSearch();
+	const { workspaceId: routeWorkspaceId } = Route.useParams();
 	const { workspace } = useWorkspace();
 	const workspaceId = workspace.id;
 
@@ -247,6 +248,7 @@ function V2WorkspacePage() {
 					>
 						<WorkspaceSidebar
 							workspaceId={workspaceId}
+							routeWorkspaceId={routeWorkspaceId}
 							onSelectFile={openFilePane}
 							onSelectDiffFile={openDiffPane}
 							onOpenComment={openCommentPane}

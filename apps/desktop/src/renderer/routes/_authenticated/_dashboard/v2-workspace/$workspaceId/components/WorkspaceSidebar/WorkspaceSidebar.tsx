@@ -47,6 +47,7 @@ interface WorkspaceSidebarProps {
 	selectedFilePath?: string;
 	pendingReveal?: PendingReveal | null;
 	workspaceId: string;
+	routeWorkspaceId?: string;
 }
 
 function IconButton({
@@ -75,15 +76,24 @@ function IconButton({
 	);
 }
 
-function DoyDeckCommanderPlaceholder({ workspaceId }: { workspaceId: string }) {
+function DoyDeckCommanderPlaceholder({
+	workspaceId,
+	routeWorkspaceId,
+}: {
+	workspaceId: string;
+	routeWorkspaceId?: string;
+}) {
+	const displayedWorkspaceId = routeWorkspaceId || workspaceId;
 	const shortWorkspaceId =
-		workspaceId.length > 16
-			? `${workspaceId.slice(0, 8)}...${workspaceId.slice(-4)}`
-			: workspaceId;
+		displayedWorkspaceId.length > 16
+			? `${displayedWorkspaceId.slice(0, 8)}...${displayedWorkspaceId.slice(-4)}`
+			: displayedWorkspaceId;
 
 	return (
 		<section
 			data-testid="doydeck-commander-placeholder"
+			data-workspace-id={displayedWorkspaceId}
+			data-provider-workspace-id={workspaceId}
 			className="mx-2 mb-2 rounded-lg border border-blue-500/20 bg-blue-50/70 px-3 py-2.5 text-xs shadow-sm dark:bg-blue-950/20"
 		>
 			<div className="flex min-w-0 items-start justify-between gap-2">
@@ -123,6 +133,7 @@ export function WorkspaceSidebar({
 	selectedFilePath,
 	pendingReveal,
 	workspaceId,
+	routeWorkspaceId,
 }: WorkspaceSidebarProps) {
 	const collections = useCollections();
 	const localState = collections.v2WorkspaceLocalState.get(workspaceId);
@@ -215,7 +226,10 @@ export function WorkspaceSidebar({
 				onRetry={onRetry}
 				createPREnabled={CREATE_PR_BUTTON_ENABLED}
 			/>
-			<DoyDeckCommanderPlaceholder workspaceId={workspaceId} />
+			<DoyDeckCommanderPlaceholder
+				workspaceId={workspaceId}
+				routeWorkspaceId={routeWorkspaceId}
+			/>
 			<SidebarHeader
 				tabs={tabs}
 				activeTab={activeTab}

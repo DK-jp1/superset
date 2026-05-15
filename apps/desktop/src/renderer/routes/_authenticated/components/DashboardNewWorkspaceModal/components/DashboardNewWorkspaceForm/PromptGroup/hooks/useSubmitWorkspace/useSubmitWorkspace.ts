@@ -1,10 +1,12 @@
 import { toast } from "@superset/ui/sonner";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
+import { env } from "renderer/env.renderer";
 import { authClient } from "renderer/lib/auth-client";
 import { useLocalHostService } from "renderer/routes/_authenticated/providers/LocalHostServiceProvider";
 import type { NewWorkspacePromptContextApi } from "renderer/stores/new-workspace-prompt-context";
 import { useWorkspaceCreates } from "renderer/stores/workspace-creates";
+import { MOCK_ORG_ID } from "shared/constants";
 import { useDashboardNewWorkspaceDraft } from "../../../../../DashboardNewWorkspaceDraftContext";
 import type { WorkspaceCreateAgent } from "../../types";
 import type { UseUploadAttachmentsApi } from "../useUploadAttachments";
@@ -27,7 +29,9 @@ export function useSubmitWorkspace(
 	const { submit } = useWorkspaceCreates();
 	const { machineId } = useLocalHostService();
 	const { data: session } = authClient.useSession();
-	const activeOrganizationId = session?.session?.activeOrganizationId;
+	const activeOrganizationId =
+		session?.session?.activeOrganizationId ??
+		(env.SKIP_ENV_VALIDATION ? MOCK_ORG_ID : null);
 
 	return useCallback(async () => {
 		if (!projectId) {

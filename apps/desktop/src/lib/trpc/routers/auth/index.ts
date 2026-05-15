@@ -90,8 +90,14 @@ export const createAuthRouter = () => {
 					connectUrl.searchParams.set("provider", input.provider);
 					connectUrl.searchParams.set("state", state);
 					connectUrl.searchParams.set("protocol", PROTOCOL_SCHEME);
-					// Only send local_callback on Linux where deep links are unreliable
-					if (PLATFORM.IS_LINUX) {
+					// Dev builds can run beside the installed app, so macOS custom
+					// scheme ownership may point at another Superset instance.
+					// Keep the deep link, but also provide the local callback in dev.
+					const shouldSendLocalCallback =
+						PLATFORM.IS_LINUX ||
+						process.env.NODE_ENV === "development" ||
+						process.env.DOYDECK_DEV_MODE === "1";
+					if (shouldSendLocalCallback) {
 						connectUrl.searchParams.set(
 							"local_callback",
 							`http://127.0.0.1:${sharedEnv.DESKTOP_NOTIFICATIONS_PORT}/auth/callback`,

@@ -31,10 +31,6 @@ export function LocalHostServiceProvider({
 	const { mutate: startHostService } =
 		electronTrpc.hostServiceCoordinator.start.useMutation();
 
-	const activeOrganizationId = env.SKIP_ENV_VALIDATION
-		? MOCK_ORG_ID
-		: (session?.session?.activeOrganizationId ?? null);
-
 	const { data: organizations } = useLiveQuery(
 		(q) => q.from({ organizations: collections.organizations }),
 		[collections],
@@ -44,6 +40,11 @@ export function LocalHostServiceProvider({
 		() => organizations?.map((organization) => organization.id) ?? [],
 		[organizations],
 	);
+
+	const activeOrganizationId =
+		session?.session?.activeOrganizationId ??
+		organizationIds[0] ??
+		(env.SKIP_ENV_VALIDATION ? MOCK_ORG_ID : null);
 
 	useEffect(() => {
 		for (const organizationId of organizationIds) {

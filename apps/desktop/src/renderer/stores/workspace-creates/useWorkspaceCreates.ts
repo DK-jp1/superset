@@ -1,6 +1,7 @@
 import type { WorkspaceState } from "@superset/panes";
 import { useCallback } from "react";
 import { resolveHostUrl } from "renderer/hooks/host-service/useHostTargetUrl";
+import { env } from "renderer/env.renderer";
 import { authClient } from "renderer/lib/auth-client";
 import { getHostServiceClientByUrl } from "renderer/lib/host-service-client";
 import type { PaneViewerData } from "renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/types";
@@ -10,6 +11,7 @@ import {
 	isSidebarWorkspaceVisible,
 } from "renderer/routes/_authenticated/providers/CollectionsProvider/dashboardSidebarLocal";
 import { useLocalHostService } from "renderer/routes/_authenticated/providers/LocalHostServiceProvider";
+import { MOCK_ORG_ID } from "shared/constants";
 import { appendLaunchesToPaneLayout } from "./appendLaunchesToPaneLayout";
 import {
 	type InFlightEntry,
@@ -37,7 +39,9 @@ export function useWorkspaceCreates(): UseWorkspaceCreatesApi {
 	const entries = useWorkspaceCreatesStore((s) => s.entries);
 	const { machineId, activeHostUrl } = useLocalHostService();
 	const { data: session } = authClient.useSession();
-	const organizationId = session?.session?.activeOrganizationId;
+	const organizationId =
+		session?.session?.activeOrganizationId ??
+		(env.SKIP_ENV_VALIDATION ? MOCK_ORG_ID : null);
 	const collections = useCollections();
 
 	const dispatch = useCallback(
