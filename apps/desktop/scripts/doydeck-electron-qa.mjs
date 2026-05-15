@@ -42,6 +42,7 @@ let electronApp;
 let firstWindow;
 let runtimeSnapshot = null;
 let windowSnapshot = null;
+let commanderPlaceholderSnapshot = null;
 
 const safeDevEnv = {
 	NODE_ENV: "production",
@@ -78,6 +79,15 @@ async function capture(page, name) {
 	screenshots.push(path);
 	record("PASS", "Screenshot captured", rel(path));
 	return path;
+}
+
+async function locatorVisible(locator, timeout = 3_000) {
+	try {
+		await locator.waitFor({ state: "visible", timeout });
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 function resultStatus() {
@@ -177,6 +187,7 @@ function writeJson() {
 				pageErrors,
 				shellRuntimeHealth: shellRuntimeHealth(),
 				topErrorSummary: topErrorSummary(),
+				commanderPlaceholder: commanderPlaceholderSnapshot,
 			},
 			null,
 			2,
@@ -202,6 +213,11 @@ function writeReport() {
 	lines.push(`- renderer artifact: \`${rendererEntry}\``);
 	lines.push(`- report: \`${reportPath}\``);
 	lines.push(`- console/page errors: \`${consoleErrorsPath}\``);
+	lines.push(
+		`- Commander placeholder visible: ${
+			commanderPlaceholderSnapshot?.visible ? "yes" : "no"
+		}`,
+	);
 
 	lines.push("", "## Safe-Dev Env", "");
 	for (const [key, value] of Object.entries(safeDevEnv)) {
@@ -222,6 +238,19 @@ function writeReport() {
 		for (const [key, value] of Object.entries(windowSnapshot)) {
 			lines.push(`- ${key}: \`${value ?? "(unset)"}\``);
 		}
+	} else {
+		lines.push("- not captured");
+	}
+
+	lines.push("", "## Commander Placeholder", "");
+	if (commanderPlaceholderSnapshot) {
+		lines.push(
+			`- visible: ${commanderPlaceholderSnapshot.visible ? "yes" : "no"}`,
+		);
+		lines.push(
+			`- text preview: \`${commanderPlaceholderSnapshot.textPreview || "(none)"}\``,
+		);
+		lines.push(`- note: ${commanderPlaceholderSnapshot.note}`);
 	} else {
 		lines.push("- not captured");
 	}
@@ -267,7 +296,8 @@ function writeReport() {
 	}
 
 	lines.push("", "## Notes", "");
-	lines.push("- This is a launch-only QA. Commander, Browser AI, Auto Loop, Worker binding, and Handoff Ledger are not checked in S6.3.");
+	lines.push("- This is a launch-only QA. Browser AI, Auto Loop, Worker binding, and Handoff Ledger are not checked in S6.4.");
+	lines.push("- S6.4 checks only whether the minimal Commander placeholder is reachable in the latest-main shell. If the clean profile remains on sign-in, placeholder visibility is reported as no/unknown rather than failing app launch.");
 	lines.push("- Runtime directories live under `tmp/doydeck-electron-qa/runtime` to avoid the normal Superset profile and the existing DoyDeck safe-dev profile.");
 	lines.push("- Console/page errors are recorded separately as shell runtime health. They do not fail this launch-only harness unless the app/window/screenshot path itself fails.");
 
@@ -406,6 +436,32 @@ try {
 	} else {
 		record("WARN", "latest-main shell visible", "Sign-in shell text was not confirmed");
 	}
+
+	const commanderPlaceholder = firstWindow.getByTestId(
+		"doydeck-commander-placeholder",
+	);
+	const commanderPlaceholderVisible = await locatorVisible(
+		commanderPlaceholder,
+		3_000,
+	);
+	const commanderPlaceholderText = commanderPlaceholderVisible
+		? await commanderPlaceholder
+				.innerText({ timeout: 2_000 })
+				.then((text) => text.replace(/\s+/g, " ").trim().slice(0, 300))
+				.catch(() => "")
+		: "";
+	commanderPlaceholderSnapshot = {
+		visible: commanderPlaceholderVisible,
+		textPreview: commanderPlaceholderText,
+		note: commanderPlaceholderVisible
+			? "Minimal Commander placeholder rendered in the right WorkspaceSidebar."
+			: "Placeholder was not visible in this launch-only run. The clean QA profile may still be on sign-in or outside a v2 workspace route.",
+	};
+	record(
+		commanderPlaceholderVisible ? "PASS" : "UNKNOWN",
+		"Commander placeholder visible",
+		commanderPlaceholderSnapshot.note,
+	);
 
 	await capture(firstWindow, "00-startup");
 	record(

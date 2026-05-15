@@ -801,3 +801,81 @@ Current classification:
 This is enough to continue with a minimal Commander placeholder only if the
 work stays small and the warning remains visible in reports. It is not enough
 to call the latest-main shell healthy.
+
+## S6.4 Commander Placeholder Minimal Port
+
+S6.4 adds a deliberately small DoyDeck Commander placeholder inside the latest
+Superset v2 workspace right sidebar. This is not a Commander port. It is a
+surface check that proves the integration branch can place DoyDeck UI inside
+`WorkspaceSidebar` without pulling in Browser AI, Auto Loop, Worker binding, or
+Handoff Ledger.
+
+### Implementation Location
+
+- Component surface:
+  `apps/desktop/src/renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/components/WorkspaceSidebar/WorkspaceSidebar.tsx`
+- QA harness:
+  `apps/desktop/scripts/doydeck-electron-qa.mjs`
+
+The placeholder renders under `PRActionHeader` and above the existing sidebar
+tabs. It does not add a new persisted sidebar tab, does not change the
+`sidebarState.activeTab` schema, and does not modify existing Files / Changes /
+Review behavior.
+
+Displayed text:
+
+```text
+DoyDeck Commander
+Latest integration PoC
+Browser AI / Worker / Handoff are not ported yet.
+Workspace <workspaceId>
+```
+
+The element has a stable test id:
+
+```text
+doydeck-commander-placeholder
+```
+
+### Electron QA Coverage
+
+`electron-qa:doydeck` now records a Commander placeholder section:
+
+- `Commander placeholder visible: yes/no`
+- text preview
+- visibility note
+
+The launch-only QA still starts from a clean safe-dev profile. If that profile
+lands on sign-in instead of a v2 workspace route, placeholder visibility is
+reported as not visible/unknown rather than failing the app launch. This keeps
+S6.4 honest: the placeholder is compiled into the workspace sidebar, but the
+latest-main shell health warning from S6.3.1 remains visible until a workspace
+route is available in the launch-only harness.
+
+### Result
+
+S6.4 is a minimal UI placement step only:
+
+- Commander placeholder code is present in the right WorkspaceSidebar.
+- Existing sidebar tabs and PR action header remain unchanged.
+- Browser AI, Worker, Auto Loop, Handoff Ledger, stealth preload, and Real
+  Agent QA remain out of scope.
+
+Validation:
+
+- `compile:app`: passed.
+- `electron-qa:doydeck`: launch-only result passed.
+- screenshot artifact: `tmp/doydeck-electron-qa/screenshots/00-startup.png`.
+- Commander placeholder visibility in launch-only QA: not visible / unknown
+  because the clean QA profile still lands on `#/sign-in`.
+- shell runtime health remains `WARN` with the same React `#185` and
+  unauthenticated auth-token `401` signals recorded in S6.3.1.
+
+### Next Candidate
+
+The next smallest useful step is one of:
+
+1. make the launch-only QA reach a v2 workspace route with safe fixture data so
+   the placeholder can be screenshot-confirmed automatically, or
+2. port a single Browser AI panel placeholder below the Commander placeholder,
+   still without webview injection or Auto Loop.

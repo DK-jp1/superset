@@ -75,6 +75,45 @@ function IconButton({
 	);
 }
 
+function DoyDeckCommanderPlaceholder({ workspaceId }: { workspaceId: string }) {
+	const shortWorkspaceId =
+		workspaceId.length > 16
+			? `${workspaceId.slice(0, 8)}...${workspaceId.slice(-4)}`
+			: workspaceId;
+
+	return (
+		<section
+			data-testid="doydeck-commander-placeholder"
+			className="mx-2 mb-2 rounded-lg border border-blue-500/20 bg-blue-50/70 px-3 py-2.5 text-xs shadow-sm dark:bg-blue-950/20"
+		>
+			<div className="flex min-w-0 items-start justify-between gap-2">
+				<div className="min-w-0">
+					<div className="truncate font-semibold text-foreground">
+						DoyDeck Commander
+					</div>
+					<div className="mt-0.5 text-[11px] font-medium text-blue-700 dark:text-blue-300">
+						Latest integration PoC
+					</div>
+				</div>
+				<span className="shrink-0 rounded-md border border-blue-500/25 bg-background/70 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:text-blue-300">
+					placeholder
+				</span>
+			</div>
+			<p className="mt-2 text-[11px] leading-4 text-muted-foreground">
+				Browser AI / Worker / Handoff are not ported yet.
+			</p>
+			<div className="mt-2 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
+				<span className="shrink-0 font-medium uppercase tracking-wide">
+					Workspace
+				</span>
+				<code className="min-w-0 truncate rounded bg-background/70 px-1 py-0.5 font-mono">
+					{shortWorkspaceId || "unknown"}
+				</code>
+			</div>
+		</section>
+	);
+}
+
 export function WorkspaceSidebar({
 	onSelectFile,
 	onSelectDiffFile,
@@ -176,6 +215,7 @@ export function WorkspaceSidebar({
 				onRetry={onRetry}
 				createPREnabled={CREATE_PR_BUTTON_ENABLED}
 			/>
+			<DoyDeckCommanderPlaceholder workspaceId={workspaceId} />
 			<SidebarHeader
 				tabs={tabs}
 				activeTab={activeTab}
