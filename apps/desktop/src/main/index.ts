@@ -28,6 +28,11 @@ import { initAppState } from "./lib/app-state";
 import { requestAppleEventsAccess } from "./lib/apple-events-permission";
 import { setupAutoUpdater } from "./lib/auto-updater";
 import { resolveDevWorkspaceName } from "./lib/dev-workspace-name";
+import {
+	configureDoyDeckSafeDevUserData,
+	logDoyDeckSafeDevRuntime,
+	shouldSkipAgentHooks,
+} from "./lib/doydeck-safe-dev";
 import { setWorkspaceDockIcon } from "./lib/dock-icon";
 import { loadWebviewBrowserExtension } from "./lib/extensions";
 import { getHostServiceCoordinator } from "./lib/host-service-coordinator";
@@ -52,6 +57,8 @@ import { MainWindow } from "./windows/main";
 
 console.log("[main] Local database ready:", !!localDb);
 const IS_DEV = process.env.NODE_ENV === "development";
+
+configureDoyDeckSafeDevUserData();
 
 void applyShellEnvToProcess().catch((error) => {
 	console.error("[main] Failed to apply shell environment:", error);
@@ -332,6 +339,7 @@ if (!gotTheLock) {
 
 	(async () => {
 		await app.whenReady();
+		logDoyDeckSafeDevRuntime();
 		registerWithMacOSNotificationCenter();
 		requestAppleEventsAccess();
 		requestLocalNetworkAccess();
@@ -393,10 +401,14 @@ if (!gotTheLock) {
 		await reconcileDaemonSessions();
 		prewarmTerminalRuntime();
 
-		try {
-			setupAgentHooks();
-		} catch (error) {
-			console.error("[main] Failed to set up agent hooks:", error);
+		if (shouldSkipAgentHooks()) {
+			console.log("[main] Skipping agent hook setup by environment flag");
+		} else {
+			try {
+				setupAgentHooks();
+			} catch (error) {
+				console.error("[main] Failed to set up agent hooks:", error);
+			}
 		}
 
 		// Discover and adopt host-services that survived a previous quit

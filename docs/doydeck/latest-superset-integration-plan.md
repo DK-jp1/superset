@@ -544,3 +544,104 @@ At the time the S6.0 report was first written, the integration worktree only
 contained this investigation document. After S6.1, dependency/build artifacts
 exist only as ignored files (`node_modules`, `dist`, generated icons). The only
 tracked change remains this document.
+
+## S6.2 Safe-Dev Isolation Minimal Port
+
+S6.2 ports only the launch isolation required to run a DoyDeck-flavoured dev
+profile on top of latest Superset. Commander, Browser AI, Auto Loop, Handoff
+Ledger, and QA harnesses are intentionally not ported in this step.
+
+### Added Scripts And Helpers
+
+- `apps/desktop/package.json`
+  - added `dev:doydeck-safe`
+- `apps/desktop/scripts/dev-doydeck-safe.sh`
+  - sets the DoyDeck safe-dev environment and then runs the existing
+    desktop dev command
+- `apps/desktop/src/main/lib/doydeck-safe-dev.ts`
+  - applies Electron `userData` isolation before app readiness
+  - reports the runtime isolation values after `app.whenReady()`
+  - centralizes the agent-hook skip check
+
+### Safe-Dev Environment
+
+The wrapper provides defaults while still allowing callers to override them:
+
+- `DOYDECK_DEV_MODE=1`
+- `SUPERSET_WORKSPACE_NAME=doydeck-dev`
+- `SUPERSET_HOME_DIR=$HOME/.doydeck-superset-dev`
+- `DOYDECK_SUPERSET_USER_DATA_DIR=$HOME/Library/Application Support/Superset-DoyDeck-Dev`
+  on macOS
+- `SUPERSET_SKIP_AGENT_HOOKS=1`
+- `DOYDECK_SKIP_AGENT_HOOKS=1`
+- `SKIP_ENV_VALIDATION=1`
+- empty `NEXT_PUBLIC_POSTHOG_KEY` and `SENTRY_DSN_DESKTOP` unless explicitly set
+
+### UserData And Home Isolation
+
+The dev launch was tested with temporary paths to avoid touching the normal
+Superset or existing DoyDeck safe-dev state:
+
+```text
+SUPERSET_HOME_DIR=/tmp/doydeck-s6.2-home
+DOYDECK_SUPERSET_USER_DATA_DIR=/tmp/doydeck-s6.2-user-data
+SUPERSET_WORKSPACE_NAME=doydeck-s6-2
+```
+
+Runtime logs confirmed:
+
+```text
+[local-db] Database initialized at: /tmp/doydeck-s6.2-home/local.db
+[doydeck-safe-dev] Electron userData path: /tmp/doydeck-s6.2-user-data
+[doydeck-safe-dev] Runtime isolation: {
+  electronUserDataPath: '/tmp/doydeck-s6.2-user-data',
+  supersetHomeDir: '/tmp/doydeck-s6.2-home',
+  workspaceName: 'doydeck-s6-2',
+  agentHooksSkipped: true,
+  posthogDisabled: true,
+  sentryDisabled: true
+}
+[main] Skipping agent hook setup by environment flag
+```
+
+This confirms the minimal safe-dev launch profile can keep Electron user data,
+local DB/app-state, workspace name, and agent hooks separate from the default
+Superset profile. The process was intentionally terminated after the isolation
+logs appeared; the `esbuild` watcher stack trace in that shutdown is not being
+treated as a launch blocker.
+
+### Terminal Host Isolation
+
+The two terminal host surfaces now prefer explicit `SUPERSET_HOME_DIR` before
+falling back to the normal Superset home:
+
+- `apps/desktop/src/main/lib/terminal-host/client.ts`
+- `apps/desktop/src/main/terminal-host/index.ts`
+
+This keeps `terminal-host.sock` and `terminal-host.token` under the safe-dev
+home when the wrapper is used.
+
+### Validation
+
+```text
+bash -n apps/desktop/scripts/dev-doydeck-safe.sh
+git diff --check
+NODE_OPTIONS=--max-old-space-size=8192 bun run --cwd apps/desktop compile:app
+```
+
+All completed successfully. `compile:app` ended with:
+
+```text
+[check-pty-daemon-bundle] OK: 5 marker(s) present in dist/main/pty-daemon.js
+```
+
+`bun run --cwd apps/desktop dev:doydeck-safe` reached Electron runtime
+isolation logging using the temporary safe-dev paths above.
+
+### Remaining Scope
+
+S6.2 does not make latest Superset a usable DoyDeck app yet. The next smallest
+portable feature is a launch-only Electron QA or a Commander placeholder with
+stable `data-testid` hooks. Browser AI, Auto Loop, Worker binding, Handoff
+Ledger, stealth/preload changes, and Real Agent QA should remain out of scope
+until the shell integration is verified.

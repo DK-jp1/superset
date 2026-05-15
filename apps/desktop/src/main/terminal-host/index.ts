@@ -55,9 +55,10 @@ import { TerminalHost } from "./terminal-host";
 
 const DAEMON_VERSION = "1.0.0";
 
-// SUPERSET_DIR_NAME is imported from shared/constants for multi-worktree support
-// This allows workspace-specific home directories (e.g., ~/.superset-my-feature)
-const SUPERSET_HOME_DIR = join(homedir(), SUPERSET_DIR_NAME);
+// Prefer SUPERSET_HOME_DIR when explicitly provided by a safe dev launcher.
+// Fall back to the workspace-scoped default for normal Superset behavior.
+const SUPERSET_HOME_DIR =
+	process.env.SUPERSET_HOME_DIR || join(homedir(), SUPERSET_DIR_NAME);
 
 // Socket and token paths
 const SOCKET_PATH = join(SUPERSET_HOME_DIR, "terminal-host.sock");
