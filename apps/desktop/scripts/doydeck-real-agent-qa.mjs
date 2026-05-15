@@ -785,6 +785,10 @@ function parseDiagnosticsSnapshot(text) {
 		"Bridge:",
 	]);
 	const commanderRuntimeBridge = matchField("Bridge", [
+		"Commander slots:",
+		"Registry slot:",
+	]);
+	const commanderRuntimeSlots = matchField("Commander slots", [
 		"Registry slot:",
 	]);
 	const browserSlotRegistrySlotKey = matchField("Registry slot", [
@@ -860,6 +864,7 @@ function parseDiagnosticsSnapshot(text) {
 		commanderRuntimeUsableWidth,
 		commanderRuntimeVisualStatus,
 		commanderRuntimeBridge,
+		commanderRuntimeSlots,
 		commanderRuntimeSlotKey,
 		commanderRuntimeUrl,
 		commanderRuntimeReason,
@@ -1538,6 +1543,10 @@ async function readBrowserAiState(page, label, screenshotPath = "") {
 			commanderRuntimeBridge: fieldText(
 				'[data-testid="auto-loop-commander-runtime-bridge"]',
 				"Bridge",
+			),
+			commanderRuntimeSlots: fieldText(
+				'[data-testid="auto-loop-commander-runtime-slot-count"]',
+				"Commander slots",
 			),
 			commanderRuntimeSlotKey: fieldText(
 				'[data-testid="auto-loop-commander-runtime-slot-key"]',
@@ -2556,7 +2565,7 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 	} else {
 		for (const snapshot of browserAiStateSnapshots) {
 			body.push(
-				`- ${snapshot.label}: provider=\`${snapshot.providerStatus || "(empty)"}\`; url=\`${snapshot.currentUrl || "(blank)"}\`; webContentsId=\`${snapshot.webContentsId ?? "(unknown)"}\`; webviewCount=\`${snapshot.webviewCount}\`; autoMode=\`${snapshot.autoMode || "(empty)"}\`; usableWidth=\`${snapshot.usableWidth ?? 0}px\`; visual=\`${snapshot.visualStatus || "UNKNOWN"}\`; browserSlotKey=\`${snapshot.browserSlotKey || "(not visible)"}\`; browserSlotMode=\`${snapshot.browserSlotMode || "(not visible)"}\`; browserSlotRegistry=\`${snapshot.browserSlotRegistryStatus || "(not visible)"}\`; registryWebContentsId=\`${snapshot.browserSlotRegistryWebContentsId || "(not visible)"}\`; registryReason=\`${snapshot.browserSlotRegistryReason || "(not visible)"}\`; runtimeOwner=\`${snapshot.browserRuntimeOwner || "(not visible)"}\`; commanderRuntime=\`${snapshot.commanderRuntimeStatus || "(not visible)"}\`; commanderSlot=\`${snapshot.commanderRuntimeSlotKey || "(not visible)"}\`; commanderWebContentsId=\`${snapshot.commanderRuntimeWebContentsId || "(not visible)"}\`; commanderProvider=\`${snapshot.commanderRuntimeProvider || "(not visible)"}\`; commanderUrl=\`${snapshot.commanderRuntimeUrl || "(not visible)"}\`; commanderWidth=\`${snapshot.commanderRuntimeUsableWidth || "(not visible)"}\`; commanderVisual=\`${snapshot.commanderRuntimeVisualStatus || "(not visible)"}\`; cleanup performed=\`${snapshot.cleanupPerformed}\``,
+				`- ${snapshot.label}: provider=\`${snapshot.providerStatus || "(empty)"}\`; url=\`${snapshot.currentUrl || "(blank)"}\`; webContentsId=\`${snapshot.webContentsId ?? "(unknown)"}\`; webviewCount=\`${snapshot.webviewCount}\`; autoMode=\`${snapshot.autoMode || "(empty)"}\`; usableWidth=\`${snapshot.usableWidth ?? 0}px\`; visual=\`${snapshot.visualStatus || "UNKNOWN"}\`; browserSlotKey=\`${snapshot.browserSlotKey || "(not visible)"}\`; browserSlotMode=\`${snapshot.browserSlotMode || "(not visible)"}\`; browserSlotRegistry=\`${snapshot.browserSlotRegistryStatus || "(not visible)"}\`; registryWebContentsId=\`${snapshot.browserSlotRegistryWebContentsId || "(not visible)"}\`; registryReason=\`${snapshot.browserSlotRegistryReason || "(not visible)"}\`; runtimeOwner=\`${snapshot.browserRuntimeOwner || "(not visible)"}\`; commanderRuntime=\`${snapshot.commanderRuntimeStatus || "(not visible)"}\`; commanderSlot=\`${snapshot.commanderRuntimeSlotKey || "(not visible)"}\`; commanderSlots=\`${snapshot.commanderRuntimeSlots || "(not visible)"}\`; commanderWebContentsId=\`${snapshot.commanderRuntimeWebContentsId || "(not visible)"}\`; commanderProvider=\`${snapshot.commanderRuntimeProvider || "(not visible)"}\`; commanderUrl=\`${snapshot.commanderRuntimeUrl || "(not visible)"}\`; commanderWidth=\`${snapshot.commanderRuntimeUsableWidth || "(not visible)"}\`; commanderVisual=\`${snapshot.commanderRuntimeVisualStatus || "(not visible)"}\`; cleanup performed=\`${snapshot.cleanupPerformed}\``,
 			);
 		}
 	}
@@ -2576,7 +2585,7 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 	} else {
 		for (const snapshot of browserAiStateSnapshots) {
 			body.push(
-				`- ${snapshot.label}: owner=\`${snapshot.browserRuntimeOwner || "(not visible)"}\`; status=\`${snapshot.commanderRuntimeStatus || "(not visible)"}\`; slotKey=\`${snapshot.commanderRuntimeSlotKey || "(not visible)"}\`; webContentsId=\`${snapshot.commanderRuntimeWebContentsId || "(not visible)"}\`; provider=\`${snapshot.commanderRuntimeProvider || "(not visible)"}\`; url=\`${snapshot.commanderRuntimeUrl || "(not visible)"}\`; usableWidth=\`${snapshot.commanderRuntimeUsableWidth || "(not visible)"}\`; visual=\`${snapshot.commanderRuntimeVisualStatus || "(not visible)"}\`; bridge=\`${snapshot.commanderRuntimeBridge || "(not visible)"}\`; registryStatus=\`${snapshot.browserSlotRegistryStatus || "(not visible)"}\`; registryReason=\`${snapshot.browserSlotRegistryReason || "(not visible)"}\``,
+				`- ${snapshot.label}: owner=\`${snapshot.browserRuntimeOwner || "(not visible)"}\`; status=\`${snapshot.commanderRuntimeStatus || "(not visible)"}\`; slotKey=\`${snapshot.commanderRuntimeSlotKey || "(not visible)"}\`; slots=\`${snapshot.commanderRuntimeSlots || "(not visible)"}\`; webContentsId=\`${snapshot.commanderRuntimeWebContentsId || "(not visible)"}\`; provider=\`${snapshot.commanderRuntimeProvider || "(not visible)"}\`; url=\`${snapshot.commanderRuntimeUrl || "(not visible)"}\`; usableWidth=\`${snapshot.commanderRuntimeUsableWidth || "(not visible)"}\`; visual=\`${snapshot.commanderRuntimeVisualStatus || "(not visible)"}\`; bridge=\`${snapshot.commanderRuntimeBridge || "(not visible)"}\`; registryStatus=\`${snapshot.browserSlotRegistryStatus || "(not visible)"}\`; registryReason=\`${snapshot.browserSlotRegistryReason || "(not visible)"}\``,
 			);
 		}
 	}
@@ -2644,7 +2653,7 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 				? `; slotRegistry=\`${item.parsed.browserSlotRegistryStatus}\`; registrySlot=\`${item.parsed.browserSlotRegistrySlotKey || "(unknown)"}\`; resolvedPane=\`${item.parsed.browserSlotRegistryResolvedPaneId || "(unknown)"}\`; registryReason=\`${item.parsed.browserSlotRegistryReason || "(unknown)"}\``
 				: "";
 			const commanderSummary = item.parsed?.browserRuntimeOwner
-				? `; runtimeOwner=\`${item.parsed.browserRuntimeOwner}\`; commanderRuntime=\`${item.parsed.commanderRuntimeStatus || "(unknown)"}\`; commanderSlot=\`${item.parsed.commanderRuntimeSlotKey || "(unknown)"}\`; commanderWebContentsId=\`${item.parsed.commanderRuntimeWebContentsId || "(unknown)"}\`; commanderProvider=\`${item.parsed.commanderRuntimeProvider || "(unknown)"}\`; commanderVisual=\`${item.parsed.commanderRuntimeVisualStatus || "(unknown)"}\``
+				? `; runtimeOwner=\`${item.parsed.browserRuntimeOwner}\`; commanderRuntime=\`${item.parsed.commanderRuntimeStatus || "(unknown)"}\`; commanderSlot=\`${item.parsed.commanderRuntimeSlotKey || "(unknown)"}\`; commanderSlots=\`${item.parsed.commanderRuntimeSlots || "(unknown)"}\`; commanderWebContentsId=\`${item.parsed.commanderRuntimeWebContentsId || "(unknown)"}\`; commanderProvider=\`${item.parsed.commanderRuntimeProvider || "(unknown)"}\`; commanderVisual=\`${item.parsed.commanderRuntimeVisualStatus || "(unknown)"}\``
 				: "";
 			body.push(`- ${item.label}${slotSummary}${registrySummary}${commanderSummary}: ${item.text.replace(/\\s+/g, " ").trim().slice(0, 500) || "(empty)"}`);
 		}

@@ -643,6 +643,15 @@ export function CommanderHelperBar({
 										? "available"
 										: "unavailable"}
 								</span>
+								<span data-testid="auto-loop-commander-runtime-slot-count">
+									Commander slots:{" "}
+									{typeof autoLoopDiagnostics.commanderRuntimeSlotCount ===
+										"number" &&
+									typeof autoLoopDiagnostics.commanderRuntimeMaxSlots ===
+										"number"
+										? `${autoLoopDiagnostics.commanderRuntimeSlotCount}/${autoLoopDiagnostics.commanderRuntimeMaxSlots}`
+										: "-"}
+								</span>
 								<span
 									className="break-all min-[460px]:col-span-2"
 									data-testid="auto-loop-browser-slot-registry-slot-key"
@@ -738,8 +747,7 @@ export function CommanderHelperBar({
 									{autoLoopDiagnostics.workerBindingReason || "-"}
 								</span>
 								<span className="text-foreground/60 min-[460px]:col-span-2">
-									Browser AI: shared webview (S5.10 Phase 1; per-tab slot
-									pending S5.7 Phase 2)
+									Browser AI: Commander per-tab slots, one visible webview
 								</span>
 							</div>
 							{autoLoopDiagnostics.recentEvents.length > 0 && (

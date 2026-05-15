@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "@superset/ui/sonner";
 import {
 	COMMANDER_BROWSER_AI_PANE_ID,
-	CURRENT_BROWSER_SLOT_MODE,
+	COMMANDER_BROWSER_SLOT_MODE,
 	createBrowserSlotIdentity,
 	createBrowserSlotKey,
 	type BrowserSlotMode,
@@ -243,6 +243,8 @@ export type AutoLoopDiagnostics = {
 	commanderRuntimeUsableWidth: number | null;
 	commanderRuntimeVisualStatus: "PASS" | "NEEDS_FIX" | "UNKNOWN";
 	commanderRuntimeBridgeAvailable: boolean;
+	commanderRuntimeSlotCount: number | null;
+	commanderRuntimeMaxSlots: number | null;
 	activeTerminalPaneId: string | null;
 	activeTerminalId: string | null;
 	boundWorkerPaneId: string | null;
@@ -322,7 +324,7 @@ const EMPTY_AUTO_LOOP_DIAGNOSTICS: AutoLoopDiagnostics = {
 	currentBrowserSlotKey: null,
 	browserSlotWorkspaceId: null,
 	browserSlotPaneId: null,
-	browserSlotMode: CURRENT_BROWSER_SLOT_MODE,
+	browserSlotMode: COMMANDER_BROWSER_SLOT_MODE,
 	browserSlotRegistryStatus: "unknown",
 	browserSlotRegistryReason: null,
 	browserSlotRegistryPaneId: null,
@@ -339,6 +341,8 @@ const EMPTY_AUTO_LOOP_DIAGNOSTICS: AutoLoopDiagnostics = {
 	commanderRuntimeUsableWidth: null,
 	commanderRuntimeVisualStatus: "UNKNOWN",
 	commanderRuntimeBridgeAvailable: false,
+	commanderRuntimeSlotCount: null,
+	commanderRuntimeMaxSlots: null,
 	activeTerminalPaneId: null,
 	activeTerminalId: null,
 	boundWorkerPaneId: null,
@@ -1806,7 +1810,7 @@ export function usePromptTransfer({
 			currentBrowserSlotKey: armedBrowserSlot.key,
 			browserSlotWorkspaceId: armedBrowserSlot.identity?.workspaceId ?? null,
 			browserSlotPaneId: COMMANDER_BROWSER_AI_PANE_ID,
-			browserSlotMode: CURRENT_BROWSER_SLOT_MODE,
+			browserSlotMode: commanderRuntime.browserSlotMode,
 			browserSlotRegistryStatus: armedSlotDiagnostics.status,
 			browserSlotRegistryReason: armedSlotDiagnostics.reason,
 			browserSlotRegistryPaneId: armedSlotDiagnostics.paneId,
@@ -1825,6 +1829,8 @@ export function usePromptTransfer({
 			commanderRuntimeUsableWidth: commanderRuntime.usableWidth,
 			commanderRuntimeVisualStatus: commanderRuntime.visualStatus,
 			commanderRuntimeBridgeAvailable: commanderRuntime.bridgeAvailable,
+			commanderRuntimeSlotCount: commanderRuntime.slotCount,
+			commanderRuntimeMaxSlots: commanderRuntime.maxSlotCount,
 			activeTerminalPaneId: armedWorkerBinding.activeTerminalPaneId,
 			activeTerminalId: armedWorkerBinding.activeTerminalId,
 			boundWorkerPaneId: armedWorkerBinding.boundWorkerPaneId,
@@ -1927,6 +1933,9 @@ export function usePromptTransfer({
 					currentCommanderRuntime.visualStatus &&
 				prev.commanderRuntimeBridgeAvailable ===
 					currentCommanderRuntime.bridgeAvailable &&
+				prev.commanderRuntimeSlotCount === currentCommanderRuntime.slotCount &&
+				prev.commanderRuntimeMaxSlots ===
+					currentCommanderRuntime.maxSlotCount &&
 				prev.activeTerminalPaneId === workerBinding.activeTerminalPaneId &&
 				prev.activeTerminalId === workerBinding.activeTerminalId &&
 				prev.boundWorkerPaneId === workerBinding.boundWorkerPaneId &&
@@ -1955,7 +1964,7 @@ export function usePromptTransfer({
 					armedBrowserSlot.identity?.workspaceId ??
 					null,
 				browserSlotPaneId: COMMANDER_BROWSER_AI_PANE_ID,
-				browserSlotMode: CURRENT_BROWSER_SLOT_MODE,
+				browserSlotMode: currentCommanderRuntime.browserSlotMode,
 				browserSlotRegistryStatus: currentSlotDiagnostics.status,
 				browserSlotRegistryReason: currentSlotDiagnostics.reason,
 				browserSlotRegistryPaneId: currentSlotDiagnostics.paneId,
@@ -1977,6 +1986,8 @@ export function usePromptTransfer({
 				commanderRuntimeVisualStatus: currentCommanderRuntime.visualStatus,
 				commanderRuntimeBridgeAvailable:
 					currentCommanderRuntime.bridgeAvailable,
+				commanderRuntimeSlotCount: currentCommanderRuntime.slotCount,
+				commanderRuntimeMaxSlots: currentCommanderRuntime.maxSlotCount,
 				activeTerminalPaneId: workerBinding.activeTerminalPaneId,
 				activeTerminalId: workerBinding.activeTerminalId,
 				boundWorkerPaneId: workerBinding.boundWorkerPaneId,

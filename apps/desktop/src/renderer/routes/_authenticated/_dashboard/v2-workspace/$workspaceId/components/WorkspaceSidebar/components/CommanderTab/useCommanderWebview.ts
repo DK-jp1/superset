@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { requestDoyDeckDropdownClose } from "renderer/stores/doydeck-dropdown-close-events";
 import {
+	buildCommanderBrowserSlotKey,
 	buildCommanderBrowserRuntimeSnapshot,
 	type CommanderBrowserRuntimeSnapshot,
 } from "./commander-browser-runtime";
@@ -13,7 +14,83 @@ interface WebviewState {
 	pageTitle: string;
 }
 
-let parkedWebview: Electron.WebviewTag | null = null;
+const MAX_COMMANDER_BROWSER_SLOTS = 5;
+
+type CommanderBrowserSlot = {
+	key: string;
+	webview: Electron.WebviewTag;
+	workspaceId: string | null | undefined;
+	activeTabId: string | null | undefined;
+	createdAt: number;
+	lastUsedAt: number;
+};
+
+const commanderBrowserSlots = new Map<string, CommanderBrowserSlot>();
+
+function createCommanderBrowserWebview(): Electron.WebviewTag {
+	const wv = document.createElement("webview") as Electron.WebviewTag;
+	wv.setAttribute("partition", "persist:superset");
+	wv.style.width = "100%";
+	wv.style.height = "100%";
+	wv.src = "about:blank";
+	return wv;
+}
+
+function readWebviewState(wv: Electron.WebviewTag): WebviewState {
+	return {
+		currentUrl: wv.getURL(),
+		isLoading: false,
+		canGoBack: wv.canGoBack(),
+		canGoForward: wv.canGoForward(),
+		pageTitle: wv.getTitle(),
+	};
+}
+
+function detachWebview(wv: Electron.WebviewTag) {
+	const parent = wv.parentElement;
+	if (parent) parent.removeChild(wv);
+}
+
+function ensureCommanderBrowserSlot({
+	slotKey,
+	workspaceId,
+	activeTabId,
+}: {
+	slotKey: string;
+	workspaceId?: string | null;
+	activeTabId?: string | null;
+}): CommanderBrowserSlot {
+	const now = Date.now();
+	const existing = commanderBrowserSlots.get(slotKey);
+	if (existing) {
+		existing.workspaceId = workspaceId;
+		existing.activeTabId = activeTabId;
+		existing.lastUsedAt = now;
+		return existing;
+	}
+	const slot: CommanderBrowserSlot = {
+		key: slotKey,
+		webview: createCommanderBrowserWebview(),
+		workspaceId,
+		activeTabId,
+		createdAt: now,
+		lastUsedAt: now,
+	};
+	commanderBrowserSlots.set(slotKey, slot);
+	return slot;
+}
+
+function pruneCommanderBrowserSlots(activeSlotKey: string) {
+	if (commanderBrowserSlots.size <= MAX_COMMANDER_BROWSER_SLOTS) return;
+	const candidates = [...commanderBrowserSlots.values()]
+		.filter((slot) => slot.key !== activeSlotKey)
+		.sort((a, b) => a.lastUsedAt - b.lastUsedAt);
+	for (const slot of candidates) {
+		if (commanderBrowserSlots.size <= MAX_COMMANDER_BROWSER_SLOTS) break;
+		detachWebview(slot.webview);
+		commanderBrowserSlots.delete(slot.key);
+	}
+}
 
 export function useCommanderWebview({
 	workspaceId,
@@ -24,6 +101,10 @@ export function useCommanderWebview({
 } = {}) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const webviewRef = useRef<Electron.WebviewTag | null>(null);
+	const browserSlotKey = buildCommanderBrowserSlotKey({
+		workspaceId,
+		activeTabId,
+	});
 	const [state, setState] = useState<WebviewState>({
 		currentUrl: "",
 		isLoading: false,
@@ -36,41 +117,26 @@ export function useCommanderWebview({
 		const container = containerRef.current;
 		if (!container) return;
 
-		let wv: Electron.WebviewTag;
-		if (parkedWebview) {
-			wv = parkedWebview;
-			parkedWebview = null;
-			try {
-				setState({
-					currentUrl: wv.getURL(),
-					isLoading: false,
-					canGoBack: wv.canGoBack(),
-					canGoForward: wv.canGoForward(),
-					pageTitle: wv.getTitle(),
-				});
-			} catch {
-				// webview not ready yet
-			}
-		} else {
-			wv = document.createElement("webview") as Electron.WebviewTag;
-			wv.setAttribute("partition", "persist:superset");
-			wv.style.width = "100%";
-			wv.style.height = "100%";
-			wv.src = "about:blank";
-		}
+		const slot = ensureCommanderBrowserSlot({
+			slotKey: browserSlotKey,
+			workspaceId,
+			activeTabId,
+		});
+		const wv = slot.webview;
+		pruneCommanderBrowserSlots(browserSlotKey);
 
 		webviewRef.current = wv;
+		detachWebview(wv);
 		container.appendChild(wv);
+		try {
+			setState(readWebviewState(wv));
+		} catch {
+			// webview not ready yet
+		}
 
 		function syncNav() {
 			try {
-				setState({
-					currentUrl: wv.getURL(),
-					isLoading: false,
-					canGoBack: wv.canGoBack(),
-					canGoForward: wv.canGoForward(),
-					pageTitle: wv.getTitle(),
-				});
+				setState(readWebviewState(wv));
 			} catch {
 				// webview not ready yet
 			}
@@ -110,11 +176,10 @@ export function useCommanderWebview({
 			wv.removeEventListener("focus", onWebviewInteraction);
 			wv.removeEventListener("pointerdown", onWebviewInteraction);
 			wv.removeEventListener("mousedown", onWebviewInteraction);
-			if (container.contains(wv)) container.removeChild(wv);
-			parkedWebview = wv;
-			webviewRef.current = null;
+			if (container.contains(wv)) detachWebview(wv);
+			if (webviewRef.current === wv) webviewRef.current = null;
 		};
-	}, []);
+	}, [activeTabId, browserSlotKey, workspaceId]);
 
 	const navigateTo = useCallback((url: string) => {
 		const wv = webviewRef.current;
@@ -164,6 +229,8 @@ export function useCommanderWebview({
 				webview: webviewRef.current,
 				container: containerRef.current,
 				bridgeAvailable: true,
+				slotCount: commanderBrowserSlots.size,
+				maxSlotCount: MAX_COMMANDER_BROWSER_SLOTS,
 			});
 		}, [activeTabId, workspaceId]);
 

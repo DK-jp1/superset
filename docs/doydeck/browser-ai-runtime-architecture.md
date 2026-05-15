@@ -1011,6 +1011,64 @@ Only design slot lifecycle after QA consistently shows the same Commander
 owner, slot key, provider, URL, usable width, and webContents id across
 ChatGPT, Claude, Diagnostics open/closed, attach mode, and Electron QA.
 
+## 10j. S5.15 — Per-tab Commander Browser AI slots (IMPLEMENTED)
+
+Status: **landed as Commander-owned per-tab slot switching**.
+
+What ships:
+
+* The right-side Commander Browser AI remains a single visible Browser AI area.
+* `useCommanderWebview` now keeps Commander-owned webviews in a
+  `browserSlotKey` keyed in-memory slot map.
+* The Commander Browser slot key is still derived from:
+  * workspace id,
+  * active tab id,
+  * fixed pane id `commander-browser-ai`.
+* Active tab changes swap the visible webview to the active tab's Commander
+  Browser slot.
+* Non-active slots are detached from the visible container and parked in memory.
+* The slot map keeps at most 5 Commander Browser slots and evicts least recently
+  used inactive slots.
+* All Commander Browser slots still use the shared `persist:superset` partition,
+  so login/cookie state remains shared while URL/conversation/webview state is
+  split by tab slot.
+* Diagnostics and QA reports can show:
+  * `Slot mode: per-tab-commander`,
+  * active `browserSlotKey`,
+  * Commander webContents id,
+  * Commander slot count / max slots.
+
+What did NOT change:
+
+* Only one Browser AI webview is visible in the Commander sidebar at a time.
+* `browserRuntimeRegistry` still does not own the Commander Browser AI.
+* Registry primary keys remain `paneId`.
+* Commander-owned slots are not merged into the v2 BrowserPane registry.
+* ChatGPT / Claude cookies and login session are not separated by tab.
+* Worker binding, parallel Auto Loop, and per-tab Worker spawning are unchanged.
+* Auto Loop's existing active-tab abort remains the safety mechanism for tab
+  changes while a loop is running.
+
+Operational model:
+
+* Tab A gets one Commander Browser slot.
+* Tab B gets another Commander Browser slot.
+* Switching back to Tab A restores Tab A's parked webview if it has not been
+  evicted by the max-slot limit.
+* If a slot is evicted, returning to that tab creates a fresh `about:blank`
+  Browser AI slot.
+
+Risks and follow-ups:
+
+* Detached webviews still consume resources until evicted, so max kept slots
+  must stay conservative.
+* Provider switching is per-slot because it navigates the active tab's webview.
+* QA should verify that ChatGPT / Claude remain visually usable after tab
+  switching and that webContents ids differ across active slots when two slots
+  are loaded.
+* A later phase can decide whether Commander-owned slots should stay in this
+  adapter layer or migrate into a unified runtime registry.
+
 ## 11. Out of scope (for now)
 
 * Deleting the legacy `screens/main` Browser AI tree.

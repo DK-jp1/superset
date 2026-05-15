@@ -1,6 +1,6 @@
 import {
 	COMMANDER_BROWSER_AI_PANE_ID,
-	CURRENT_BROWSER_SLOT_MODE,
+	COMMANDER_BROWSER_SLOT_MODE,
 	createBrowserSlotKey,
 	type BrowserSlotKey,
 	type BrowserSlotMode,
@@ -32,6 +32,8 @@ export interface CommanderBrowserRuntimeSnapshot {
 	visualStatus: CommanderBrowserVisualStatus;
 	visualReason: string;
 	bridgeAvailable: boolean;
+	slotCount: number | null;
+	maxSlotCount: number | null;
 }
 
 interface BuildCommanderBrowserRuntimeSnapshotOptions {
@@ -40,6 +42,8 @@ interface BuildCommanderBrowserRuntimeSnapshotOptions {
 	webview?: Electron.WebviewTag | null;
 	container?: HTMLElement | null;
 	bridgeAvailable?: boolean;
+	slotCount?: number | null;
+	maxSlotCount?: number | null;
 }
 
 function fallbackSlotPart(value: string | null | undefined, fallback: string) {
@@ -69,6 +73,24 @@ function readWebContentsId(
 	}
 }
 
+export function buildCommanderBrowserSlotKey({
+	workspaceId,
+	activeTabId,
+}: {
+	workspaceId?: string | null;
+	activeTabId?: string | null;
+}): BrowserSlotKey {
+	const normalizedWorkspaceId = fallbackSlotPart(workspaceId, "unknown-workspace");
+	const normalizedActiveTabId = fallbackSlotPart(activeTabId, "unknown-tab");
+	return (
+		createBrowserSlotKey({
+			workspaceId: normalizedWorkspaceId,
+			tabId: normalizedActiveTabId,
+			paneId: COMMANDER_BROWSER_AI_PANE_ID,
+		}) ?? `${normalizedWorkspaceId}:${normalizedActiveTabId}:${COMMANDER_BROWSER_AI_PANE_ID}`
+	);
+}
+
 function rectOf(element: Element | null | undefined): DOMRect | null {
 	if (!element) return null;
 	const rect = element.getBoundingClientRect();
@@ -93,15 +115,15 @@ export function buildCommanderBrowserRuntimeSnapshot({
 	webview,
 	container,
 	bridgeAvailable = true,
+	slotCount = null,
+	maxSlotCount = null,
 }: BuildCommanderBrowserRuntimeSnapshotOptions): CommanderBrowserRuntimeSnapshot {
 	const normalizedWorkspaceId = fallbackSlotPart(workspaceId, "unknown-workspace");
 	const normalizedActiveTabId = fallbackSlotPart(activeTabId, "unknown-tab");
-	const browserSlotKey =
-		createBrowserSlotKey({
-			workspaceId: normalizedWorkspaceId,
-			tabId: normalizedActiveTabId,
-			paneId: COMMANDER_BROWSER_AI_PANE_ID,
-		}) ?? `${normalizedWorkspaceId}:${normalizedActiveTabId}:${COMMANDER_BROWSER_AI_PANE_ID}`;
+	const browserSlotKey = buildCommanderBrowserSlotKey({
+		workspaceId: normalizedWorkspaceId,
+		activeTabId: normalizedActiveTabId,
+	});
 	const currentUrl = readWebviewUrl(webview);
 	const provider = detectProvider(currentUrl);
 	const webviewRect = rectOf(webview ?? null);
@@ -137,7 +159,7 @@ export function buildCommanderBrowserRuntimeSnapshot({
 		activeTabId: normalizedActiveTabId,
 		paneId: COMMANDER_BROWSER_AI_PANE_ID,
 		browserSlotKey,
-		browserSlotMode: CURRENT_BROWSER_SLOT_MODE,
+		browserSlotMode: COMMANDER_BROWSER_SLOT_MODE,
 		webContentsId: readWebContentsId(webview),
 		provider,
 		providerLabel: getProviderLabel(provider),
@@ -146,5 +168,7 @@ export function buildCommanderBrowserRuntimeSnapshot({
 		visualStatus,
 		visualReason,
 		bridgeAvailable,
+		slotCount,
+		maxSlotCount,
 	};
 }

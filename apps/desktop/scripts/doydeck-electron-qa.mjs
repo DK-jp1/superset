@@ -362,6 +362,17 @@ try {
 					? commanderWebContentsId.trim()
 					: "Commander webContents id not found in diagnostics",
 			);
+			const commanderSlotCount = await page
+				.getByTestId("auto-loop-commander-runtime-slot-count")
+				.textContent({ timeout: 1000 })
+				.catch(() => "");
+			record(
+				commanderSlotCount ? "PASS" : "UNKNOWN",
+				"Commander Browser slot count",
+				commanderSlotCount
+					? commanderSlotCount.trim()
+					: "Commander slot count not found in diagnostics",
+			);
 		}
 	}
 

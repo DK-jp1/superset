@@ -1,4 +1,7 @@
-export type BrowserSlotMode = "shared-webview" | "per-tab-pending";
+export type BrowserSlotMode =
+	| "shared-webview"
+	| "per-tab-pending"
+	| "per-tab-commander";
 export type BrowserSlotKey = string;
 
 export type BrowserSlotIdentity = {
@@ -9,6 +12,8 @@ export type BrowserSlotIdentity = {
 
 export const COMMANDER_BROWSER_AI_PANE_ID = "commander-browser-ai";
 export const CURRENT_BROWSER_SLOT_MODE: BrowserSlotMode = "shared-webview";
+export const COMMANDER_BROWSER_SLOT_MODE: BrowserSlotMode =
+	"per-tab-commander";
 
 function normalizeSlotPart(value: string): string {
 	return encodeURIComponent(value.trim() || "unknown");
