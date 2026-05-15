@@ -35,6 +35,7 @@
 		"prepackage": "bun run copy:native-modules && bun run validate:native-runtime",
 		"package": "electron-builder --config electron-builder.ts",
 		"package:doydeck": "bash scripts/package-doydeck.sh",
+		"packaged-qa:doydeck": "bash scripts/open-doydeck-packaged-qa.sh",
 		"install:deps": "electron-builder install-app-deps",
 		"release": "electron-builder --publish always",
 		"clean:dev": "rimraf ./node_modules/.dev",

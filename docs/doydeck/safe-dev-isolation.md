@@ -21,9 +21,12 @@ bun run --cwd apps/desktop dev:doydeck-safe
 ```
 
 このscriptは以下を設定する。
+`SUPERSET_HOME_DIR` などが親shellに残っていても、safe devの分離先を優先する。
 
 ```bash
 DOYDECK_DEV_MODE=1
+DOYDECK_REAL_AGENT_QA=1
+DESKTOP_AUTOMATION_PORT=9223
 SUPERSET_WORKSPACE_NAME=doydeck-dev
 SUPERSET_HOME_DIR="$HOME/.doydeck-superset-dev"
 SUPERSET_SKIP_AGENT_HOOKS=1
@@ -101,6 +104,8 @@ WSL/Linux Electron userData:
 | Env | 用途 |
 |---|---|
 | `DOYDECK_DEV_MODE=1` | DoyDeck safe dev profileを有効化する |
+| `DOYDECK_REAL_AGENT_QA=1` | Meta AI / Real Agent QA用のread-only accessorとQA操作を有効化する |
+| `DESKTOP_AUTOMATION_PORT=9223` | CDP attach用のdebugging portを開く |
 | `SUPERSET_WORKSPACE_NAME=doydeck-dev` | `.superset-doydeck-dev` 系のworkspace namespaceを使う |
 | `SUPERSET_HOME_DIR=~/.doydeck-superset-dev` | app-state/local.db/host/terminal-host/historyをdev専用rootへ寄せる |
 | `DOYDECK_SUPERSET_USER_DATA_DIR=...` | Electron userDataを本番Superset.appから分離する |
@@ -185,6 +190,8 @@ bun run dev:doydeck-safe
 4. 起動logで以下を確認する。
 
 - `DOYDECK_DEV_MODE=1`
+- `DOYDECK_REAL_AGENT_QA=1`
+- `DESKTOP_AUTOMATION_PORT=9223`
 - `SUPERSET_WORKSPACE_NAME=doydeck-dev`
 - `SUPERSET_HOME_DIR=$HOME/.doydeck-superset-dev`
 - `DOYDECK_SUPERSET_USER_DATA_DIR=$HOME/Library/Application Support/Superset-DoyDeck-Dev`
@@ -233,4 +240,3 @@ rm -rf "$HOME/Library/Application Support/Superset-DoyDeck-Dev"
 ```
 
 本番Superset.app data、`~/.claude/settings.json`、`~/.codex/hooks.json` はrollback対象にしない。S2では変更しないため。
-
