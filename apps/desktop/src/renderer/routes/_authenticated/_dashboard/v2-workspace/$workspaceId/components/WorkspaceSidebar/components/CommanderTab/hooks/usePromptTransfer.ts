@@ -1618,6 +1618,7 @@ export function usePromptTransfer({
 	const autoLoopWorkerBindingStatusAtArmRef =
 		useRef<DoyDeckWorkerBindingStatus>("unbound");
 	const autoLoopDiagnosticEventIdRef = useRef(0);
+	const previousAutoRelayModeRef = useRef<AutoRelayMode>(autoRelayMode);
 	const workerBindingRef = useRef(workerBinding);
 	const requireBoundWorkerForAutoLoopRef = useRef(
 		requireBoundWorkerForAutoLoop,
@@ -2918,7 +2919,10 @@ export function usePromptTransfer({
 	}, [autoRelayMode, cancelAutoRelay]);
 
 	useEffect(() => {
+		const previousAutoRelayMode = previousAutoRelayModeRef.current;
+		previousAutoRelayModeRef.current = autoRelayMode;
 		if (autoRelayMode === "loop") {
+			if (previousAutoRelayMode === "loop") return;
 			resetAutoLoopState();
 			return;
 		}
