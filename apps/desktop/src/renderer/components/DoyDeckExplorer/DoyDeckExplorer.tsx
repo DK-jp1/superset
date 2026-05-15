@@ -13,6 +13,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@superset/ui/select";
+import { Input } from "@superset/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@superset/ui/tooltip";
 import { cn } from "@superset/ui/utils";
 import {
@@ -119,6 +120,36 @@ function getBaseName(filePath: string): string {
 	return filePath.split(/[\\/]/).filter(Boolean).pop() ?? filePath;
 }
 
+function trimTrailingSeparators(filePath: string): string {
+	if (/^[\\/]+$/.test(filePath)) return filePath[0] ?? filePath;
+	return filePath.replace(/[\\/]+$/, "");
+}
+
+function joinExplorerPath(left: string, right: string): string {
+	const separator = left.includes("\\") ? "\\" : "/";
+	return `${trimTrailingSeparators(left)}${separator}${right}`;
+}
+
+function getAncestorDirectoryPaths(rootPath: string, directoryPath: string) {
+	const root = trimTrailingSeparators(rootPath);
+	const directory = trimTrailingSeparators(directoryPath);
+	if (!root || !directory || root === directory) return [];
+	const prefix = `${root}${root.includes("\\") ? "\\" : "/"}`;
+	if (!directory.startsWith(prefix)) return [directory];
+
+	const relativeSegments = directory
+		.slice(prefix.length)
+		.split(/[\\/]/)
+		.filter(Boolean);
+	const directories: string[] = [];
+	let current = root;
+	for (const segment of relativeSegments) {
+		current = joinExplorerPath(current, segment);
+		directories.push(current);
+	}
+	return directories;
+}
+
 function toCommanderSelectedPathType(
 	kind: ExplorerEntryKind | null,
 ): CommanderSelectedPath["type"] | null {
@@ -208,12 +239,14 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 	const [selectedKind, setSelectedKind] = useState<ExplorerEntryKind | null>(
 		null,
 	);
+	const [pathInput, setPathInput] = useState("");
 	const [actionsOpen, setActionsOpen] = useState(false);
 	const explorerRootRef = useRef<HTMLDivElement>(null);
 	const explorerContentRef = useRef<HTMLDivElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 	const previewPanelRef = useRef<HTMLDivElement>(null);
 	const previewBodyRef = useRef<HTMLDivElement>(null);
+	const suppressRootAutoLoadRef = useRef<ExplorerRootId | null>(null);
 	const [explorerContentHeight, setExplorerContentHeight] = useState(0);
 	const [listHeightPx, setListHeightPx] = useState(0);
 	const [previewBodyHeight, setPreviewBodyHeight] = useState(0);
@@ -227,6 +260,7 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 	const rootsQuery = electronTrpc.doydeckExplorer.getRoots.useQuery({
 		workspaceId,
 	});
+	const resolvePathMutation = electronTrpc.doydeckExplorer.resolvePath.useMutation();
 
 	const roots = rootsQuery.data?.roots ?? [];
 	const selectedRoot = roots.find((root) => root.id === rootId);
@@ -245,12 +279,12 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 	);
 
 	const loadDirectory = useCallback(
-		async (absolutePath: string) => {
-			if (!absolutePath) return;
+		async (absolutePath: string, nextRootId: ExplorerRootId = rootId) => {
+			if (!absolutePath) return false;
 			setLoadingDirectories((prev) => new Set(prev).add(absolutePath));
 			try {
 				const result = await trpcUtils.doydeckExplorer.listDirectory.fetch({
-					rootId,
+					rootId: nextRootId,
 					workspaceId,
 					absolutePath,
 				});
@@ -259,6 +293,7 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 					...prev,
 					[absolutePath]: { status: "loaded", entries: result.entries },
 				}));
+				return true;
 			} catch (error) {
 				setDirectoryState((prev) => ({
 					...prev,
@@ -267,6 +302,7 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 						message: getErrorMessage(error),
 					},
 				}));
+				return false;
 			} finally {
 				setLoadingDirectories((prev) => {
 					const next = new Set(prev);
@@ -288,6 +324,10 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 
 	useEffect(() => {
 		if (!canLoadRoot || !selectedRoot?.absolutePath) return;
+		if (suppressRootAutoLoadRef.current === rootId) {
+			suppressRootAutoLoadRef.current = null;
+			return;
+		}
 		setRootPath(selectedRoot.absolutePath);
 		setDirectoryState({});
 		setExpanded(new Set());
@@ -456,6 +496,59 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		void loadDirectory(selectedRoot.absolutePath);
 	};
 
+	const handleGoToPath = async () => {
+		const requestedPath = pathInput.trim();
+		if (!requestedPath) {
+			toast.info("Enter a path to open in Explorer");
+			return;
+		}
+
+		try {
+			const resolved = await resolvePathMutation.mutateAsync({
+				workspaceId,
+				path: requestedPath,
+			});
+			suppressRootAutoLoadRef.current = resolved.rootId;
+			setRootId(resolved.rootId);
+			setRootPath(resolved.rootPath);
+			setDirectoryState({});
+			setExpanded(new Set());
+			setSelectedPath(null);
+			setSelectedKind(null);
+
+			const directoriesToLoad = [
+				resolved.rootPath,
+				...getAncestorDirectoryPaths(
+					resolved.rootPath,
+					resolved.explorerDirectoryPath,
+				),
+			];
+			for (const directoryPath of directoriesToLoad) {
+				await loadDirectory(directoryPath, resolved.rootId);
+			}
+
+			setExpanded(
+				new Set(
+					directoriesToLoad.filter(
+						(directoryPath) => directoryPath !== resolved.rootPath,
+					),
+				),
+			);
+			setSelectedPath(resolved.absolutePath);
+			setSelectedKind(resolved.kind);
+			setPathInput(resolved.absolutePath);
+			toast.success(
+				resolved.kind === "directory"
+					? "Directory opened in Explorer"
+					: "Path selected in Explorer",
+			);
+		} catch (error) {
+			toast.error("Could not open path in Explorer", {
+				description: getErrorMessage(error),
+			});
+		}
+	};
+
 	const handleCopy = async (text: string, message: string) => {
 		await copyToClipboard(text);
 		toast.success(message);
@@ -614,6 +707,33 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 					{selectedRoot?.absolutePath || "No root"}
 				</div>
 			</div>
+
+			<form
+				className="flex shrink-0 items-center gap-1 border-b px-2 py-2"
+				onSubmit={(event) => {
+					event.preventDefault();
+					void handleGoToPath();
+				}}
+			>
+				<Input
+					value={pathInput}
+					onChange={(event) => setPathInput(event.target.value)}
+					placeholder="Go to path..."
+					className="h-7 min-w-0 flex-1 font-mono text-[11px]"
+					data-testid="doydeck-explorer-path-input"
+					disabled={resolvePathMutation.isPending}
+				/>
+				<Button
+					type="submit"
+					variant="outline"
+					size="sm"
+					className="h-7 shrink-0 px-2 text-[11px]"
+					disabled={resolvePathMutation.isPending || !pathInput.trim()}
+					data-testid="doydeck-explorer-path-submit"
+				>
+					Go
+				</Button>
+			</form>
 
 			<div ref={explorerContentRef} className="flex min-h-0 flex-1 flex-col">
 				<div

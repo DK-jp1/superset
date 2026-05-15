@@ -308,6 +308,17 @@ function normalizeAbsolutePath(input: string): string {
 	return path.normalize(path.resolve(input));
 }
 
+function trimPathInput(input: string): string {
+	const trimmed = input.trim();
+	if (trimmed.length < 2) return trimmed;
+	const first = trimmed[0];
+	const last = trimmed[trimmed.length - 1];
+	if ((first === `"` && last === `"`) || (first === "'" && last === "'")) {
+		return trimmed.slice(1, -1).trim();
+	}
+	return trimmed;
+}
+
 function isPathWithinRoot(rootPath: string, absolutePath: string): boolean {
 	const normalizedRootPath = normalizeAbsolutePath(rootPath);
 	const normalizedAbsolutePath = normalizeAbsolutePath(absolutePath);
@@ -402,6 +413,63 @@ function resolveTargetPath(rootPath: string, absolutePath?: string): string {
 	return targetPath;
 }
 
+function resolveExplorerNavigationPath(inputPath: string, workspaceId?: string) {
+	const trimmedPath = trimPathInput(inputPath);
+	if (!trimmedPath) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Enter a path to open in Explorer",
+		});
+	}
+	if (/^smb:\/\//i.test(trimmedPath)) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message:
+				"SMB URLs are not opened directly. Mount the share first, then use its /Volumes path.",
+		});
+	}
+	if (/^[a-zA-Z]:[\\/]/.test(trimmedPath) || /^\\\\/.test(trimmedPath)) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message:
+				"Windows and UNC paths must be mounted on this Mac before DoyDeck Explorer can open them.",
+		});
+	}
+
+	let candidatePath = trimmedPath;
+	if (candidatePath === "~") {
+		candidatePath = os.homedir();
+	} else if (candidatePath.startsWith("~/")) {
+		candidatePath = path.join(os.homedir(), candidatePath.slice(2));
+	} else if (candidatePath.startsWith("~")) {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message: "Only the current user's ~/ paths are supported.",
+		});
+	}
+
+	if (!path.isAbsolute(candidatePath)) {
+		const workspaceRoot = getWorkspaceRoot(workspaceId);
+		if (!workspaceRoot) {
+			throw new TRPCError({
+				code: "BAD_REQUEST",
+				message: "Relative paths require an active workspace.",
+			});
+		}
+		candidatePath = path.resolve(workspaceRoot, candidatePath);
+	}
+
+	return normalizeAbsolutePath(candidatePath);
+}
+
+function findContainingRoot(absolutePath: string, workspaceId?: string) {
+	return buildRootDefinitions(workspaceId)
+		.filter((root) => root.absolutePath && fsSync.existsSync(root.absolutePath))
+		.filter((root) => isPathWithinRoot(root.absolutePath, absolutePath))
+		.sort((left, right) => right.absolutePath.length - left.absolutePath.length)
+		.at(0);
+}
+
 function direntKind(entry: {
 	isDirectory(): boolean;
 	isFile(): boolean;
@@ -491,6 +559,59 @@ export const createDoyDeckExplorerRouter = () => {
 					rootPath,
 					absolutePath: targetPath,
 					entries: mapped,
+				};
+			}),
+
+		resolvePath: publicProcedure
+			.input(
+				z.object({
+					workspaceId: z.string().optional(),
+					path: z.string(),
+				}),
+			)
+			.mutation(async ({ input }) => {
+				const targetPath = resolveExplorerNavigationPath(
+					input.path,
+					input.workspaceId,
+				);
+				const stats = await fs.lstat(targetPath).catch((error) => {
+					const code =
+						typeof error === "object" && error && "code" in error
+							? String(error.code)
+							: "";
+					throw new TRPCError({
+						code: code === "ENOENT" ? "NOT_FOUND" : "BAD_REQUEST",
+						message:
+							code === "ENOENT"
+								? "Path does not exist"
+								: getErrorMessage(error),
+					});
+				});
+				const root = findContainingRoot(targetPath, input.workspaceId);
+				if (!root) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message: "Path is outside the available DoyDeck Explorer roots",
+					});
+				}
+
+				const kind: ExplorerEntryKind = stats.isSymbolicLink()
+					? "symlink"
+					: stats.isDirectory()
+						? "directory"
+						: stats.isFile()
+							? "file"
+							: "other";
+				const explorerDirectoryPath =
+					kind === "directory" ? targetPath : path.dirname(targetPath);
+
+				return {
+					rootId: root.id,
+					rootPath: normalizeAbsolutePath(root.absolutePath),
+					absolutePath: targetPath,
+					explorerDirectoryPath,
+					name: path.basename(targetPath) || targetPath,
+					kind,
 				};
 			}),
 
