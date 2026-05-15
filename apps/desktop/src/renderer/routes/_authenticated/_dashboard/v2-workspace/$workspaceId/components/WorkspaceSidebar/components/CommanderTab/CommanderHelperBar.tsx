@@ -59,6 +59,7 @@ export function CommanderHelperBar({
 	onSendSelectionToAI,
 	onGenerateHandoff,
 	onCopyHandoff,
+	onCopyHandoffLedger,
 	onExtractSessionFromAI,
 	onExtractPlanFromWorker,
 	onViewEditSession,
@@ -96,6 +97,7 @@ export function CommanderHelperBar({
 	onSendSelectionToAI: () => void;
 	onGenerateHandoff: () => void;
 	onCopyHandoff: () => void;
+	onCopyHandoffLedger: () => void;
 	onExtractSessionFromAI: () => void;
 	onExtractPlanFromWorker: () => void;
 	onViewEditSession: () => void;
@@ -350,6 +352,13 @@ export function CommanderHelperBar({
 						<DropdownMenuItem onSelect={onGenerateHandoff}>
 							<LuFileText className="size-3.5" />
 							Generate Handoff
+						</DropdownMenuItem>
+						<DropdownMenuItem
+							onSelect={onCopyHandoffLedger}
+							data-testid="commander-copy-handoff-ledger"
+						>
+							<LuClipboard className="size-3.5" />
+							Copy Handoff Ledger
 						</DropdownMenuItem>
 						<DropdownMenuItem
 							disabled={!hasProvider}

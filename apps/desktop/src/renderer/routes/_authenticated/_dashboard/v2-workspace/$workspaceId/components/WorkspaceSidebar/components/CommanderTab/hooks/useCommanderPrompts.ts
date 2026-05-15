@@ -124,6 +124,48 @@ export interface HandoffGitSummary {
 	error: string | null;
 }
 
+interface WorkSessionLedgerInput {
+	workspaceId: string;
+	tabId: string | null;
+	state: CommanderState;
+	session: CommanderSession;
+	browser: {
+		ownerType: string;
+		slotKey: string | null;
+		providerLabel: string;
+		currentUrl: string;
+		webContentsId: number | null;
+		usableWidth: number | null;
+		visualStatus: string;
+	};
+	worker: {
+		paneId: string | null;
+		terminalId: string | null;
+		workerType: string;
+		bindingStatus: string;
+		bindingPolicy: string;
+		fallbackUsed: boolean;
+		reason: string | null;
+	};
+	autoLoop: {
+		mode: string;
+		phase: string;
+		turn: number;
+		maxTurns: number;
+		stopReason: string | null;
+		lastAction: string;
+		tabContextStatus: string;
+	};
+	latestWorkerReport: string;
+	latestBrowserDecision: string;
+	latestQaResult: {
+		status: "PASS" | "BLOCKED" | "FAIL" | "UNKNOWN";
+		reportPath?: string;
+		screenshots?: string[];
+		summary?: string;
+	} | null;
+}
+
 function valueOrUnset(
 	value: string,
 	fallback = "未設定。必要なら追記してください",
@@ -316,6 +358,132 @@ ${nextAction}
 
 ${DOYDECK_WORKER_RESPONSE_ENVELOPE_TEMPLATE}
 `;
+}
+
+export function generateWorkSessionLedgerMarkdown({
+	workspaceId,
+	tabId,
+	state,
+	session,
+	browser,
+	worker,
+	autoLoop,
+	latestWorkerReport,
+	latestBrowserDecision,
+	latestQaResult,
+}: WorkSessionLedgerInput): string {
+	const goal = session.goal || state.goal;
+	const objective = goal.trim() || "未設定。必要ならSessionに目的を追加してください";
+	const currentTask =
+		session.currentTask.trim() ||
+		state.currentProblem.trim() ||
+		"未設定。必要なら現在地を追記してください";
+	const completed = latestWorkerReport.trim()
+		? summarizeBlock(latestWorkerReport)
+		: "未取得。Worker Responseを取得後に更新してください";
+	const browserDecision = latestBrowserDecision.trim()
+		? summarizeBlock(latestBrowserDecision)
+		: "未取得。Browser AI判断を取得後に更新してください";
+	const unresolved = session.risksOpenQuestions.trim()
+		? session.risksOpenQuestions
+		: "未設定。未解決があれば追加してください";
+	const nextAction = latestBrowserDecision.trim()
+		? "Latest Browser AI Decisionを確認し、必要なら次のWorker指示を作成してください。"
+		: session.currentTask.trim() || state.currentProblem.trim()
+			? "Current Taskを確認し、次の最小アクションを決めてください。"
+			: "目的と制約を整理し、最初のWorker指示を作るか判断してください。";
+	const qaLines = latestQaResult
+		? [
+				`- status: ${latestQaResult.status}`,
+				`- report: ${latestQaResult.reportPath || "未取得"}`,
+				`- screenshots: ${
+					latestQaResult.screenshots?.length
+						? latestQaResult.screenshots.join(", ")
+						: "未取得"
+				}`,
+				latestQaResult.summary ? `- summary: ${latestQaResult.summary}` : "",
+			]
+				.filter(Boolean)
+				.join("\n")
+		: "- status: UNKNOWN\n- report: 未取得\n- screenshots: 未取得";
+	const targetFiles = session.targetFiles.length
+		? session.targetFiles.map((path) => `- ${path}`).join("\n")
+		: "未設定";
+	const selectedFiles = formatSelectedFiles(session.selectedFiles);
+
+	return `# Handoff
+
+## 目的
+${objective}
+
+## 現在地
+${currentTask}
+
+## 完了
+${completed}
+
+## 決定事項
+${browserDecision}
+
+## 未解決
+${unresolved}
+
+## 次アクション
+1. ${nextAction}
+
+## 最新QA
+${qaLines}
+
+## Worker / Browser AI
+- latest worker: ${latestWorkerReport.trim() ? "あり" : "未取得"}
+- latest browser decision: ${latestBrowserDecision.trim() ? "あり" : "未取得"}
+- Browser provider: ${browser.providerLabel}
+- Browser URL: ${browser.currentUrl || "未取得"}
+- Browser owner: ${browser.ownerType || "unknown"}
+- Browser slot: ${browser.slotKey || "未取得"}
+- Browser webContentsId: ${browser.webContentsId ?? "未取得"}
+- Browser usable width: ${browser.usableWidth ?? "未取得"}
+- Browser visual: ${browser.visualStatus || "UNKNOWN"}
+
+## Worker Binding
+- status: ${worker.bindingStatus}
+- policy: ${worker.bindingPolicy}
+- fallback used: ${worker.fallbackUsed ? "yes" : "no"}
+- worker type: ${worker.workerType}
+- paneId: ${worker.paneId || "未取得"}
+- terminalId: ${worker.terminalId || "未取得"}
+- reason: ${worker.reason || "なし"}
+
+## Auto Loop
+- mode: ${autoLoop.mode}
+- phase: ${autoLoop.phase}
+- turn: ${autoLoop.turn}/${autoLoop.maxTurns}
+- stop reason: ${autoLoop.stopReason || "なし"}
+- last action: ${autoLoop.lastAction || "なし"}
+- tab context: ${autoLoop.tabContextStatus}
+
+## 関連ファイル
+Target Files:
+${targetFiles}
+
+Selected Files / Paths:
+${selectedFiles}
+
+## 注意点
+- workspaceId: ${workspaceId || "未取得"}
+- tabId: ${tabId || "未取得"}
+- local.db / app-state.json は直接触らない
+- Git commit / push はDoy確認後
+- destructive操作は明示承認まで禁止
+- cookie / token / private APIには触らない
+`;
+}
+
+function summarizeBlock(value: string, maxLength = 900): string {
+	const trimmed = value.trim();
+	if (!trimmed) return "";
+	if (trimmed.length <= maxLength) return trimmed;
+	return `${trimmed.slice(0, maxLength).trimEnd()}\n...`;
 }
 
 export async function copyToClipboard(text: string): Promise<void> {

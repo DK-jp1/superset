@@ -51,6 +51,7 @@ import {
 	generateWorkerPrompt,
 	generateReviewPrompt,
 	generateHandoffPrompt,
+	generateWorkSessionLedgerMarkdown,
 	copyToClipboard,
 	type HandoffGitSummary,
 } from "./useCommanderPrompts";
@@ -3527,6 +3528,80 @@ export function usePromptTransfer({
 		void copyToClipboard(handoffPreview.text);
 	}, [handoffPreview.text]);
 
+	const handleCopyHandoffLedger = useCallback(() => {
+		const liveUrl = getLiveUrl() || currentUrl;
+		const provider = detectProvider(liveUrl);
+		const commanderRuntime = getCommanderBrowserRuntimeSnapshot();
+		const latestWorkerReport =
+			workerResponsePreview.text || latestWorkerResponseText;
+		const latestBrowserDecision =
+			captureForTerminalPreview.text ||
+			capturePreview ||
+			latestBrowserAiDirectionText;
+		const ledger = generateWorkSessionLedgerMarkdown({
+			workspaceId,
+			tabId: currentActiveTabId,
+			state,
+			session,
+			browser: {
+				ownerType: commanderRuntime.ownerType,
+				slotKey: commanderRuntime.browserSlotKey,
+				providerLabel:
+					commanderRuntime.providerLabel ?? getProviderLabel(provider),
+				currentUrl: commanderRuntime.currentUrl || liveUrl,
+				webContentsId: commanderRuntime.webContentsId,
+				usableWidth: commanderRuntime.usableWidth,
+				visualStatus: commanderRuntime.visualStatus,
+			},
+			worker: {
+				paneId: workerBinding.workerPaneId,
+				terminalId: workerBinding.terminalId,
+				workerType: workerBinding.workerType,
+				bindingStatus: workerBinding.bindingStatus,
+				bindingPolicy: requireBoundWorkerForAutoLoop ? "strict" : "fallback",
+				fallbackUsed:
+					!requireBoundWorkerForAutoLoop &&
+					workerBinding.bindingStatus !== "bound",
+				reason: workerBinding.reason,
+			},
+			autoLoop: {
+				mode: autoRelayMode,
+				phase: autoLoopPhase,
+				turn: autoLoopTurn,
+				maxTurns: autoLoopMaxTurns,
+				stopReason: autoLoopStopReason,
+				lastAction: autoLoopLastAction,
+				tabContextStatus: autoLoopDiagnostics.tabContextStatus,
+			},
+			latestWorkerReport,
+			latestBrowserDecision,
+			latestQaResult: null,
+		});
+		void copyToClipboard(ledger);
+	}, [
+		autoLoopDiagnostics.tabContextStatus,
+		autoLoopLastAction,
+		autoLoopMaxTurns,
+		autoLoopPhase,
+		autoLoopStopReason,
+		autoLoopTurn,
+		autoRelayMode,
+		captureForTerminalPreview.text,
+		capturePreview,
+		currentActiveTabId,
+		currentUrl,
+		getCommanderBrowserRuntimeSnapshot,
+		getLiveUrl,
+		latestBrowserAiDirectionText,
+		latestWorkerResponseText,
+		requireBoundWorkerForAutoLoop,
+		session,
+		state,
+		workerBinding,
+		workerResponsePreview.text,
+		workspaceId,
+	]);
+
 	const handleInjectHandoffToBrowserAI = useCallback(async () => {
 		if (!handoffPreview.text.trim()) return;
 		await doInject(handoffPreview.text);
@@ -3739,6 +3814,7 @@ export function usePromptTransfer({
 		handleSendWorkerResponseToBrowserAI,
 		handleGenerateHandoff,
 		handleCopyHandoff,
+		handleCopyHandoffLedger,
 		handleInjectHandoffToBrowserAI,
 		handleSendHandoffToTerminal,
 		startAutoCapture,

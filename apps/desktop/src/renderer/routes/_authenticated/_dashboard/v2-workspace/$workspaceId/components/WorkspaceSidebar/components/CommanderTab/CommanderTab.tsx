@@ -382,6 +382,7 @@ export function CommanderTab({
 					onSendSelectionToAI={handleSendSelectionToAI}
 					onGenerateHandoff={transfer.handleGenerateHandoff}
 					onCopyHandoff={transfer.handleCopyHandoff}
+					onCopyHandoffLedger={transfer.handleCopyHandoffLedger}
 					onExtractSessionFromAI={transfer.handleExtractSessionFromAI}
 					onExtractPlanFromWorker={transfer.handleExtractPlanFromWorker}
 					onViewEditSession={transfer.handleViewEditSession}

@@ -1,8 +1,9 @@
 # DoyDeck Per-Tab Work Session / Handoff Ledger Plan
 
-Status: S5.17 planning. This document is design-only. It does not change
-Commander, Auto Loop, Browser AI, Worker binding, `local.db`, or
-`app-state.json`.
+Status: S5.17 Phase 1 implemented. Commander Actions can now copy a generated
+Handoff Ledger for the active tab. The first implementation is read-only from
+the app's point of view: it copies Markdown to the clipboard and does not save
+files, touch `local.db`, or touch `app-state.json`.
 
 ## Goal
 
@@ -433,7 +434,7 @@ Worker send must still go through Terminal Send Preview or Auto Loop guards.
 
 ### Phase 1: Generated Per-Tab Ledger Preview
 
-No persistence.
+Implemented as `Copy Handoff Ledger` in Commander Actions. No persistence.
 
 - Add a tab-scoped ledger generator that reads current Commander state,
   Browser slot identity, Worker binding, latest Worker text, latest Browser AI
