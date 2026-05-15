@@ -734,3 +734,70 @@ The next minimal integration step should be one of:
    errors more explicitly, or
 2. add a small DoyDeck Commander placeholder with stable `data-testid` hooks,
    while leaving Browser AI and Auto Loop out of scope.
+
+## S6.3.1 Latest-Main Shell Runtime Error Triage
+
+S6.3.1 classifies the launch-only QA result separately from shell runtime
+health. The QA harness can prove that Electron launches and screenshots work,
+while still reporting the latest-main shell as `WARN` or `FAIL` if runtime
+errors appear.
+
+### React Production Error #185
+
+The repeated `Minified React error #185` maps to React's development message:
+
+```text
+Maximum update depth exceeded. This can happen when a component repeatedly
+calls setState inside componentWillUpdate or componentDidUpdate. React limits
+the number of nested updates to prevent infinite loops.
+```
+
+The observed production stack is in TanStack Router's transition path:
+
+```text
+Transitioner.router2.startTransition
+RouterCore.load
+RouterCore.commitLocation
+RouterCore.buildAndCommitLocation
+```
+
+The clean QA profile still renders the sign-in shell, so this is not currently
+classified as a launch blocker. It is a shell runtime `WARN` until a later
+unminified/dev reproduction identifies the exact route or state update loop.
+
+### Auth Token 401
+
+The `https://api.superset.sh/api/auth/token` `401` occurs in a clean,
+unauthenticated QA profile while the sign-in screen is visible. By itself this
+looks like an unauthenticated auth/JWT token fetch rather than a safe-dev
+profile-isolation failure. It remains a `WARN` signal and should not be treated
+as proof that the launch harness failed.
+
+### QA Report Changes
+
+`apps/desktop/scripts/doydeck-electron-qa.mjs` now writes explicit shell
+runtime health fields:
+
+- `shell runtime health: PASS / WARN / FAIL`
+- `console error count`
+- `page error count`
+- `top error summary`
+- a `## Shell Runtime Health` section
+
+The JSON artifact also includes `shellRuntimeHealth` and `topErrorSummary`.
+Launch-only `result` remains separate from shell runtime health so S6.4 can
+make an explicit choice: proceed with a Commander placeholder under `WARN`, or
+pause to root-cause the router loop first.
+
+### S6.3.1 Classification
+
+Current classification:
+
+- launch-only Electron QA: `PASS`
+- shell runtime health: `WARN`
+- reason: sign-in shell rendered, but React #185 repeats in the router
+  transition path; unauthenticated `/api/auth/token` returns `401`
+
+This is enough to continue with a minimal Commander placeholder only if the
+work stays small and the warning remains visible in reports. It is not enough
+to call the latest-main shell healthy.

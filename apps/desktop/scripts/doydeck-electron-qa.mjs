@@ -86,6 +86,87 @@ function resultStatus() {
 	return "PASS";
 }
 
+function isReactError185(error) {
+	return /React error #185|errors\/185/.test(error?.message || "");
+}
+
+function summarizeConsoleError(error) {
+	const location = error.location?.url ? ` (${error.location.url})` : "";
+	return `${error.type}: ${error.text}${location}`;
+}
+
+function summarizePageError(error) {
+	if (isReactError185(error)) {
+		return "React #185 repeated during router transition";
+	}
+	return error.message;
+}
+
+function topErrorSummary() {
+	const parts = [];
+	if (consoleErrors.length > 0) {
+		parts.push(`console: ${summarizeConsoleError(consoleErrors[0])}`);
+	}
+	if (pageErrors.length > 0) {
+		const react185Count = pageErrors.filter(isReactError185).length;
+		if (react185Count > 0) {
+			parts.push(`page: React #185 x${react185Count}`);
+		} else {
+			parts.push(`page: ${summarizePageError(pageErrors[0])}`);
+		}
+	}
+	return parts.length > 0 ? parts.join("; ") : "none";
+}
+
+function shellRuntimeHealth() {
+	if (resultStatus() !== "PASS") {
+		return {
+			status: "FAIL",
+			reason: "Launch-only checks did not complete successfully.",
+		};
+	}
+
+	const bodyText = windowSnapshot?.bodyTextPreview || "";
+	const signInRendered =
+		bodyText.includes("Welcome to Superset") &&
+		(bodyText.includes("Continue with GitHub") ||
+			bodyText.includes("Continue with Google"));
+	const react185Count = pageErrors.filter(isReactError185).length;
+	const auth401Count = consoleErrors.filter(
+		(error) =>
+			error.location?.url?.includes("/api/auth/token") &&
+			error.text.includes("401"),
+	).length;
+
+	if (react185Count > 0) {
+		return {
+			status: signInRendered ? "WARN" : "FAIL",
+			reason: signInRendered
+				? `Sign-in screen rendered, but React #185 occurred ${react185Count} time(s) in router transition.`
+				: `React #185 occurred ${react185Count} time(s), and the sign-in shell was not confirmed visible.`,
+		};
+	}
+
+	if (auth401Count > 0) {
+		return {
+			status: "WARN",
+			reason: `Unauthenticated auth token request returned 401 ${auth401Count} time(s).`,
+		};
+	}
+
+	if (consoleErrors.length > 0 || pageErrors.length > 0) {
+		return {
+			status: "WARN",
+			reason: `${consoleErrors.length} console error(s), ${pageErrors.length} page error(s).`,
+		};
+	}
+
+	return {
+		status: "PASS",
+		reason: "No console or page errors were observed.",
+	};
+}
+
 function writeJson() {
 	writeFileSync(
 		consoleErrorsPath,
@@ -94,6 +175,8 @@ function writeJson() {
 				consoleErrors,
 				consoleWarnings,
 				pageErrors,
+				shellRuntimeHealth: shellRuntimeHealth(),
+				topErrorSummary: topErrorSummary(),
 			},
 			null,
 			2,
@@ -102,11 +185,17 @@ function writeJson() {
 }
 
 function writeReport() {
+	const health = shellRuntimeHealth();
 	const lines = [];
 	lines.push("# DoyDeck Electron QA Report", "");
 	lines.push(`- 実行日時: ${runAt}`);
 	lines.push("- run mode: launch");
 	lines.push(`- result: ${resultStatus()}`);
+	lines.push(`- shell runtime health: ${health.status}`);
+	lines.push(`- shell runtime reason: ${health.reason}`);
+	lines.push(`- console error count: ${consoleErrors.length}`);
+	lines.push(`- page error count: ${pageErrors.length}`);
+	lines.push(`- top error summary: ${topErrorSummary()}`);
 	lines.push(`- app launch target: \`${desktopDir}\``);
 	lines.push(`- electron executable: \`${electronPath}\``);
 	lines.push(`- main artifact: \`${mainEntry}\``);
@@ -155,6 +244,16 @@ function writeReport() {
 		}
 	}
 
+	lines.push("", "## Shell Runtime Health", "");
+	lines.push(`- status: ${health.status}`);
+	lines.push(`- reason: ${health.reason}`);
+	lines.push(`- console error count: ${consoleErrors.length}`);
+	lines.push(`- page error count: ${pageErrors.length}`);
+	lines.push(`- top error summary: ${topErrorSummary()}`);
+	lines.push(
+		"- classification note: launch-only app/window/screenshot checks can pass while shell runtime health remains WARN or FAIL.",
+	);
+
 	lines.push("", "## Console / Page Errors", "");
 	if (consoleErrors.length === 0 && pageErrors.length === 0) {
 		lines.push("- none");
@@ -170,10 +269,16 @@ function writeReport() {
 	lines.push("", "## Notes", "");
 	lines.push("- This is a launch-only QA. Commander, Browser AI, Auto Loop, Worker binding, and Handoff Ledger are not checked in S6.3.");
 	lines.push("- Runtime directories live under `tmp/doydeck-electron-qa/runtime` to avoid the normal Superset profile and the existing DoyDeck safe-dev profile.");
-	lines.push("- Console/page errors are recorded for follow-up, but they do not fail this launch-only harness unless the app/window/screenshot path itself fails.");
+	lines.push("- Console/page errors are recorded separately as shell runtime health. They do not fail this launch-only harness unless the app/window/screenshot path itself fails.");
 
 	lines.push("", "## Next Integration Step", "");
-	lines.push("- Add either a launch-only QA data-testid surface for the latest-main shell, or a minimal Commander placeholder before porting Browser AI or Auto Loop.");
+	if (health.status === "FAIL") {
+		lines.push("- Fix the shell runtime blocker before adding a Commander placeholder.");
+	} else if (health.status === "WARN") {
+		lines.push("- Treat latest-main shell health as WARN and keep the React/auth errors visible while adding the next minimal Commander placeholder.");
+	} else {
+		lines.push("- Add either a launch-only QA data-testid surface for the latest-main shell, or a minimal Commander placeholder before porting Browser AI or Auto Loop.");
+	}
 
 	writeFileSync(reportPath, `${lines.join("\n")}\n`);
 }
@@ -289,8 +394,18 @@ try {
 		url: firstWindow.url(),
 		title: await firstWindow.title(),
 		viewport: JSON.stringify(firstWindow.viewportSize()),
+		bodyTextPreview: await firstWindow
+			.locator("body")
+			.innerText({ timeout: 5_000 })
+			.then((text) => text.replace(/\s+/g, " ").trim().slice(0, 500))
+			.catch(() => ""),
 	};
 	record("PASS", "renderer URL / title", `${windowSnapshot.title || "(untitled)"} ${windowSnapshot.url}`);
+	if (windowSnapshot.bodyTextPreview.includes("Welcome to Superset")) {
+		record("PASS", "latest-main shell visible", "Sign-in shell rendered");
+	} else {
+		record("WARN", "latest-main shell visible", "Sign-in shell text was not confirmed");
+	}
 
 	await capture(firstWindow, "00-startup");
 	record(
