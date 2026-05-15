@@ -645,3 +645,92 @@ portable feature is a launch-only Electron QA or a Commander placeholder with
 stable `data-testid` hooks. Browser AI, Auto Loop, Worker binding, Handoff
 Ledger, stealth/preload changes, and Real Agent QA should remain out of scope
 until the shell integration is verified.
+
+## S6.3 Launch-Only Electron QA Minimal Port
+
+S6.3 adds the first DoyDeck-specific QA runner on the latest-Superset
+integration branch. The runner is intentionally launch-only: it does not look
+for Commander, Browser AI, Auto Loop, Worker binding, Handoff Ledger, or any
+DoyDeck UI that has not been ported yet.
+
+### Added Script
+
+- `apps/desktop/scripts/doydeck-electron-qa.mjs`
+- package script: `bun run --cwd apps/desktop electron-qa:doydeck`
+
+The runner uses Playwright's Electron launcher against the compiled desktop app
+and writes:
+
+- `tmp/doydeck-electron-qa/report.md`
+- `tmp/doydeck-electron-qa/screenshots/00-startup.png`
+- `tmp/doydeck-electron-qa/console-errors.json`
+
+The `tmp/doydeck-electron-qa/` output directory is ignored by Git.
+
+### QA Runtime Isolation
+
+The runner forces a QA-only safe-dev profile instead of inheriting ambient
+Superset environment values:
+
+```text
+NODE_ENV=production
+DOYDECK_DEV_MODE=1
+SUPERSET_WORKSPACE_NAME=doydeck-electron-qa
+SUPERSET_HOME_DIR=tmp/doydeck-electron-qa/runtime/home
+DOYDECK_SUPERSET_USER_DATA_DIR=tmp/doydeck-electron-qa/runtime/user-data
+SUPERSET_SKIP_AGENT_HOOKS=1
+DOYDECK_SKIP_AGENT_HOOKS=1
+SKIP_ENV_VALIDATION=1
+```
+
+The report's runtime snapshot confirmed:
+
+- Electron `userData` was under `tmp/doydeck-electron-qa/runtime/user-data`
+- `SUPERSET_HOME_DIR` was under `tmp/doydeck-electron-qa/runtime/home`
+- `DOYDECK_DEV_MODE=1`
+- agent hooks were skipped
+
+This keeps generated `local.db`, `app-state.json`, terminal-host token/socket
+state, and browser userData out of both the normal Superset profile and the
+existing DoyDeck safe-dev profile.
+
+### S6.3 Execution Result
+
+Validation commands:
+
+```text
+node --check apps/desktop/scripts/doydeck-electron-qa.mjs
+git diff --check
+NODE_OPTIONS=--max-old-space-size=8192 bun run --cwd apps/desktop compile:app
+bun run --cwd apps/desktop electron-qa:doydeck
+```
+
+Result:
+
+- build artifacts found
+- Electron app launched
+- first BrowserWindow detected
+- renderer URL captured:
+  `file://.../apps/desktop/dist/renderer/index.html#/sign-in`
+- screenshot captured
+- console/page errors collected
+- launch-only QA result: PASS
+
+Observed console/page errors in the clean QA profile:
+
+- one `401` request to `https://api.superset.sh/api/auth/token`
+- repeated React production error `#185` while on `#/sign-in`
+
+These errors are recorded in `console-errors.json` and should be investigated
+before treating the latest-main shell as healthy, but they do not fail the
+S6.3 launch-only harness because the purpose of this step is to prove that the
+QA runner can launch the app, capture a screenshot, and write diagnostics.
+
+### Next Candidate
+
+The next minimal integration step should be one of:
+
+1. add a latest-main shell health check that classifies the current sign-in
+   errors more explicitly, or
+2. add a small DoyDeck Commander placeholder with stable `data-testid` hooks,
+   while leaving Browser AI and Auto Loop out of scope.

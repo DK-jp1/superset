@@ -42,6 +42,7 @@ mise.toml
 
 # Temporary files
 .tmp/
+/tmp/doydeck-electron-qa/
 
 # Turbo
 .turbo
