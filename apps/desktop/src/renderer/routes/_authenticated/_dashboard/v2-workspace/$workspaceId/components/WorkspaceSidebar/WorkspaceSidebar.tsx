@@ -1,6 +1,6 @@
 import { Button } from "@superset/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@superset/ui/tooltip";
-import { Search } from "lucide-react";
+import { Bot, Search } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { LuFile, LuGitCompareArrows } from "react-icons/lu";
 import { useGitStatus } from "renderer/hooks/host-service/useGitStatus";
@@ -22,8 +22,23 @@ import type { SidebarTabDefinition } from "./types";
 const CREATE_PR_BUTTON_ENABLED = false;
 
 type SidebarTabId = "changes" | "files" | "review";
+type BrowserAiProvider = "chatgpt" | "claude";
 
 const VALID_TAB_IDS: readonly SidebarTabId[] = ["changes", "files", "review"];
+
+const BROWSER_AI_PROVIDER_META: Record<
+	BrowserAiProvider,
+	{ label: string; url: string }
+> = {
+	chatgpt: {
+		label: "ChatGPT",
+		url: "https://chatgpt.com/",
+	},
+	claude: {
+		label: "Claude",
+		url: "https://claude.ai/",
+	},
+};
 
 function isSidebarTabId(tab: string): tab is SidebarTabId {
 	return (VALID_TAB_IDS as readonly string[]).includes(tab);
@@ -119,6 +134,93 @@ function DoyDeckCommanderPlaceholder({
 				<code className="min-w-0 truncate rounded bg-background/70 px-1 py-0.5 font-mono">
 					{shortWorkspaceId || "unknown"}
 				</code>
+			</div>
+		</section>
+	);
+}
+
+function DoyDeckBrowserAiSinglePanel({
+	workspaceId,
+	routeWorkspaceId,
+}: {
+	workspaceId: string;
+	routeWorkspaceId?: string;
+}) {
+	const [provider, setProvider] = useState<BrowserAiProvider>("chatgpt");
+	const displayedWorkspaceId = routeWorkspaceId || workspaceId;
+	const providerMeta = BROWSER_AI_PROVIDER_META[provider];
+
+	return (
+		<section
+			data-testid="doydeck-browser-ai-single-panel"
+			data-workspace-id={displayedWorkspaceId}
+			data-provider={provider}
+			className="mx-2 mb-2 overflow-hidden rounded-lg border border-border/80 bg-card text-xs shadow-sm"
+		>
+			<div className="border-b border-border/70 px-3 py-2.5">
+				<div className="flex min-w-0 items-center justify-between gap-2">
+					<div className="flex min-w-0 items-center gap-2">
+						<div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-blue-600 text-white">
+							<Bot className="size-3.5" />
+						</div>
+						<div className="min-w-0">
+							<div className="truncate font-semibold text-foreground">
+								Browser AI
+							</div>
+							<div className="mt-0.5 text-[11px] text-muted-foreground">
+								Single panel PoC
+							</div>
+						</div>
+					</div>
+					<span className="shrink-0 rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+						{providerMeta.label}
+					</span>
+				</div>
+
+				<div className="mt-2 grid grid-cols-2 gap-1.5">
+					{(["chatgpt", "claude"] as const).map((candidate) => {
+						const selected = provider === candidate;
+						const meta = BROWSER_AI_PROVIDER_META[candidate];
+						return (
+							<button
+								key={candidate}
+								type="button"
+								data-testid={`doydeck-browser-ai-provider-${candidate}`}
+								className={
+									selected
+										? "rounded-md border border-blue-500 bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
+										: "rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
+								}
+								onClick={() => setProvider(candidate)}
+							>
+								{meta.label}
+							</button>
+						);
+					})}
+				</div>
+			</div>
+
+			<div className="space-y-2 px-3 py-2.5">
+				<div className="min-w-0 rounded-md border border-border/70 bg-muted/30 px-2 py-1.5">
+					<div className="text-[10px] font-medium uppercase text-muted-foreground">
+						Target URL
+					</div>
+					<div
+						className="mt-0.5 truncate font-mono text-[11px] text-foreground"
+						title={providerMeta.url}
+					>
+						{providerMeta.url}
+					</div>
+				</div>
+
+				<div className="rounded-md border border-dashed border-blue-500/30 bg-blue-50/60 px-2.5 py-2 dark:bg-blue-950/20">
+					<div className="font-medium text-foreground">Webview pending</div>
+					<p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+						Provider selection and panel bounds are available. ChatGPT / Claude
+						webview, injection, Auto Loop, Worker binding, and Handoff are not
+						ported in S6.5.
+					</p>
+				</div>
 			</div>
 		</section>
 	);
@@ -227,6 +329,10 @@ export function WorkspaceSidebar({
 				createPREnabled={CREATE_PR_BUTTON_ENABLED}
 			/>
 			<DoyDeckCommanderPlaceholder
+				workspaceId={workspaceId}
+				routeWorkspaceId={routeWorkspaceId}
+			/>
+			<DoyDeckBrowserAiSinglePanel
 				workspaceId={workspaceId}
 				routeWorkspaceId={routeWorkspaceId}
 			/>

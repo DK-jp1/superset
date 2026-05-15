@@ -879,3 +879,73 @@ The next smallest useful step is one of:
    the placeholder can be screenshot-confirmed automatically, or
 2. port a single Browser AI panel placeholder below the Commander placeholder,
    still without webview injection or Auto Loop.
+
+## S6.5 Browser AI Single Panel Minimal Port
+
+S6.5 adds a Browser AI single-panel PoC below the S6.4 Commander placeholder in
+`WorkspaceSidebar`. This is intentionally a skeleton, not a webview runtime port.
+It proves the latest Superset right sidebar can host the next DoyDeck surface
+without pulling in Commander Browser runtime, stealth preload, Auto Loop, Worker
+binding, Real Agent QA, or Handoff Ledger.
+
+### Implementation Location
+
+- UI surface:
+  `apps/desktop/src/renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/components/WorkspaceSidebar/WorkspaceSidebar.tsx`
+- Launch-only QA report:
+  `apps/desktop/scripts/doydeck-electron-qa.mjs`
+
+The panel renders below `DoyDeckCommanderPlaceholder` and above the existing
+Files / Changes / Review tab header. It stays inside the existing right sidebar
+layout and does not add or persist a new sidebar tab.
+
+### Panel Scope
+
+The panel includes:
+
+- stable test id: `doydeck-browser-ai-single-panel`
+- workspace context via `data-workspace-id`
+- provider state via `data-provider`
+- two provider buttons: ChatGPT and Claude
+- target URL display for the selected provider
+- explicit `Webview pending` status copy
+
+The panel does not include:
+
+- Electron `<webview>` creation
+- ChatGPT / Claude injection
+- stealth or preload hooks
+- Browser AI capture
+- Auto Loop
+- Worker binding
+- Handoff Ledger
+
+### Electron QA Coverage
+
+`electron-qa:doydeck` now records Browser AI panel visibility alongside the
+Commander placeholder:
+
+- `Browser AI panel visible: yes/no`
+- selected provider if visible
+- panel text preview
+- visibility note
+
+As with S6.4, the launch-only clean QA profile may still land on sign-in. In
+that case the panel visibility is reported as unknown rather than failing app
+launch. A manual signed-in / seeded workspace route is still needed for visual
+confirmation until a proper latest-integration fixture exists.
+
+### Result
+
+S6.5 keeps behavior change minimal:
+
+- right sidebar placement is expanded from Commander placeholder to Browser AI
+  panel skeleton;
+- ChatGPT / Claude provider selection is local React state only;
+- no provider webview, account state, cookies, tokens, private APIs, Auto Loop,
+  or Worker paths are touched.
+
+Next candidate: either add a safe fixture route for Electron QA so the panel can
+be screenshot-confirmed in launch-only mode, or port a single real Browser AI
+webview behind this panel while still leaving Auto Loop and per-tab slots out of
+scope.

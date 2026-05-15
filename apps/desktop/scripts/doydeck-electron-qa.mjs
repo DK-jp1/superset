@@ -43,6 +43,7 @@ let firstWindow;
 let runtimeSnapshot = null;
 let windowSnapshot = null;
 let commanderPlaceholderSnapshot = null;
+let browserAiPanelSnapshot = null;
 
 const safeDevEnv = {
 	NODE_ENV: "production",
@@ -188,6 +189,7 @@ function writeJson() {
 				shellRuntimeHealth: shellRuntimeHealth(),
 				topErrorSummary: topErrorSummary(),
 				commanderPlaceholder: commanderPlaceholderSnapshot,
+				browserAiPanel: browserAiPanelSnapshot,
 			},
 			null,
 			2,
@@ -216,6 +218,11 @@ function writeReport() {
 	lines.push(
 		`- Commander placeholder visible: ${
 			commanderPlaceholderSnapshot?.visible ? "yes" : "no"
+		}`,
+	);
+	lines.push(
+		`- Browser AI panel visible: ${
+			browserAiPanelSnapshot?.visible ? "yes" : "no"
 		}`,
 	);
 
@@ -251,6 +258,18 @@ function writeReport() {
 			`- text preview: \`${commanderPlaceholderSnapshot.textPreview || "(none)"}\``,
 		);
 		lines.push(`- note: ${commanderPlaceholderSnapshot.note}`);
+	} else {
+		lines.push("- not captured");
+	}
+
+	lines.push("", "## Browser AI Single Panel", "");
+	if (browserAiPanelSnapshot) {
+		lines.push(`- visible: ${browserAiPanelSnapshot.visible ? "yes" : "no"}`);
+		lines.push(`- provider: ${browserAiPanelSnapshot.provider || "(unknown)"}`);
+		lines.push(
+			`- text preview: \`${browserAiPanelSnapshot.textPreview || "(none)"}\``,
+		);
+		lines.push(`- note: ${browserAiPanelSnapshot.note}`);
 	} else {
 		lines.push("- not captured");
 	}
@@ -296,7 +315,7 @@ function writeReport() {
 	}
 
 	lines.push("", "## Notes", "");
-	lines.push("- This is a launch-only QA. Browser AI, Auto Loop, Worker binding, and Handoff Ledger are not checked in S6.4.");
+	lines.push("- This is a launch-only QA. S6.5 checks only the Browser AI single panel PoC surface when a v2 workspace route is reachable; real Browser AI webview, Auto Loop, Worker binding, and Handoff Ledger are not checked.");
 	lines.push("- S6.4 checks only whether the minimal Commander placeholder is reachable in the latest-main shell. If the clean profile remains on sign-in, placeholder visibility is reported as no/unknown rather than failing app launch.");
 	lines.push("- Runtime directories live under `tmp/doydeck-electron-qa/runtime` to avoid the normal Superset profile and the existing DoyDeck safe-dev profile.");
 	lines.push("- Console/page errors are recorded separately as shell runtime health. They do not fail this launch-only harness unless the app/window/screenshot path itself fails.");
@@ -461,6 +480,35 @@ try {
 		commanderPlaceholderVisible ? "PASS" : "UNKNOWN",
 		"Commander placeholder visible",
 		commanderPlaceholderSnapshot.note,
+	);
+
+	const browserAiPanel = firstWindow.getByTestId(
+		"doydeck-browser-ai-single-panel",
+	);
+	const browserAiPanelVisible = await locatorVisible(browserAiPanel, 3_000);
+	const browserAiPanelText = browserAiPanelVisible
+		? await browserAiPanel
+				.innerText({ timeout: 2_000 })
+				.then((text) => text.replace(/\s+/g, " ").trim().slice(0, 400))
+				.catch(() => "")
+		: "";
+	const browserAiPanelProvider = browserAiPanelVisible
+		? await browserAiPanel
+				.getAttribute("data-provider", { timeout: 2_000 })
+				.catch(() => null)
+		: null;
+	browserAiPanelSnapshot = {
+		visible: browserAiPanelVisible,
+		provider: browserAiPanelProvider,
+		textPreview: browserAiPanelText,
+		note: browserAiPanelVisible
+			? "Minimal Browser AI single panel PoC rendered in the right WorkspaceSidebar."
+			: "Browser AI panel was not visible in this launch-only run. The clean QA profile may still be on sign-in or outside a v2 workspace route.",
+	};
+	record(
+		browserAiPanelVisible ? "PASS" : "UNKNOWN",
+		"Browser AI panel visible",
+		browserAiPanelSnapshot.note,
 	);
 
 	await capture(firstWindow, "00-startup");
