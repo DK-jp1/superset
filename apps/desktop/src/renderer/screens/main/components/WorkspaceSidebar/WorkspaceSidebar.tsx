@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DoyDeckExplorer } from "renderer/components/DoyDeckExplorer";
 import { V2AvailableBanner } from "renderer/components/V2AvailableBanner";
 import { useWorkspaceShortcuts } from "renderer/hooks/useWorkspaceShortcuts";
+import { subscribeDoyDeckExplorerNavigationRequests } from "renderer/stores/doydeck-explorer-navigation";
 import { useWorkspaceSelectionStore } from "renderer/stores/workspace-selection";
 import { MultiDragPreview } from "./MultiDragPreview";
 import { PortsList } from "./PortsList";
@@ -28,6 +29,14 @@ export function WorkspaceSidebar({
 	const clearSelection = useWorkspaceSelectionStore((s) => s.clearSelection);
 	const [activeView, setActiveView] = useState<"workspaces" | "explorer">(
 		"workspaces",
+	);
+
+	useEffect(
+		() =>
+			subscribeDoyDeckExplorerNavigationRequests(activeWorkspaceId, () => {
+				setActiveView("explorer");
+			}),
+		[activeWorkspaceId],
 	);
 
 	const projectShortcutIndices = useMemo(

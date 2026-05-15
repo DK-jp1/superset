@@ -3,6 +3,7 @@ import { useCallback } from "react";
 import { electronTrpc } from "renderer/lib/electron-trpc";
 import type { DetectedLink } from "renderer/lib/terminal/links";
 import { electronTrpcClient as trpcClient } from "renderer/lib/trpc-client";
+import { requestDoyDeckExplorerPathNavigation } from "renderer/stores/doydeck-explorer-navigation";
 import { useTabsStore } from "renderer/stores/tabs/store";
 
 export interface UseFileLinkClickOptions {
@@ -12,6 +13,10 @@ export interface UseFileLinkClickOptions {
 
 export interface UseFileLinkClickReturn {
 	handleFileLinkClick: (event: MouseEvent, link: DetectedLink) => void;
+}
+
+function isMacOrLinuxAbsolutePath(text: string): boolean {
+	return text.trim().startsWith("/");
 }
 
 export function useFileLinkClick({
@@ -24,9 +29,23 @@ export function useFileLinkClick({
 		electronTrpc.settings.getTerminalLinkBehavior.useQuery();
 
 	const handleFileLinkClick = useCallback(
-		(_event: MouseEvent, link: DetectedLink) => {
+		(event: MouseEvent, link: DetectedLink) => {
 			const { resolvedPath, row: line, col: column, isDirectory } = link;
 			const behavior = terminalLinkBehavior ?? "file-viewer";
+
+			if (
+				(event.metaKey || event.ctrlKey) &&
+				isMacOrLinuxAbsolutePath(link.text)
+			) {
+				const requested = requestDoyDeckExplorerPathNavigation(
+					workspaceId,
+					resolvedPath,
+				);
+				if (requested) {
+					toast.success("Opening Terminal path in Explorer");
+					return;
+				}
+			}
 
 			const openInExternalEditor = () => {
 				trpcClient.external.openFileInEditor

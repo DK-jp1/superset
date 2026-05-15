@@ -42,6 +42,7 @@ export function DashboardSidebarHeader({
 	activeView = "workspaces",
 	onViewChange,
 }: DashboardSidebarHeaderProps) {
+	const hideTasksNav = process.env.SUPERSET_WORKSPACE_NAME === "doydeck-dev";
 	const openModal = useOpenNewWorkspaceModal();
 	const openNewProject = useOpenNewProjectModal();
 	const navigate = useNavigate();
@@ -135,23 +136,25 @@ export function DashboardSidebarHeader({
 					<TooltipContent side="right">Workspaces</TooltipContent>
 				</Tooltip>
 
-				<Tooltip delayDuration={300}>
-					<TooltipTrigger asChild>
-						<button
-							type="button"
-							onClick={handleTasksClick}
-							className={cn(
-								"flex size-8 items-center justify-center rounded-md transition-colors",
-								isTasksOpen
-									? "bg-accent text-foreground"
-									: "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-							)}
-						>
-							<HiOutlineClipboardDocumentList className="size-4" />
-						</button>
-					</TooltipTrigger>
-					<TooltipContent side="right">Tasks</TooltipContent>
-				</Tooltip>
+				{!hideTasksNav && (
+					<Tooltip delayDuration={300}>
+						<TooltipTrigger asChild>
+							<button
+								type="button"
+								onClick={handleTasksClick}
+								className={cn(
+									"flex size-8 items-center justify-center rounded-md transition-colors",
+									isTasksOpen
+										? "bg-accent text-foreground"
+										: "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+								)}
+							>
+								<HiOutlineClipboardDocumentList className="size-4" />
+							</button>
+						</TooltipTrigger>
+						<TooltipContent side="right">Tasks</TooltipContent>
+					</Tooltip>
+				)}
 
 				<Tooltip delayDuration={300}>
 					<TooltipTrigger asChild>
@@ -281,19 +284,21 @@ export function DashboardSidebarHeader({
 				</button>
 			)}
 
-			<button
-				type="button"
-				onClick={handleTasksClick}
-				className={cn(
-					"flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium transition-colors",
-					isTasksOpen
-						? "bg-accent text-foreground"
-						: "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-				)}
-			>
-				<HiOutlineClipboardDocumentList className="size-4 shrink-0" />
-				<span className="flex-1 text-left">Tasks</span>
-			</button>
+			{!hideTasksNav && (
+				<button
+					type="button"
+					onClick={handleTasksClick}
+					className={cn(
+						"flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium transition-colors",
+						isTasksOpen
+							? "bg-accent text-foreground"
+							: "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+					)}
+				>
+					<HiOutlineClipboardDocumentList className="size-4 shrink-0" />
+					<span className="flex-1 text-left">Tasks</span>
+				</button>
+			)}
 
 			<button
 				type="button"

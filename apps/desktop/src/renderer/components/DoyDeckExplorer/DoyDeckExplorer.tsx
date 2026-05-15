@@ -45,6 +45,7 @@ import {
 	sendSelectedPathToTerminalPreview,
 } from "renderer/stores/doydeck-commander-actions";
 import { useDoyDeckDropdownClose } from "renderer/stores/doydeck-dropdown-close-events";
+import { registerDoyDeckExplorerPathNavigator } from "renderer/stores/doydeck-explorer-navigation";
 import { setDoyDeckNativeFileDragActive } from "renderer/stores/doydeck-native-file-drag";
 import { openDoyDeckCenterPreview } from "renderer/stores/doydeck-preview-openers";
 import type { CommanderSelectedPath } from "renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/components/WorkspaceSidebar/components/CommanderTab/commander-types";
@@ -496,57 +497,74 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		void loadDirectory(selectedRoot.absolutePath);
 	};
 
+	const navigateToPath = useCallback(
+		async (requestedPath: string) => {
+			const normalizedRequest = requestedPath.trim();
+			if (!normalizedRequest) {
+				toast.info("Enter a path to open in Explorer");
+				return;
+			}
+
+			try {
+				const resolved = await resolvePathMutation.mutateAsync({
+					workspaceId,
+					path: normalizedRequest,
+				});
+				suppressRootAutoLoadRef.current = resolved.rootId;
+				setRootId(resolved.rootId);
+				setRootPath(resolved.rootPath);
+				setDirectoryState({});
+				setExpanded(new Set());
+				setSelectedPath(null);
+				setSelectedKind(null);
+
+				const directoriesToLoad = [
+					resolved.rootPath,
+					...getAncestorDirectoryPaths(
+						resolved.rootPath,
+						resolved.explorerDirectoryPath,
+					),
+				];
+				for (const directoryPath of directoriesToLoad) {
+					await loadDirectory(directoryPath, resolved.rootId);
+				}
+
+				setExpanded(
+					new Set(
+						directoriesToLoad.filter(
+							(directoryPath) => directoryPath !== resolved.rootPath,
+						),
+					),
+				);
+				setSelectedPath(resolved.absolutePath);
+				setSelectedKind(resolved.kind);
+				setPathInput(resolved.absolutePath);
+				toast.success(
+					resolved.kind === "directory"
+						? "Directory opened in Explorer"
+						: "Path selected in Explorer",
+				);
+			} catch (error) {
+				toast.error("Could not open path in Explorer", {
+					description: getErrorMessage(error),
+				});
+			}
+		},
+		[loadDirectory, resolvePathMutation, workspaceId],
+	);
+
+	useEffect(
+		() => registerDoyDeckExplorerPathNavigator(workspaceId, navigateToPath),
+		[navigateToPath, workspaceId],
+	);
+
 	const handleGoToPath = async () => {
 		const requestedPath = pathInput.trim();
 		if (!requestedPath) {
 			toast.info("Enter a path to open in Explorer");
 			return;
 		}
-
-		try {
-			const resolved = await resolvePathMutation.mutateAsync({
-				workspaceId,
-				path: requestedPath,
-			});
-			suppressRootAutoLoadRef.current = resolved.rootId;
-			setRootId(resolved.rootId);
-			setRootPath(resolved.rootPath);
-			setDirectoryState({});
-			setExpanded(new Set());
-			setSelectedPath(null);
-			setSelectedKind(null);
-
-			const directoriesToLoad = [
-				resolved.rootPath,
-				...getAncestorDirectoryPaths(
-					resolved.rootPath,
-					resolved.explorerDirectoryPath,
-				),
-			];
-			for (const directoryPath of directoriesToLoad) {
-				await loadDirectory(directoryPath, resolved.rootId);
-			}
-
-			setExpanded(
-				new Set(
-					directoriesToLoad.filter(
-						(directoryPath) => directoryPath !== resolved.rootPath,
-					),
-				),
-			);
-			setSelectedPath(resolved.absolutePath);
-			setSelectedKind(resolved.kind);
-			setPathInput(resolved.absolutePath);
-			toast.success(
-				resolved.kind === "directory"
-					? "Directory opened in Explorer"
-					: "Path selected in Explorer",
-			);
-		} catch (error) {
-			toast.error("Could not open path in Explorer", {
-				description: getErrorMessage(error),
-			});
-		}
+		await navigateToPath(requestedPath);
 	};
 
 	const handleCopy = async (text: string, message: string) => {

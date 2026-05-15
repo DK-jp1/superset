@@ -29,6 +29,7 @@ import { V2AvailableBanner } from "renderer/components/V2AvailableBanner";
 import { useHotkeyDisplay } from "renderer/hotkeys";
 import { useDashboardSidebarState } from "renderer/routes/_authenticated/hooks/useDashboardSidebarState";
 import { useLocalHostService } from "renderer/routes/_authenticated/providers/LocalHostServiceProvider";
+import { subscribeDoyDeckExplorerNavigationRequests } from "renderer/stores/doydeck-explorer-navigation";
 import { DashboardSidebarHeader } from "./components/DashboardSidebarHeader";
 import { DashboardSidebarHelpMenu } from "./components/DashboardSidebarHelpMenu";
 import { DashboardSidebarHoverCardOverlay } from "./components/DashboardSidebarHoverCardOverlay";
@@ -125,6 +126,14 @@ export function DashboardSidebar({
 		useState<DashboardSidebarProject | null>(null);
 	const [activeView, setActiveView] =
 		useState<DashboardSidebarView>("workspaces");
+
+	useEffect(
+		() =>
+			subscribeDoyDeckExplorerNavigationRequests(activeV2WorkspaceId, () => {
+				setActiveView("explorer");
+			}),
+		[activeV2WorkspaceId],
+	);
 
 	// Local project order — syncs from groups, updated on drag end
 	const [projectOrder, setProjectOrder] = useState(() =>

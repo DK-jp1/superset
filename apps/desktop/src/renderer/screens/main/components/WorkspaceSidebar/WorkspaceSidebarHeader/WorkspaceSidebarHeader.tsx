@@ -19,6 +19,7 @@ export function WorkspaceSidebarHeader({
 	activeView = "workspaces",
 	onViewChange,
 }: WorkspaceSidebarHeaderProps) {
+	const hideTasksNav = process.env.SUPERSET_WORKSPACE_NAME === "doydeck-dev";
 	const navigate = useNavigate();
 	const matchRoute = useMatchRoute();
 	const { gateFeature } = usePaywall();
@@ -78,26 +79,28 @@ export function WorkspaceSidebarHeader({
 					<TooltipContent side="right">Workspaces</TooltipContent>
 				</Tooltip>
 
-				<Tooltip delayDuration={300}>
-					<TooltipTrigger asChild>
-						<button
-							type="button"
-							onClick={handleTasksClick}
-							className={cn(
-								"flex items-center justify-center size-8 rounded-md transition-colors",
-								isTasksOpen
-									? "text-foreground bg-accent"
-									: "text-muted-foreground hover:text-foreground hover:bg-accent/50",
-							)}
-						>
-							<HiOutlineClipboardDocumentList
-								className="size-4"
-								strokeWidth={STROKE_WIDTH}
-							/>
-						</button>
-					</TooltipTrigger>
-					<TooltipContent side="right">Tasks</TooltipContent>
-				</Tooltip>
+				{!hideTasksNav && (
+					<Tooltip delayDuration={300}>
+						<TooltipTrigger asChild>
+							<button
+								type="button"
+								onClick={handleTasksClick}
+								className={cn(
+									"flex items-center justify-center size-8 rounded-md transition-colors",
+									isTasksOpen
+										? "text-foreground bg-accent"
+										: "text-muted-foreground hover:text-foreground hover:bg-accent/50",
+								)}
+							>
+								<HiOutlineClipboardDocumentList
+									className="size-4"
+									strokeWidth={STROKE_WIDTH}
+								/>
+							</button>
+						</TooltipTrigger>
+						<TooltipContent side="right">Tasks</TooltipContent>
+					</Tooltip>
+				)}
 
 				<Tooltip delayDuration={300}>
 					<TooltipTrigger asChild>
@@ -141,24 +144,26 @@ export function WorkspaceSidebarHeader({
 				<span className="text-sm font-medium flex-1 text-left">Workspaces</span>
 			</button>
 
-			<button
-				type="button"
-				onClick={handleTasksClick}
-				className={cn(
-					"flex items-center gap-2 px-2 py-1.5 w-full rounded-md transition-colors",
-					isTasksOpen
-						? "text-foreground bg-accent"
-						: "text-muted-foreground hover:text-foreground hover:bg-accent/50",
-				)}
-			>
-				<div className="flex items-center justify-center size-5">
-					<HiOutlineClipboardDocumentList
-						className="size-4"
-						strokeWidth={STROKE_WIDTH}
-					/>
-				</div>
-				<span className="text-sm font-medium flex-1 text-left">Tasks</span>
-			</button>
+			{!hideTasksNav && (
+				<button
+					type="button"
+					onClick={handleTasksClick}
+					className={cn(
+						"flex items-center gap-2 px-2 py-1.5 w-full rounded-md transition-colors",
+						isTasksOpen
+							? "text-foreground bg-accent"
+							: "text-muted-foreground hover:text-foreground hover:bg-accent/50",
+					)}
+				>
+					<div className="flex items-center justify-center size-5">
+						<HiOutlineClipboardDocumentList
+							className="size-4"
+							strokeWidth={STROKE_WIDTH}
+						/>
+					</div>
+					<span className="text-sm font-medium flex-1 text-left">Tasks</span>
+				</button>
+			)}
 
 			<button
 				type="button"

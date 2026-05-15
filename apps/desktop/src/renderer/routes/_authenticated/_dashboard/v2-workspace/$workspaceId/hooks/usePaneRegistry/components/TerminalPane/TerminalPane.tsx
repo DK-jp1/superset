@@ -33,6 +33,7 @@ import { openUrlInV2Workspace } from "renderer/routes/_authenticated/_dashboard/
 import { useWorkspaceWsUrl } from "renderer/routes/_authenticated/_dashboard/v2-workspace/providers/WorkspaceTrpcProvider/WorkspaceTrpcProvider";
 import { ScrollToBottomButton } from "renderer/screens/main/components/WorkspaceView/ContentView/TabsContent/Terminal/ScrollToBottomButton";
 import { TerminalSearch } from "renderer/screens/main/components/WorkspaceView/ContentView/TabsContent/Terminal/TerminalSearch";
+import { requestDoyDeckExplorerPathNavigation } from "renderer/stores/doydeck-explorer-navigation";
 import { useTheme } from "renderer/stores/theme";
 import { resolveTerminalThemeType } from "renderer/stores/theme/utils";
 import { useLinkClickHint } from "./hooks/useLinkClickHint";
@@ -46,6 +47,10 @@ interface TerminalPaneProps {
 	workspaceId: string;
 	onOpenFile: (path: string, openInNewTab?: boolean) => void;
 	onRevealPath: (path: string, options?: { isDirectory?: boolean }) => void;
+}
+
+function isMacOrLinuxAbsolutePath(text: string): boolean {
+	return text.trim().startsWith("/");
 }
 
 export function TerminalPane({
@@ -235,6 +240,15 @@ export function TerminalPane({
 					}
 				},
 				onFileLinkClick: (event, link) => {
+					if (
+						(event.metaKey || event.ctrlKey) &&
+						isMacOrLinuxAbsolutePath(link.text) &&
+						requestDoyDeckExplorerPathNavigation(workspaceId, link.resolvedPath)
+					) {
+						event.preventDefault();
+						return;
+					}
+
 					if (link.isDirectory) {
 						const intent = folderIntentFor(event);
 						if (intent === null) {

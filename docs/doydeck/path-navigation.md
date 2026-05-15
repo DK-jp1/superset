@@ -33,16 +33,31 @@ The resolver is read-only. It performs path normalization, existence checks, roo
 
 The Terminal already has xterm link detection for file paths and URLs. It validates local paths through the existing `statPath` flow and activates path links with Cmd/Ctrl-click.
 
-Current behavior opens files in the file viewer or external editor depending on terminal link settings. A later phase can add an Explorer navigation bridge:
+Phase 2 adds an Explorer navigation bridge for absolute macOS/Linux paths printed in Terminal output:
 
 1. Explorer registers a per-workspace `navigateToPath(path)` handler.
 2. Terminal file-link activation resolves the path using the existing `statPath` callback.
-3. If the Explorer handler is available, Cmd/Ctrl-click sends the resolved path to Explorer.
+3. If Cmd/Ctrl is held and the original Terminal link text starts with `/`, the resolved path is sent to Explorer.
 4. Directories move Explorer to that directory.
-5. Files select the path in Explorer and can also open Center Preview.
-6. If Explorer is unavailable, Terminal keeps the current file-viewer/editor fallback.
+5. Files select the path in Explorer and show the existing Explorer preview.
+6. If the left Explorer is not mounted yet, the workspace sidebar switches to Explorer and replays the pending navigation request when Explorer registers.
+7. Non-absolute links keep the existing file-viewer/editor behavior.
 
-This avoids changing xterm rendering and keeps URL handling separate.
+This avoids changing xterm rendering, URL handling, keyboard input, or PTY write paths.
+
+Supported in Phase 2:
+
+- `/Users/...`
+- `/Volumes/...`
+- Other existing macOS/Linux absolute paths under available Explorer roots.
+
+Still deferred:
+
+- Relative paths from Terminal output.
+- `~/...` links from Terminal output.
+- Windows drive paths.
+- UNC paths.
+- `smb://...` URLs.
 
 ## Path Normalization
 
@@ -88,12 +103,14 @@ This keeps DoyDeck read-only and avoids credential, token, or private API handli
 
 ## Change Targets
 
-Phase 1 touches:
+Phase 1/2 touches:
 
 - `apps/desktop/src/lib/trpc/routers/doydeck-explorer/index.ts`
 - `apps/desktop/src/renderer/components/DoyDeckExplorer/DoyDeckExplorer.tsx`
-
-Future Terminal integration will likely touch:
-
+- `apps/desktop/src/renderer/stores/doydeck-explorer-navigation.ts`
+- `apps/desktop/src/renderer/screens/main/components/WorkspaceSidebar/WorkspaceSidebar.tsx`
+- `apps/desktop/src/renderer/routes/_authenticated/_dashboard/components/DashboardSidebar/DashboardSidebar.tsx`
 - `apps/desktop/src/renderer/screens/main/components/WorkspaceView/ContentView/TabsContent/Terminal/hooks/useFileLinkClick.ts`
-- A small Explorer navigation bridge/store registered by `DoyDeckExplorer`.
+- `apps/desktop/src/renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/hooks/usePaneRegistry/components/TerminalPane/TerminalPane.tsx`
+
+Phase 2 also hides the Tasks nav button in DoyDeck dev mode so the left Explorer header stays compact after adding path input. Normal Superset builds keep the Tasks nav.
