@@ -80,6 +80,7 @@ export function DoyDeckPreviewRenderer({
 	const pdfMetadataRef = useRef<HTMLDivElement>(null);
 	const pdfNoteRef = useRef<HTMLDivElement>(null);
 	const pdfFrameRef = useRef<HTMLIFrameElement>(null);
+	const imageElementRef = useRef<HTMLImageElement>(null);
 	const [imageZoomMode, setImageZoomMode] = useState<"fit" | "manual">("fit");
 	const [imageZoomScale, setImageZoomScale] = useState(1);
 	const [imageNaturalSize, setImageNaturalSize] = useState<{
@@ -153,8 +154,42 @@ export function DoyDeckPreviewRenderer({
 	const handleImageWheel = (event: WheelEvent<HTMLDivElement>) => {
 		if (!event.metaKey && !event.ctrlKey) return;
 		event.preventDefault();
+		const container = event.currentTarget;
+		const imageElement = imageElementRef.current;
+		if (!imageElement || !imageNaturalSize) {
+			const direction = event.deltaY < 0 ? 1 : -1;
+			adjustImageZoom(direction * IMAGE_ZOOM_STEP);
+			return;
+		}
+
+		const imageRect = imageElement.getBoundingClientRect();
+		const renderedScale =
+			imageRect.width > 0 ? imageRect.width / imageNaturalSize.width : 1;
+		const oldScale =
+			imageZoomMode === "manual" ? imageZoomScale : renderedScale;
+		const mouseX = event.clientX;
+		const mouseY = event.clientY;
+		const contentX = Math.min(
+			imageNaturalSize.width,
+			Math.max(0, (mouseX - imageRect.left) / oldScale),
+		);
+		const contentY = Math.min(
+			imageNaturalSize.height,
+			Math.max(0, (mouseY - imageRect.top) / oldScale),
+		);
 		const direction = event.deltaY < 0 ? 1 : -1;
-		adjustImageZoom(direction * IMAGE_ZOOM_STEP);
+		const newScale = clampImageZoom(oldScale + direction * IMAGE_ZOOM_STEP);
+
+		setImageZoomMode("manual");
+		setImageZoomScale(newScale);
+		window.requestAnimationFrame(() => {
+			const nextImageElement = imageElementRef.current;
+			if (!nextImageElement) return;
+			const nextImageRect = nextImageElement.getBoundingClientRect();
+			container.scrollLeft +=
+				nextImageRect.left + contentX * newScale - mouseX;
+			container.scrollTop += nextImageRect.top + contentY * newScale - mouseY;
+		});
 	};
 
 	const computedPdfFrameHeight =
@@ -369,6 +404,7 @@ export function DoyDeckPreviewRenderer({
 					}
 				>
 					<img
+						ref={imageElementRef}
 						src={objectUrl}
 						alt={getBaseName(filePath)}
 						className={
