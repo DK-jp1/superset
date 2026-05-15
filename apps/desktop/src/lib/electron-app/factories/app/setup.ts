@@ -82,9 +82,13 @@ app.commandLine.appendSwitch("force-color-profile", "srgb");
 // raises this to 9000, which masks leaks).
 app.commandLine.appendSwitch("max-active-webgl-contexts", "256");
 
-// Only expose CDP in development when a port is explicitly configured.
+// Only expose CDP in development or explicit DoyDeck QA runs when a port is
+// configured. Packaged local QA needs this for Meta AI attach checks, but normal
+// production launches should not expose a debugging port.
 const cdpPort =
-	env.NODE_ENV === "development"
+	env.NODE_ENV === "development" ||
+	process.env.DOYDECK_REAL_AGENT_QA === "1" ||
+	process.env.DOYDECK_ELECTRON_QA === "1"
 		? process.env.DESKTOP_AUTOMATION_PORT
 		: undefined;
 if (cdpPort) {
