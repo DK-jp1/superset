@@ -162,6 +162,8 @@ const AUTO_LOOP_WORKER_INSTRUCTION_KEYWORDS = [
 ];
 const AUTO_LOOP_WORKER_INSTRUCTION_HEADING_PATTERN =
 	AUTO_LOOP_WORKER_INSTRUCTION_KEYWORDS.join("|");
+const AUTO_LOOP_WORKER_INSTRUCTION_HEADING_PREFIX_PATTERN =
+	"(?:>\\s*)?(?:[-*•・]\\s*)?(?:#{1,6}\\s*)?(?:\\*\\*)?";
 const WORKER_INSTRUCTION_META_BOUNDARY_PATTERN =
 	/^(?:#{1,6}\s*)?(?:\*\*)?(?:補足|判断|解説|理由|参考)(?:\*\*)?[：:]?\s*$|^もし必要なら\b|^以上[。.\s]*$/i;
 const MIN_CAPTURE_TEXT_LENGTH = 30;
@@ -439,10 +441,17 @@ function hasWorkerInstructionSignal(text: string): boolean {
 function isBrowserCompletionStop(text: string): boolean {
 	const normalized = text.trim();
 	if (!normalized) return false;
+	if (
+		/次の\s*Worker\s*指示(?:は|が)?不要|Worker(?:へ渡す)?指示(?:は|が)?不要/.test(
+			normalized,
+		)
+	) {
+		return true;
+	}
 	if (hasWorkerInstructionSignal(normalized)) return false;
 	if (/^\s*STOP\s*[。.!！]?\s*$/im.test(normalized)) return true;
 	if (
-		/次のWorker指示(?:は|が)?不要|Worker(?:へ渡す)?指示(?:は|が)?不要|修正不要|これ以上(?:の)?修正は不要/.test(
+		/修正不要|これ以上(?:の)?修正は不要/.test(
 			normalized,
 		)
 	) {
@@ -671,11 +680,11 @@ function extractWorkerInstructionFromHeading(text: string): string {
 function extractAutoLoopWorkerInstructionBlock(text: string): string {
 	const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
 	const headingPattern = new RegExp(
-		`^\\s*(?:#{1,6}\\s*)?(?:\\*\\*)?(?:${AUTO_LOOP_WORKER_INSTRUCTION_HEADING_PATTERN})(?:[：:]?\\*\\*|\\*\\*[：:]|[：:]|\\*\\*)?\\s*$`,
+		`^\\s*${AUTO_LOOP_WORKER_INSTRUCTION_HEADING_PREFIX_PATTERN}(?:${AUTO_LOOP_WORKER_INSTRUCTION_HEADING_PATTERN})(?:[：:]?\\*\\*|\\*\\*[：:]|[：:]|\\*\\*)?\\s*$`,
 		"i",
 	);
 	const inlineHeadingPattern = new RegExp(
-		`^\\s*(?:#{1,6}\\s*)?(?:\\*\\*)?(?:${AUTO_LOOP_WORKER_INSTRUCTION_HEADING_PATTERN})(?:[：:]?\\*\\*|\\*\\*[：:]|[：:]|\\*\\*)?\\s+(.+)$`,
+		`^\\s*${AUTO_LOOP_WORKER_INSTRUCTION_HEADING_PREFIX_PATTERN}(?:${AUTO_LOOP_WORKER_INSTRUCTION_HEADING_PATTERN})(?:[：:]?\\*\\*|\\*\\*[：:]|[：:]|\\*\\*)?\\s+(.+)$`,
 		"i",
 	);
 
@@ -848,6 +857,43 @@ function logWorkerInstructionExtraction(raw: string, extracted: string): void {
 		"[S3.13] extracted worker instruction preview last 300 chars =",
 		previewChars(extracted, "last"),
 	);
+}
+
+type AutoLoopBrowserCaptureDebug = {
+	at: string;
+	source: string;
+	text: string;
+	textLength: number;
+	textPreview: string;
+	extractedText: string;
+	extractedLength: number;
+	extractedPreview: string;
+	extractResult: "success" | "fail";
+	extractFailureReason: string;
+	containsPrimaryWorkerHeading: boolean;
+	containsOtherWorkerHeading: boolean;
+};
+
+function hasPrimaryWorkerInstructionHeading(text: string): boolean {
+	return /Worker\s*[へに]\s*渡す\s*指示\s*[：:]/i.test(text);
+}
+
+function hasOtherWorkerInstructionHeading(text: string): boolean {
+	return /(Worker\s*指示|Codex\s*[へに]\s*渡す\s*指示|Claude\s*Code\s*[へに]\s*渡す\s*指示)\s*[：:]/i.test(
+		text,
+	);
+}
+
+function setAutoLoopBrowserCaptureDebug(
+	payload: AutoLoopBrowserCaptureDebug,
+): void {
+	if (typeof window === "undefined") return;
+	const debugWindow = window as Window & {
+		doydeckQa?: { terminalOutputLogAccessorEnabled?: boolean };
+		__doydeckAutoLoopLastBrowserCapture?: AutoLoopBrowserCaptureDebug;
+	};
+	if (!debugWindow.doydeckQa?.terminalOutputLogAccessorEnabled) return;
+	debugWindow.__doydeckAutoLoopLastBrowserCapture = payload;
 }
 
 function fingerprintText(text: string): string {
@@ -2705,6 +2751,31 @@ export function usePromptTransfer({
 							? extractAutoLoopWorkerInstructionBlock(truncated)
 							: extractInstructionBlock(truncated);
 					logWorkerInstructionExtraction(truncated, extracted);
+					if (autoRelayMode === "loop") {
+						setAutoLoopBrowserCaptureDebug({
+							at: new Date().toISOString(),
+							source: reason,
+							text: truncated,
+							textLength: truncated.length,
+							textPreview: previewText(truncated),
+							extractedText: extracted,
+							extractedLength: extracted.length,
+							extractedPreview: previewText(extracted),
+							extractResult: extracted.trim() ? "success" : "fail",
+							extractFailureReason: extracted.trim()
+								? ""
+								: isBrowserCompletionStop(truncated)
+									? "browser-completion-stop"
+									: hasPrimaryWorkerInstructionHeading(truncated) ||
+											hasOtherWorkerInstructionHeading(truncated)
+										? "worker instruction heading matched but body was empty"
+										: "no worker instruction block found",
+							containsPrimaryWorkerHeading:
+								hasPrimaryWorkerInstructionHeading(truncated),
+							containsOtherWorkerHeading:
+								hasOtherWorkerInstructionHeading(truncated),
+						});
+					}
 					console.log("[S3.11] final extracted length:", extracted.length);
 					setLatestBrowserAiDirectionText(extracted || truncated);
 					if (autoRelayMode === "loop" && !extracted.trim()) {

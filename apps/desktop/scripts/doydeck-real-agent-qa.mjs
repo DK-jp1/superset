@@ -20,6 +20,8 @@ const reportPath = join(outDir, "report.md");
 const consoleErrorsPath = join(outDir, "console-errors.json");
 const diagnosticsPath = join(outDir, "diagnostics-log.json");
 const hooksReviewTextPath = join(outDir, "codex-hooks-review.txt");
+const browserAiNewReplyPath = join(outDir, "browser-ai-new-reply.txt");
+const autoLoopCaptureTextPath = join(outDir, "auto-loop-capture-text.txt");
 const require = createRequire(import.meta.url);
 
 const allowRealSend =
@@ -83,6 +85,8 @@ mkdirSync(screenshotsDir, { recursive: true });
 rmSync(observationsDir, { recursive: true, force: true });
 mkdirSync(observationsDir, { recursive: true });
 rmSync(hooksReviewTextPath, { force: true });
+rmSync(browserAiNewReplyPath, { force: true });
+rmSync(autoLoopCaptureTextPath, { force: true });
 
 const runAt = new Date().toLocaleString("ja-JP", {
 	timeZone: "Asia/Tokyo",
@@ -181,8 +185,19 @@ const instructionSource = {
 	testPromptSent: "no",
 	newAssistantReplyDetected: "no",
 	newAssistantReplyReason: "",
+	newAssistantReplyTextLength: "(not captured)",
+	newAssistantReplyFingerprint: "(not captured)",
 	newAssistantReplyPreview: "(not captured)",
 	newAssistantReplyHash: "(not captured)",
+	newAssistantReplyFullTextPath: "",
+	newAssistantReplyContainsWorkerHeading: "unknown",
+	newAssistantReplyContainsOtherWorkerHeading: "unknown",
+	autoLoopCaptureTextLength: "(not captured)",
+	autoLoopCaptureTextPreview: "(not captured)",
+	autoLoopCaptureTextPath: "",
+	autoLoopCaptureSource: "unknown",
+	autoLoopExtractResult: "unknown",
+	autoLoopExtractFailureReason: "",
 	capturedAssistantReplySource: "unknown",
 	extractedWorkerInstructionSource: "unknown",
 	extractedWorkerInstructionPreview: "(not captured)",
@@ -202,6 +217,21 @@ function slugify(value) {
 		.replace(/[^a-z0-9]+/g, "-")
 		.replace(/^-+|-+$/g, "")
 		.slice(0, 80) || "step";
+}
+
+function containsPrimaryWorkerInstructionHeading(text) {
+	return /Worker\s*[へに]\s*渡す\s*指示\s*[：:]/i.test(String(text || ""));
+}
+
+function containsOtherWorkerInstructionHeading(text) {
+	return /(Worker\s*指示|Codex\s*[へに]\s*渡す\s*指示|Claude\s*Code\s*[へに]\s*渡す\s*指示)\s*[：:]/i.test(
+		String(text || ""),
+	);
+}
+
+function writeTextArtifact(path, text) {
+	writeFileSync(path, String(text || ""), "utf8");
+	return rel(path);
 }
 
 async function capture(page, name) {
@@ -377,6 +407,7 @@ const browserBaselineScript = `(function() {
   return {
     count: nodes.length,
     lastId: last ? (last.getAttribute('data-message-id') || '') : '',
+    lastText: lastText,
     lastTextLen: lastText.length,
     lastTextHash: cyrb53(lastText),
     lastTextPreview: lastText.slice(0, 200)
@@ -545,6 +576,7 @@ async function readBrowserBaseline(page) {
 	return {
 		count: 0,
 		lastId: "",
+		lastText: "",
 		lastTextLen: 0,
 		lastTextHash: 0,
 		lastTextPreview: "",
@@ -595,6 +627,31 @@ async function waitForNewAssistantReply(
 	};
 }
 
+async function readAutoLoopBrowserCaptureDebug(page) {
+	return await page
+		.evaluate(() => {
+			const value = window.__doydeckAutoLoopLastBrowserCapture;
+			if (!value || typeof value !== "object") return null;
+			return {
+				at: String(value.at || ""),
+				source: String(value.source || "unknown"),
+				text: String(value.text || ""),
+				textLength: Number(value.textLength || String(value.text || "").length),
+				textPreview: String(value.textPreview || ""),
+				extractedText: String(value.extractedText || ""),
+				extractedLength: Number(
+					value.extractedLength || String(value.extractedText || "").length,
+				),
+				extractedPreview: String(value.extractedPreview || ""),
+				extractResult: String(value.extractResult || "unknown"),
+				extractFailureReason: String(value.extractFailureReason || ""),
+				containsPrimaryWorkerHeading: Boolean(value.containsPrimaryWorkerHeading),
+				containsOtherWorkerHeading: Boolean(value.containsOtherWorkerHeading),
+			};
+		})
+		.catch(() => null);
+}
+
 async function sampleDiagnostics(page, label) {
 	const text = await page
 		.getByTestId("commander-diagnostics-panel")
@@ -613,6 +670,56 @@ async function ensureDiagnosticsOpen(page) {
 	await button.click();
 	await page.waitForTimeout(500);
 	return panel.isVisible().catch(() => false);
+}
+
+async function prepareAutoLoopPreviewMode(page, sampleLabel = "after-auto-loop-armed") {
+	const autoModeSelector = page.getByTestId("commander-auto-mode-selector");
+	if (
+		await checkVisible(
+			"Auto mode selector",
+			autoModeSelector,
+			"Auto mode selector visible",
+		)
+	) {
+		await autoModeSelector.selectOption("loop");
+		await page.waitForTimeout(500);
+		await capture(page, "02-auto-loop-mode");
+		const maxTurnsSelector = page.getByTestId("auto-loop-max-turns-selector");
+		if (
+			await checkVisible(
+				"Max Turns selector",
+				maxTurnsSelector,
+				"Max Turns selector visible",
+			)
+		) {
+			await maxTurnsSelector.selectOption("10");
+			record("PASS", "Max Turns settable", "Selected 10 turns");
+		}
+		const diagButton = page.getByTestId("commander-diag-button");
+		if (
+			await checkVisible(
+				"Diagnostics / Diag button",
+				diagButton,
+				"Diag button visible in Auto Loop mode",
+			)
+		) {
+			const diagnosticsOpened = await ensureDiagnosticsOpen(page);
+			const diagnosticsScreenshot = await capture(page, "03-diagnostics-open");
+			if (diagnosticsOpened) {
+				record("PASS", "Diagnostics panel", "Diagnostics panel opened");
+				await sampleDiagnostics(page, sampleLabel);
+				await readBrowserAiState(
+					page,
+					"after diagnostics open",
+					rel(diagnosticsScreenshot),
+				);
+			} else {
+				record("UNKNOWN", "Diagnostics panel", "Diagnostics panel did not open");
+			}
+		}
+		return true;
+	}
+	return false;
 }
 
 function normalizeDiagnosticText(text) {
@@ -2348,6 +2455,21 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 	body.push(
 		`- new assistant reply detected: \`${instructionSource.newAssistantReplyDetected}\``,
 	);
+	body.push(
+		`- new assistant reply text length: \`${instructionSource.newAssistantReplyTextLength}\``,
+	);
+	body.push(
+		`- new assistant reply fingerprint: \`${instructionSource.newAssistantReplyFingerprint}\``,
+	);
+	body.push(
+		`- new assistant reply full text path: \`${instructionSource.newAssistantReplyFullTextPath || "(not captured)"}\``,
+	);
+	body.push(
+		`- contains "Workerへ渡す指示:": \`${instructionSource.newAssistantReplyContainsWorkerHeading}\``,
+	);
+	body.push(
+		`- contains other worker instruction heading: \`${instructionSource.newAssistantReplyContainsOtherWorkerHeading}\``,
+	);
 	if (instructionSource.newAssistantReplyReason) {
 		body.push(`- new assistant reply reason: ${instructionSource.newAssistantReplyReason}`);
 	}
@@ -2362,6 +2484,31 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 	body.push(
 		`- captured assistant reply source: \`${instructionSource.capturedAssistantReplySource}\``,
 	);
+	body.push(
+		`- auto loop capture text length: \`${instructionSource.autoLoopCaptureTextLength}\``,
+	);
+	body.push(
+		`- auto loop capture text path: \`${instructionSource.autoLoopCaptureTextPath || "(not captured)"}\``,
+	);
+	body.push(
+		`- auto loop capture source: \`${instructionSource.autoLoopCaptureSource}\``,
+	);
+	if (
+		instructionSource.autoLoopCaptureTextPreview &&
+		instructionSource.autoLoopCaptureTextPreview !== "(not captured)"
+	) {
+		body.push(
+			`- auto loop capture text preview: \`${instructionSource.autoLoopCaptureTextPreview.replace(/\s+/g, " ").slice(0, 200)}\``,
+		);
+	}
+	body.push(
+		`- extract worker instruction result: \`${instructionSource.autoLoopExtractResult}\``,
+	);
+	if (instructionSource.autoLoopExtractFailureReason) {
+		body.push(
+			`- extract failure reason: ${instructionSource.autoLoopExtractFailureReason}`,
+		);
+	}
 	body.push(
 		`- extracted worker instruction source: \`${instructionSource.extractedWorkerInstructionSource}\``,
 	);
@@ -2891,51 +3038,10 @@ try {
 		}
 	}
 
-	const autoModeSelector = page.getByTestId("commander-auto-mode-selector");
-	if (
-		await checkVisible(
-			"Auto mode selector",
-			autoModeSelector,
-			"Auto mode selector visible",
-		)
-	) {
-		await autoModeSelector.selectOption("loop");
-		await page.waitForTimeout(500);
-		await capture(page, "02-auto-loop-mode");
-		const maxTurnsSelector = page.getByTestId("auto-loop-max-turns-selector");
-		if (
-			await checkVisible(
-				"Max Turns selector",
-				maxTurnsSelector,
-				"Max Turns selector visible",
-			)
-		) {
-			await maxTurnsSelector.selectOption("10");
-			record("PASS", "Max Turns settable", "Selected 10 turns");
+		let autoLoopPreviewPrepared = false;
+		if (!allowRealSend) {
+			autoLoopPreviewPrepared = await prepareAutoLoopPreviewMode(page);
 		}
-		const diagButton = page.getByTestId("commander-diag-button");
-		if (
-			await checkVisible(
-				"Diagnostics / Diag button",
-				diagButton,
-				"Diag button visible in Auto Loop mode",
-			)
-		) {
-			const diagnosticsOpened = await ensureDiagnosticsOpen(page);
-			const diagnosticsScreenshot = await capture(page, "03-diagnostics-open");
-			if (diagnosticsOpened) {
-				record("PASS", "Diagnostics panel", "Diagnostics panel opened");
-				await sampleDiagnostics(page, "after-auto-loop-armed");
-				await readBrowserAiState(
-					page,
-					"after diagnostics open",
-					rel(diagnosticsScreenshot),
-				);
-			} else {
-				record("UNKNOWN", "Diagnostics panel", "Diagnostics panel did not open");
-			}
-		}
-	}
 
 	if (!allowRealSend) {
 		record(
@@ -2987,20 +3093,23 @@ try {
 			}
 		}
 
-		// Re-confirm the composer can accept input before injecting the test
+			// Re-confirm the composer can accept input before injecting the test
 		// prompt. If the previous response is still streaming, abort with a
 		// specific BLOCKED reason rather than letting the prompt rot in the
 		// composer.
-		const preInjectionReady = await waitForBrowserGenerationDone(page, 60000, 1500);
-		if (!preInjectionReady.ready) {
+			const preInjectionReady = await waitForBrowserGenerationDone(page, 60000, 1500);
+			if (!preInjectionReady.ready) {
 			record(
 				"BLOCKED",
 				"Browser AI test prompt real send",
 				`browser ai send button disabled (waited ${preInjectionReady.elapsedMs}ms, last reason: ${preInjectionReady.reason})`,
 			);
-			await capture(page, "05-test-prompt-sent");
-		} else {
-			// Snapshot the Browser AI conversation state BEFORE we send the
+				await capture(page, "05-test-prompt-sent");
+			} else {
+				if (!autoLoopPreviewPrepared) {
+					autoLoopPreviewPrepared = await prepareAutoLoopPreviewMode(page);
+				}
+				// Snapshot the Browser AI conversation state BEFORE we send the
 			// test prompt. The Auto Loop is supposed to forward the assistant
 			// reply that comes AFTER this baseline to the Worker. If it forwards
 			// something matching the baseline instead, that means it picked up a
@@ -3009,6 +3118,11 @@ try {
 			instructionSource.baselineCount = String(browserBaseline.count);
 			instructionSource.baselineFingerprint = `${browserBaseline.lastId}#${browserBaseline.lastTextHash}`;
 			instructionSource.baselinePreview = browserBaseline.lastTextPreview;
+			await page
+				.evaluate(() => {
+					delete window.__doydeckAutoLoopLastBrowserCapture;
+				})
+				.catch(() => {});
 
 			const injection = await executeInWebview(
 				page,
@@ -3041,10 +3155,26 @@ try {
 					3000,
 				);
 				if (newReply.detected) {
+					const newReplyText = String(newReply.reply.lastText || "");
 					instructionSource.newAssistantReplyDetected = "yes";
 					instructionSource.newAssistantReplyHash = String(newReply.reply.lastTextHash);
+					instructionSource.newAssistantReplyFingerprint =
+						String(newReply.reply.lastTextHash);
+					instructionSource.newAssistantReplyTextLength = String(
+						newReplyText.length,
+					);
 					instructionSource.newAssistantReplyPreview =
 						newReply.reply.lastTextPreview;
+					instructionSource.newAssistantReplyFullTextPath =
+						writeTextArtifact(browserAiNewReplyPath, newReplyText);
+					instructionSource.newAssistantReplyContainsWorkerHeading =
+						containsPrimaryWorkerInstructionHeading(newReplyText)
+							? "yes"
+							: "no";
+					instructionSource.newAssistantReplyContainsOtherWorkerHeading =
+						containsOtherWorkerInstructionHeading(newReplyText)
+							? "yes"
+							: "no";
 					record(
 						"PASS",
 						"Browser AI new reply after test prompt",
@@ -3106,6 +3236,27 @@ try {
 			if (parsedDiagnostics.stopped && parsedDiagnostics.hasStopReason) {
 				stoppedConfirmed = true;
 				break;
+			}
+		}
+		const autoLoopCaptureDebug = await readAutoLoopBrowserCaptureDebug(page);
+		if (autoLoopCaptureDebug) {
+			instructionSource.autoLoopCaptureTextLength = String(
+				autoLoopCaptureDebug.textLength,
+			);
+			instructionSource.autoLoopCaptureTextPreview =
+				autoLoopCaptureDebug.textPreview ||
+				String(autoLoopCaptureDebug.text || "").slice(0, 200);
+			instructionSource.autoLoopCaptureTextPath = writeTextArtifact(
+				autoLoopCaptureTextPath,
+				autoLoopCaptureDebug.text,
+			);
+			instructionSource.autoLoopCaptureSource = autoLoopCaptureDebug.source;
+			instructionSource.autoLoopExtractResult = autoLoopCaptureDebug.extractResult;
+			instructionSource.autoLoopExtractFailureReason =
+				autoLoopCaptureDebug.extractFailureReason;
+			if (autoLoopCaptureDebug.extractedText) {
+				instructionSource.extractedWorkerInstructionPreview =
+					autoLoopCaptureDebug.extractedText.slice(0, 800);
 			}
 		}
 		const finalScreenshot = await capture(page, "06-final-state");
