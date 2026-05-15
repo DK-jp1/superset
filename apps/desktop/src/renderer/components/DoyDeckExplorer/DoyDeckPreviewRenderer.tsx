@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { Button } from "@superset/ui/button";
+import { Minus, Plus } from "lucide-react";
+import { useEffect, useRef, useState, type WheelEvent } from "react";
 import type { ElectronRouterOutputs } from "renderer/lib/electron-trpc";
 
 export type DoyDeckExplorerPreview =
@@ -11,6 +13,9 @@ type MediaPreview = Extract<
 
 const MEDIA_PREVIEW_KINDS = new Set(["image", "pdf", "video", "audio"]);
 const MIN_PDF_FRAME_HEIGHT_PX = 80;
+const MIN_IMAGE_ZOOM = 0.25;
+const MAX_IMAGE_ZOOM = 3;
+const IMAGE_ZOOM_STEP = 0.1;
 
 function getElementRect(element: HTMLElement | null) {
 	if (!element) return null;
@@ -49,6 +54,14 @@ function rowsToTsv(rows: string[][]): string {
 	return rows.map((row) => row.join("\t")).join("\n");
 }
 
+function clampImageZoom(value: number) {
+	return Math.min(MAX_IMAGE_ZOOM, Math.max(MIN_IMAGE_ZOOM, value));
+}
+
+function formatZoom(scale: number) {
+	return `${Math.round(scale * 100)}%`;
+}
+
 export function DoyDeckPreviewRenderer({
 	filePath,
 	preview,
@@ -67,6 +80,12 @@ export function DoyDeckPreviewRenderer({
 	const pdfMetadataRef = useRef<HTMLDivElement>(null);
 	const pdfNoteRef = useRef<HTMLDivElement>(null);
 	const pdfFrameRef = useRef<HTMLIFrameElement>(null);
+	const [imageZoomMode, setImageZoomMode] = useState<"fit" | "manual">("fit");
+	const [imageZoomScale, setImageZoomScale] = useState(1);
+	const [imageNaturalSize, setImageNaturalSize] = useState<{
+		width: number;
+		height: number;
+	} | null>(null);
 	const [pdfChromeHeight, setPdfChromeHeight] = useState(0);
 
 	useEffect(() => {
@@ -119,6 +138,24 @@ export function DoyDeckPreviewRenderer({
 		if (pdfNoteRef.current) resizeObserver.observe(pdfNoteRef.current);
 		return () => resizeObserver.disconnect();
 	}, [preview?.kind]);
+
+	useEffect(() => {
+		setImageZoomMode("fit");
+		setImageZoomScale(1);
+		setImageNaturalSize(null);
+	}, [filePath, preview?.kind]);
+
+	const adjustImageZoom = (delta: number) => {
+		setImageZoomMode("manual");
+		setImageZoomScale((current) => clampImageZoom(current + delta));
+	};
+
+	const handleImageWheel = (event: WheelEvent<HTMLDivElement>) => {
+		if (!event.metaKey && !event.ctrlKey) return;
+		event.preventDefault();
+		const direction = event.deltaY < 0 ? 1 : -1;
+		adjustImageZoom(direction * IMAGE_ZOOM_STEP);
+	};
 
 	const computedPdfFrameHeight =
 		preview?.kind === "pdf" && previewHeight > pdfChromeHeight
@@ -259,14 +296,106 @@ export function DoyDeckPreviewRenderer({
 	if (!objectUrl) return null;
 
 	if (preview.kind === "image") {
+		const imageStyle =
+			imageZoomMode === "manual" && imageNaturalSize
+				? {
+						width: imageNaturalSize.width * imageZoomScale,
+						height: imageNaturalSize.height * imageZoomScale,
+					}
+				: undefined;
 		return (
-			<div className="flex h-full min-h-0 items-center justify-center overflow-auto bg-background p-4">
-				<img
-					src={objectUrl}
-					alt={getBaseName(filePath)}
-					className="h-full max-h-full max-w-full object-contain"
-					draggable={false}
-				/>
+			<div
+				className="relative h-full min-h-0 overflow-auto bg-background"
+				onWheel={handleImageWheel}
+				data-testid="doydeck-preview-image-zoom-surface"
+			>
+				<div className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded border bg-background/95 px-1.5 py-1 shadow-sm">
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon"
+						className="size-6"
+						onClick={() => adjustImageZoom(-IMAGE_ZOOM_STEP)}
+						disabled={
+							imageZoomMode === "manual" && imageZoomScale <= MIN_IMAGE_ZOOM
+						}
+						aria-label="Zoom out"
+					>
+						<Minus className="size-3.5" />
+					</Button>
+					<button
+						type="button"
+						className="rounded px-1.5 font-mono text-[10px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+						onClick={() => {
+							setImageZoomMode("manual");
+							setImageZoomScale(1);
+						}}
+						aria-label="Show image at 100%"
+						data-testid="doydeck-preview-image-zoom-label"
+					>
+						{imageZoomMode === "fit" ? "Fit" : formatZoom(imageZoomScale)}
+					</button>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						className="h-6 px-1.5 text-[10px]"
+						onClick={() => {
+							setImageZoomMode("fit");
+							setImageZoomScale(1);
+						}}
+					>
+						Fit
+					</Button>
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon"
+						className="size-6"
+						onClick={() => adjustImageZoom(IMAGE_ZOOM_STEP)}
+						disabled={
+							imageZoomMode === "manual" && imageZoomScale >= MAX_IMAGE_ZOOM
+						}
+						aria-label="Zoom in"
+					>
+						<Plus className="size-3.5" />
+					</Button>
+				</div>
+				<div
+					className={
+						imageZoomMode === "fit"
+							? "flex min-h-full min-w-full items-center justify-center p-4"
+							: "inline-block min-h-full min-w-full p-8"
+					}
+				>
+					<img
+						src={objectUrl}
+						alt={getBaseName(filePath)}
+						className={
+							imageZoomMode === "fit"
+								? "max-h-full max-w-full object-contain"
+								: "max-w-none object-contain"
+						}
+						style={imageStyle}
+						draggable={false}
+						onLoad={(event) => {
+							setImageNaturalSize({
+								width: event.currentTarget.naturalWidth,
+								height: event.currentTarget.naturalHeight,
+							});
+						}}
+						onDoubleClick={() => {
+							if (imageZoomMode === "fit") {
+								setImageZoomMode("manual");
+								setImageZoomScale(1);
+								return;
+							}
+							setImageZoomMode("fit");
+							setImageZoomScale(1);
+						}}
+						data-testid="doydeck-preview-image"
+					/>
+				</div>
 			</div>
 		);
 	}

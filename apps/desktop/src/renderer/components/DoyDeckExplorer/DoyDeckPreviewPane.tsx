@@ -2,12 +2,13 @@ import { Button } from "@superset/ui/button";
 import { toast } from "@superset/ui/sonner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@superset/ui/tooltip";
 import { Copy } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { useCopyToClipboard } from "renderer/hooks/useCopyToClipboard";
 import {
 	type ElectronRouterOutputs,
 	electronTrpc,
 } from "renderer/lib/electron-trpc";
+import { requestDoyDeckExplorerPathNavigation } from "renderer/stores/doydeck-explorer-navigation";
 import { DoyDeckPreviewRenderer } from "./DoyDeckPreviewRenderer";
 
 type ExplorerRootId =
@@ -87,6 +88,21 @@ export function DoyDeckPreviewPane({
 		toast.success(message);
 	};
 
+	const handleOpenPathInExplorer = (
+		event: MouseEvent<HTMLButtonElement>,
+		path: string,
+	) => {
+		if (!event.metaKey && !event.ctrlKey) return;
+		event.preventDefault();
+		event.stopPropagation();
+		const opened = requestDoyDeckExplorerPathNavigation(workspaceId, path);
+		if (opened) {
+			toast.success("Path opened in Explorer");
+			return;
+		}
+		toast.error("Explorer path navigation is unavailable");
+	};
+
 	return (
 		<div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
 			<div className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
@@ -94,9 +110,17 @@ export function DoyDeckPreviewPane({
 					<div className="truncate text-xs font-medium">
 						{displayName || relativePath || absolutePath}
 					</div>
-					<div className="truncate text-[10px] text-muted-foreground">
+					<button
+						type="button"
+						className="block w-full truncate text-left font-mono text-[10px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+						onClick={(event) =>
+							handleOpenPathInExplorer(event, absolutePath)
+						}
+						title={`${absolutePath}\nCmd/Ctrl-click to open in Explorer`}
+						data-testid="doydeck-center-preview-path"
+					>
 						{relativePath || absolutePath}
-					</div>
+					</button>
 				</div>
 				<IconButton
 					label="Copy Path"

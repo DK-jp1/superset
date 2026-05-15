@@ -8,7 +8,8 @@ The feature connects three surfaces:
 
 - Explorer: direct path input and selection.
 - Terminal: Cmd/Ctrl-click path links.
-- Preview: selected files can be inspected immediately.
+- Preview: selected files can be inspected immediately, and previewed paths can
+  jump back to Explorer.
 
 ## Explorer Path Jump
 
@@ -69,6 +70,28 @@ Still deferred:
 - UNC paths.
 - `smb://...` URLs.
 
+## Center Preview Path Links And Zoom
+
+S5.21 adds Center Preview affordances that reuse the same Explorer navigation
+bridge instead of adding new path resolution logic:
+
+- The compact path in the Center Preview header supports Cmd/Ctrl-click.
+- Cmd/Ctrl-click sends the displayed file's absolute path to Explorer.
+- Explorer opens the parent directory, selects the file, and keeps Preview
+  usable.
+- Normal click on the path is intentionally a no-op.
+
+Image previews now include lightweight zoom controls:
+
+- Initial image display is fit-to-view.
+- Cmd/Ctrl + wheel zooms image previews without changing normal scrolling.
+- The zoom range is clamped between 25% and 300%.
+- Small controls provide zoom out, 100%, fit, and zoom in.
+- Double-click toggles fit and 100%.
+
+PDF previews continue to use the native Chromium viewer. Full PDF zoom
+customization remains deferred.
+
 ## Path Normalization
 
 Phase 1 normalization:
@@ -103,8 +126,10 @@ This keeps DoyDeck read-only and avoids credential, token, or private API handli
 2. Terminal Cmd/Ctrl-click integration that routes resolved paths to Explorer.
 3. Inline editable compact Explorer path display, replacing the separate `Go`
    input row.
-4. Broader relative-path handling using the active terminal cwd when available.
-5. Browser AI / Worker Response path links in rendered responses.
+4. Center Preview image zoom controls and Cmd/Ctrl-click path routing back to
+   Explorer.
+5. Broader relative-path handling using the active terminal cwd when available.
+6. Browser AI / Worker Response path links in rendered responses.
 
 ## Risks
 
