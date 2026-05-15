@@ -48,6 +48,7 @@ import {
 	BROWSER_AI_STARTER_PROMPT,
 	DOYDECK_WORKER_RESPONSE_END,
 	DOYDECK_WORKER_RESPONSE_START,
+	buildSendHandoffLedgerPrompt,
 	generateWorkerPrompt,
 	generateReviewPrompt,
 	generateHandoffPrompt,
@@ -3528,7 +3529,7 @@ export function usePromptTransfer({
 		void copyToClipboard(handoffPreview.text);
 	}, [handoffPreview.text]);
 
-	const handleCopyHandoffLedger = useCallback(() => {
+	const buildHandoffLedger = useCallback(() => {
 		const liveUrl = getLiveUrl() || currentUrl;
 		const provider = detectProvider(liveUrl);
 		const commanderRuntime = getCommanderBrowserRuntimeSnapshot();
@@ -3538,7 +3539,7 @@ export function usePromptTransfer({
 			captureForTerminalPreview.text ||
 			capturePreview ||
 			latestBrowserAiDirectionText;
-		const ledger = generateWorkSessionLedgerMarkdown({
+		return generateWorkSessionLedgerMarkdown({
 			workspaceId,
 			tabId: currentActiveTabId,
 			state,
@@ -3577,7 +3578,6 @@ export function usePromptTransfer({
 			latestBrowserDecision,
 			latestQaResult: null,
 		});
-		void copyToClipboard(ledger);
 	}, [
 		autoLoopDiagnostics.tabContextStatus,
 		autoLoopLastAction,
@@ -3600,6 +3600,52 @@ export function usePromptTransfer({
 		workerBinding,
 		workerResponsePreview.text,
 		workspaceId,
+	]);
+
+	const handleCopyHandoffLedger = useCallback(() => {
+		void copyToClipboard(buildHandoffLedger());
+	}, [buildHandoffLedger]);
+
+	const handleSendHandoffLedgerToBrowserAI = useCallback(async () => {
+		const prompt = buildSendHandoffLedgerPrompt(buildHandoffLedger());
+		const liveUrl = getLiveUrl() || currentUrl;
+		const provider = detectProvider(liveUrl);
+		if (!provider) {
+			await copyToClipboard(prompt);
+			toast.warning(
+				"未対応サイトです — Handoff Ledgerをクリップボードにコピーしました",
+			);
+			return;
+		}
+		try {
+			const result = await injectIntoPage(
+				buildInjectionWithSubmitScript(prompt, provider),
+			);
+			if (result === "submitted") {
+				toast.success(`${getProviderLabel(provider)} にHandoff Ledgerを送信しました`);
+				return;
+			}
+			if (result === "injected") {
+				toast.success(
+					`${getProviderLabel(provider)} に挿入しました — 手動で送信してください`,
+				);
+				return;
+			}
+			await copyToClipboard(prompt);
+			toast.warning(
+				"入力欄が見つかりません — Handoff Ledgerをクリップボードにコピーしました",
+			);
+		} catch {
+			await copyToClipboard(prompt);
+			toast.warning(
+				"送信に失敗しました — Handoff Ledgerをクリップボードにコピーしました",
+			);
+		}
+	}, [
+		currentUrl,
+		buildHandoffLedger,
+		getLiveUrl,
+		injectIntoPage,
 	]);
 
 	const handleInjectHandoffToBrowserAI = useCallback(async () => {
@@ -3815,6 +3861,7 @@ export function usePromptTransfer({
 		handleGenerateHandoff,
 		handleCopyHandoff,
 		handleCopyHandoffLedger,
+		handleSendHandoffLedgerToBrowserAI,
 		handleInjectHandoffToBrowserAI,
 		handleSendHandoffToTerminal,
 		startAutoCapture,

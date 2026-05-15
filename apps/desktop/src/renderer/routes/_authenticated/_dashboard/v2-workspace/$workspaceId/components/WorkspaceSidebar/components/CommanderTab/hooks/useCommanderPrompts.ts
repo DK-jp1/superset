@@ -479,6 +479,16 @@ ${selectedFiles}
 `;
 }
 
+export function buildSendHandoffLedgerPrompt(ledger: string): string {
+	return `以下は現在のDoyDeck作業タブのHandoff Ledgerです。
+内容を読み取り、現在地・未解決・次アクションを整理してください。
+次にWorkerへ作業指示を出す必要がある場合は、必ず「Workerへ渡す指示:」から始めてください。
+完了または追加作業不要なら「次のWorker指示は不要」または「STOP」と明記してください。
+
+--- Handoff Ledger ---
+${ledger}`;
+}
+
 function summarizeBlock(value: string, maxLength = 900): string {
 	const trimmed = value.trim();
 	if (!trimmed) return "";
