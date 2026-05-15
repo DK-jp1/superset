@@ -48,6 +48,7 @@ tmp/doydeck-interaction-qa/
 tmp/doydeck-electron-qa/
 tmp/doydeck-meta-qa/
 tmp/doydeck-real-agent-qa/
+tmp/doydeck-per-tab-browser-qa/
 
 # Turbo
 .turbo

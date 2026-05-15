@@ -2035,6 +2035,7 @@ export function usePromptTransfer({
 		}
 	}, [
 		currentActiveTabId,
+		currentUrl,
 		autoRelayMode,
 		autoLoopPhase,
 		appendAutoLoopEvent,

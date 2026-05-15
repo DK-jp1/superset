@@ -30,6 +30,8 @@ const commanderBrowserSlots = new Map<string, CommanderBrowserSlot>();
 function createCommanderBrowserWebview(): Electron.WebviewTag {
 	const wv = document.createElement("webview") as Electron.WebviewTag;
 	wv.setAttribute("partition", "persist:superset");
+	wv.style.position = "absolute";
+	wv.style.inset = "0";
 	wv.style.width = "100%";
 	wv.style.height = "100%";
 	wv.src = "about:blank";
@@ -49,6 +51,22 @@ function readWebviewState(wv: Electron.WebviewTag): WebviewState {
 function detachWebview(wv: Electron.WebviewTag) {
 	const parent = wv.parentElement;
 	if (parent) parent.removeChild(wv);
+}
+
+function syncCommanderBrowserSlotVisibility(
+	container: HTMLElement,
+	activeSlotKey: string,
+) {
+	for (const slot of commanderBrowserSlots.values()) {
+		const isActive = slot.key === activeSlotKey;
+		const wv = slot.webview;
+		wv.style.display = isActive ? "flex" : "none";
+		wv.style.pointerEvents = isActive ? "auto" : "none";
+		if (isActive && wv.parentElement !== container) {
+			detachWebview(wv);
+			container.appendChild(wv);
+		}
+	}
 }
 
 function ensureCommanderBrowserSlot({
@@ -126,8 +144,7 @@ export function useCommanderWebview({
 		pruneCommanderBrowserSlots(browserSlotKey);
 
 		webviewRef.current = wv;
-		detachWebview(wv);
-		container.appendChild(wv);
+		syncCommanderBrowserSlotVisibility(container, browserSlotKey);
 		try {
 			setState(readWebviewState(wv));
 		} catch {
@@ -176,7 +193,10 @@ export function useCommanderWebview({
 			wv.removeEventListener("focus", onWebviewInteraction);
 			wv.removeEventListener("pointerdown", onWebviewInteraction);
 			wv.removeEventListener("mousedown", onWebviewInteraction);
-			if (container.contains(wv)) detachWebview(wv);
+			if (container.contains(wv)) {
+				wv.style.display = "none";
+				wv.style.pointerEvents = "none";
+			}
 			if (webviewRef.current === wv) webviewRef.current = null;
 		};
 	}, [activeTabId, browserSlotKey, workspaceId]);
