@@ -12,9 +12,19 @@ The feature connects three surfaces:
 
 ## Explorer Path Jump
 
-Phase 1 adds a compact `Go to path` input at the top of DoyDeck Explorer.
+Phase 1 added a `Go to path` input at the top of DoyDeck Explorer. Phase 3
+folds that control into the existing compact path display so the Explorer
+header remains small:
 
-Supported in Phase 1:
+- Normal state shows the current root, selected file, or selected directory as
+  a compact path label.
+- Clicking the path label switches it to an inline input.
+- Enter runs the same read-only path jump resolver.
+- Escape or blur cancels editing and restores the compact label.
+- A successful jump returns to compact display.
+- A failed jump shows a toast and leaves the current Explorer selection intact.
+
+Supported in Phase 1/3:
 
 - Absolute macOS/Linux paths, for example `/Users/gest01/Downloads/file.pdf`.
 - Current-user home paths, for example `~/Downloads/file.pdf`.
@@ -91,8 +101,10 @@ This keeps DoyDeck read-only and avoids credential, token, or private API handli
 
 1. Explorer path input for absolute, `~`, workspace-relative, and `/Volumes` paths.
 2. Terminal Cmd/Ctrl-click integration that routes resolved paths to Explorer.
-3. Broader relative-path handling using the active terminal cwd when available.
-4. Browser AI / Worker Response path links in rendered responses.
+3. Inline editable compact Explorer path display, replacing the separate `Go`
+   input row.
+4. Broader relative-path handling using the active terminal cwd when available.
+5. Browser AI / Worker Response path links in rendered responses.
 
 ## Risks
 
@@ -103,7 +115,7 @@ This keeps DoyDeck read-only and avoids credential, token, or private API handli
 
 ## Change Targets
 
-Phase 1/2 touches:
+Phase 1/2/3 touches:
 
 - `apps/desktop/src/lib/trpc/routers/doydeck-explorer/index.ts`
 - `apps/desktop/src/renderer/components/DoyDeckExplorer/DoyDeckExplorer.tsx`
@@ -113,4 +125,7 @@ Phase 1/2 touches:
 - `apps/desktop/src/renderer/screens/main/components/WorkspaceView/ContentView/TabsContent/Terminal/hooks/useFileLinkClick.ts`
 - `apps/desktop/src/renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/hooks/usePaneRegistry/components/TerminalPane/TerminalPane.tsx`
 
-Phase 2 also hides the Tasks nav button in DoyDeck dev mode so the left Explorer header stays compact after adding path input. Normal Superset builds keep the Tasks nav.
+Phase 2 also hides the Tasks nav button in DoyDeck dev mode so the left Explorer
+header stays compact after adding path navigation. Normal Superset builds keep
+the Tasks nav. Phase 3 removes the standalone `Go to path` row and makes the
+compact path label editable instead.

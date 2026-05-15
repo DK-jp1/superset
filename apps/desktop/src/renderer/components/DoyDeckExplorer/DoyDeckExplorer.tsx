@@ -241,12 +241,14 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		null,
 	);
 	const [pathInput, setPathInput] = useState("");
+	const [isEditingPath, setIsEditingPath] = useState(false);
 	const [actionsOpen, setActionsOpen] = useState(false);
 	const explorerRootRef = useRef<HTMLDivElement>(null);
 	const explorerContentRef = useRef<HTMLDivElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 	const previewPanelRef = useRef<HTMLDivElement>(null);
 	const previewBodyRef = useRef<HTMLDivElement>(null);
+	const pathInputRef = useRef<HTMLInputElement>(null);
 	const suppressRootAutoLoadRef = useRef<ExplorerRootId | null>(null);
 	const [explorerContentHeight, setExplorerContentHeight] = useState(0);
 	const [listHeightPx, setListHeightPx] = useState(0);
@@ -436,6 +438,8 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 	const selectedRelativePath = selectedPath
 		? getRelativePath(rootPath, selectedPath)
 		: "";
+	const currentDisplayPath =
+		selectedPath || rootPath || selectedRoot?.absolutePath || "No root";
 	const selectedCommanderPath = useMemo((): CommanderSelectedPath | null => {
 		const selectedType = toCommanderSelectedPathType(selectedKind);
 		if (!selectedPath || !selectedType) return null;
@@ -539,6 +543,7 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 				setSelectedPath(resolved.absolutePath);
 				setSelectedKind(resolved.kind);
 				setPathInput(resolved.absolutePath);
+				setIsEditingPath(false);
 				toast.success(
 					resolved.kind === "directory"
 						? "Directory opened in Explorer"
@@ -565,6 +570,21 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 			return;
 		}
 		await navigateToPath(requestedPath);
+	};
+
+	const beginPathEdit = () => {
+		if (!canLoadRoot) return;
+		setPathInput(currentDisplayPath === "No root" ? "" : currentDisplayPath);
+		setIsEditingPath(true);
+		window.requestAnimationFrame(() => {
+			pathInputRef.current?.focus();
+			pathInputRef.current?.select();
+		});
+	};
+
+	const cancelPathEdit = () => {
+		setPathInput(currentDisplayPath === "No root" ? "" : currentDisplayPath);
+		setIsEditingPath(false);
 	};
 
 	const handleCopy = async (text: string, message: string) => {
@@ -721,37 +741,47 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 			</div>
 
 			<div className="shrink-0 border-b px-3 py-1.5 text-[11px] text-muted-foreground">
-				<div className="truncate">
-					{selectedRoot?.absolutePath || "No root"}
-				</div>
+				{isEditingPath ? (
+					<form
+						onSubmit={(event) => {
+							event.preventDefault();
+							void handleGoToPath();
+						}}
+					>
+						<Input
+							ref={pathInputRef}
+							value={pathInput}
+							onChange={(event) => setPathInput(event.target.value)}
+							onBlur={cancelPathEdit}
+							onKeyDown={(event) => {
+								if (event.key === "Escape") {
+									event.preventDefault();
+									cancelPathEdit();
+								}
+							}}
+							placeholder="Open path..."
+							className="h-6 min-w-0 font-mono text-[11px]"
+							data-testid="doydeck-explorer-path-input"
+							disabled={resolvePathMutation.isPending}
+						/>
+					</form>
+				) : (
+					<button
+						type="button"
+						className={cn(
+							"block w-full truncate rounded-sm text-left font-mono",
+							"hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+							canLoadRoot ? "cursor-text" : "cursor-default",
+						)}
+						onClick={beginPathEdit}
+						disabled={!canLoadRoot}
+						title={currentDisplayPath}
+						data-testid="doydeck-explorer-path-display"
+					>
+						{currentDisplayPath}
+					</button>
+				)}
 			</div>
-
-			<form
-				className="flex shrink-0 items-center gap-1 border-b px-2 py-2"
-				onSubmit={(event) => {
-					event.preventDefault();
-					void handleGoToPath();
-				}}
-			>
-				<Input
-					value={pathInput}
-					onChange={(event) => setPathInput(event.target.value)}
-					placeholder="Go to path..."
-					className="h-7 min-w-0 flex-1 font-mono text-[11px]"
-					data-testid="doydeck-explorer-path-input"
-					disabled={resolvePathMutation.isPending}
-				/>
-				<Button
-					type="submit"
-					variant="outline"
-					size="sm"
-					className="h-7 shrink-0 px-2 text-[11px]"
-					disabled={resolvePathMutation.isPending || !pathInput.trim()}
-					data-testid="doydeck-explorer-path-submit"
-				>
-					Go
-				</Button>
-			</form>
 
 			<div ref={explorerContentRef} className="flex min-h-0 flex-1 flex-col">
 				<div
