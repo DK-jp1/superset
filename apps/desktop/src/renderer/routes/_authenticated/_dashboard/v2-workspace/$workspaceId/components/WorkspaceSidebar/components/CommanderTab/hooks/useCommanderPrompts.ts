@@ -489,6 +489,31 @@ export function buildSendHandoffLedgerPrompt(ledger: string): string {
 ${ledger}`;
 }
 
+export function buildHandoffLedgerRelativePath({
+	tabId,
+	tabName,
+}: {
+	tabId: string | null;
+	tabName?: string | null;
+}): string {
+	const tabSuffix = (tabId || "active-tab").slice(-8);
+	const baseName =
+		sanitizeHandoffLedgerFileName(tabName || "") ||
+		sanitizeHandoffLedgerFileName(tabId || "") ||
+		"active-tab";
+	return `docs/doydeck/handoffs/${baseName}-${tabSuffix}.md`;
+}
+
+function sanitizeHandoffLedgerFileName(value: string): string {
+	return value
+		.trim()
+		.replace(/[<>:"/\\|?*\x00-\x1F]/g, "-")
+		.replace(/\s+/g, "-")
+		.replace(/-+/g, "-")
+		.replace(/^-|-$/g, "")
+		.slice(0, 80);
+}
+
 function summarizeBlock(value: string, maxLength = 900): string {
 	const trimmed = value.trim();
 	if (!trimmed) return "";

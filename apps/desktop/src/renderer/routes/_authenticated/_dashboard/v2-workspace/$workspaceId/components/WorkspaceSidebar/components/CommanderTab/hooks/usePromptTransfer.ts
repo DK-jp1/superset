@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "@superset/ui/sonner";
+import { workspaceTrpc } from "@superset/workspace-client";
 import {
 	COMMANDER_BROWSER_AI_PANE_ID,
 	COMMANDER_BROWSER_SLOT_MODE,
@@ -48,6 +49,7 @@ import {
 	BROWSER_AI_STARTER_PROMPT,
 	DOYDECK_WORKER_RESPONSE_END,
 	DOYDECK_WORKER_RESPONSE_START,
+	buildHandoffLedgerRelativePath,
 	buildSendHandoffLedgerPrompt,
 	generateWorkerPrompt,
 	generateReviewPrompt,
@@ -95,6 +97,26 @@ function formatExplorerPathMetadata(pathInfo: CommanderSelectedPath): string {
 		lines.push(`Preview Kind:\n${pathInfo.previewKind}`);
 	}
 	return lines.join("\n\n");
+}
+
+function joinWorkspacePath(rootPath: string, relativePath: string): string {
+	const normalizedRoot = rootPath.trim().replace(/[\\/]+$/, "");
+	const separator =
+		normalizedRoot.includes("\\") && !normalizedRoot.includes("/") ? "\\" : "/";
+	return [normalizedRoot, ...relativePath.split("/")].join(separator);
+}
+
+async function fetchCurrentWorkspaceRootPath(
+	workspaceId: string,
+): Promise<string | null> {
+	const result = await electronTrpcClient.doydeckExplorer.getRoots.query({
+		workspaceId,
+	});
+	const currentWorkspaceRoot = result.roots.find(
+		(root) => root.id === "currentWorkspace",
+	);
+	if (!currentWorkspaceRoot?.exists) return null;
+	return currentWorkspaceRoot.absolutePath.trim() || null;
 }
 
 function buildBrowserPathPrompt(pathInfo: CommanderSelectedPath): string {
@@ -1566,6 +1588,14 @@ export function usePromptTransfer({
 	const currentActiveTabId = useTabsStore(
 		(s) => (workspaceId ? s.activeTabIds[workspaceId] ?? null : null),
 	);
+	const currentActiveTab = useTabsStore((s) =>
+		currentActiveTabId
+			? s.tabs.find((tab) => tab.id === currentActiveTabId) ?? null
+			: null,
+	);
+	const createDirectoryMutation =
+		workspaceTrpc.filesystem.createDirectory.useMutation();
+	const writeFileMutation = workspaceTrpc.filesystem.writeFile.useMutation();
 	const getBrowserSlotForTab = useCallback(
 		(tabId: string | null) => {
 			const identity = createBrowserSlotIdentity({
@@ -3648,6 +3678,62 @@ export function usePromptTransfer({
 		injectIntoPage,
 	]);
 
+	const handleSaveHandoffLedgerAsMarkdown = useCallback(async () => {
+		let rootPath: string | null = null;
+		try {
+			rootPath = await fetchCurrentWorkspaceRootPath(workspaceId);
+		} catch (error) {
+			const message =
+				error instanceof Error ? error.message : "unknown error";
+			toast.error(`Workspace path取得失敗: ${message}`);
+			return;
+		}
+		if (!rootPath) {
+			toast.error("Workspace path が見つかりません — Handoff Ledgerを保存できません");
+			return;
+		}
+		const relativePath = buildHandoffLedgerRelativePath({
+			tabId: currentActiveTabId,
+			tabName: currentActiveTab?.name,
+		});
+		const directoryRelativePath = "docs/doydeck/handoffs";
+		const absoluteDirectoryPath = joinWorkspacePath(
+			rootPath,
+			directoryRelativePath,
+		);
+		const absoluteFilePath = joinWorkspacePath(rootPath, relativePath);
+		try {
+			await createDirectoryMutation.mutateAsync({
+				workspaceId,
+				absolutePath: absoluteDirectoryPath,
+				recursive: true,
+			});
+			const result = await writeFileMutation.mutateAsync({
+				workspaceId,
+				absolutePath: absoluteFilePath,
+				content: buildHandoffLedger(),
+				encoding: "utf-8",
+				options: { create: true, overwrite: true },
+			});
+			if (result && typeof result === "object" && "ok" in result && !result.ok) {
+				toast.error(`Handoff Ledger保存失敗: ${result.reason}`);
+				return;
+			}
+			toast.success(`Handoff Ledgerを保存しました: ${relativePath}`);
+		} catch (error) {
+			const message =
+				error instanceof Error ? error.message : "unknown error";
+			toast.error(`Handoff Ledger保存失敗: ${message}`);
+		}
+	}, [
+		buildHandoffLedger,
+		createDirectoryMutation,
+		currentActiveTab?.name,
+		currentActiveTabId,
+		workspaceId,
+		writeFileMutation,
+	]);
+
 	const handleInjectHandoffToBrowserAI = useCallback(async () => {
 		if (!handoffPreview.text.trim()) return;
 		await doInject(handoffPreview.text);
@@ -3862,6 +3948,7 @@ export function usePromptTransfer({
 		handleCopyHandoff,
 		handleCopyHandoffLedger,
 		handleSendHandoffLedgerToBrowserAI,
+		handleSaveHandoffLedgerAsMarkdown,
 		handleInjectHandoffToBrowserAI,
 		handleSendHandoffToTerminal,
 		startAutoCapture,

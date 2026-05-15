@@ -20,6 +20,7 @@ import {
 	LuFileText,
 	LuListChecks,
 	LuPencil,
+	LuSave,
 	LuSend,
 	LuTerminal,
 	LuTrash2,
@@ -61,6 +62,7 @@ export function CommanderHelperBar({
 	onCopyHandoff,
 	onCopyHandoffLedger,
 	onSendHandoffLedgerToBrowserAI,
+	onSaveHandoffLedgerAsMarkdown,
 	onExtractSessionFromAI,
 	onExtractPlanFromWorker,
 	onViewEditSession,
@@ -100,6 +102,7 @@ export function CommanderHelperBar({
 	onCopyHandoff: () => void;
 	onCopyHandoffLedger: () => void;
 	onSendHandoffLedgerToBrowserAI: () => void;
+	onSaveHandoffLedgerAsMarkdown: () => void;
 	onExtractSessionFromAI: () => void;
 	onExtractPlanFromWorker: () => void;
 	onViewEditSession: () => void;
@@ -368,6 +371,13 @@ export function CommanderHelperBar({
 						>
 							<LuZap className="size-3.5" />
 							Send Handoff to Browser AI
+						</DropdownMenuItem>
+						<DropdownMenuItem
+							onSelect={onSaveHandoffLedgerAsMarkdown}
+							data-testid="commander-save-handoff-ledger"
+						>
+							<LuSave className="size-3.5" />
+							Save Handoff as Markdown
 						</DropdownMenuItem>
 						<DropdownMenuItem
 							disabled={!hasProvider}

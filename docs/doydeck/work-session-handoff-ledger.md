@@ -1,10 +1,9 @@
 # DoyDeck Per-Tab Work Session / Handoff Ledger Plan
 
-Status: S5.17 Phase 1.5 implemented. Commander Actions can now copy a
-generated Handoff Ledger for the active tab or send that Ledger to Browser AI.
-The implementation is read-only from the app's point of view: it copies or
-injects Markdown and does not save files, touch `local.db`, or touch
-`app-state.json`.
+Status: S5.17 Phase 2 implemented. Commander Actions can now copy a generated
+Handoff Ledger for the active tab, send that Ledger to Browser AI, or explicitly
+save it as a workspace Markdown file. The implementation does not touch
+`local.db` or `app-state.json`.
 
 ## Goal
 
@@ -460,12 +459,14 @@ persistence.
 
 ### Phase 2: Explicit Markdown Save
 
-Add `Save Handoff as Markdown`.
+Implemented as `Save Handoff as Markdown` in Commander Actions.
 
 - Doy explicitly triggers the write.
-- Default path should be visible and project-local.
-- Proposed path: `docs/doydeck/handoffs/<safe-tab-title-or-tabId>.md`.
-- Warn before creating a new file.
+- Default path is visible and project-local:
+  `docs/doydeck/handoffs/<safe-tab-title-or-tabId>-<tabId-suffix>.md`.
+- The action creates `docs/doydeck/handoffs/` when needed and overwrites the
+  current tab's ledger file.
+- It does not write `local.db` or `app-state.json`.
 - Do not auto-save on every update.
 
 ### Phase 3: Auto Loop Completion Update
@@ -513,7 +514,7 @@ Recommended next implementation:
 2. Feed it existing Commander state/session plus runtime snapshots.
 3. Add a single Actions item: `Copy Handoff Ledger`.
 4. Add `Send Handoff to Browser AI` as the direct handoff continuation.
-5. Include no persistence.
+5. Add explicit Markdown save to `docs/doydeck/handoffs/`.
 6. Add report/QA evidence later, once Real Agent QA exposes a stable latest QA
    result object in renderer state.
 

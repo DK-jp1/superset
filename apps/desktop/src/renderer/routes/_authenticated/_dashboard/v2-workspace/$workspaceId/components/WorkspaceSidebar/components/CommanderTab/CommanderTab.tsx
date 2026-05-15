@@ -386,6 +386,9 @@ export function CommanderTab({
 					onSendHandoffLedgerToBrowserAI={
 						transfer.handleSendHandoffLedgerToBrowserAI
 					}
+					onSaveHandoffLedgerAsMarkdown={
+						transfer.handleSaveHandoffLedgerAsMarkdown
+					}
 					onExtractSessionFromAI={transfer.handleExtractSessionFromAI}
 					onExtractPlanFromWorker={transfer.handleExtractPlanFromWorker}
 					onViewEditSession={transfer.handleViewEditSession}
