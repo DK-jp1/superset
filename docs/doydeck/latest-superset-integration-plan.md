@@ -378,8 +378,169 @@ If Doy approves implementation after this investigation:
 4. Add a minimal Commander placeholder with no Auto Loop.
 5. Run Electron QA and report before porting Browser AI/Worker behavior.
 
+## S6.1 Minimal PoC Notes
+
+S6.1 checked the latest `origin/main` worktree before porting DoyDeck feature
+code. The goal was to determine the smallest safe shell needed for DoyDeck on
+latest Superset.
+
+### Dependency Setup
+
+The integration worktree initially had no `node_modules`, so `compile:app`
+failed before reaching application code:
+
+```text
+cross-env: command not found
+```
+
+Running `bun install --frozen-lockfile` in the integration worktree succeeded.
+The postinstall step surfaced an existing latest-main package hygiene warning:
+
+```text
+apps/desktop/package.json: dependencies should be ordered alphabetically
+```
+
+This did not stop installation.
+
+### Compile Result
+
+First compile attempt after dependency install failed because file icon assets
+had not been generated:
+
+```text
+Rollup failed to resolve import "resources/public/file-icons/manifest.json"
+```
+
+After running:
+
+```bash
+bun run --cwd apps/desktop generate:icons
+NODE_OPTIONS=--max-old-space-size=8192 bun run --cwd apps/desktop compile:app
+```
+
+`compile:app` passed. Existing build warnings were observed around
+`use client` directives, `::highlight(...)` CSS warnings, font protocol URLs,
+and `gray-matter` eval usage, but the build completed and
+`check-pty-daemon-bundle` reported:
+
+```text
+[check-pty-daemon-bundle] OK: 5 marker(s) present in dist/main/pty-daemon.js
+```
+
+### Safe-Dev Launch Isolation
+
+Latest `origin/main` does not yet contain:
+
+- `apps/desktop/scripts/dev-doydeck-safe.sh`
+- `dev:doydeck-safe`
+- `DOYDECK_DEV_MODE` runtime helper
+- explicit `DOYDECK_SUPERSET_USER_DATA_DIR` handling
+- agent-hook skip handling for `SUPERSET_SKIP_AGENT_HOOKS` /
+  `DOYDECK_SKIP_AGENT_HOOKS`
+
+Latest main does already read `SUPERSET_HOME_DIR` through
+`apps/desktop/src/main/lib/app-environment.ts`, so local DB/app-state paths can
+be redirected by environment. However, two terminal-host surfaces still need
+the safe-dev patch before a safe DoyDeck launch should be considered complete:
+
+- `apps/desktop/src/main/lib/terminal-host/client.ts`
+- `apps/desktop/src/main/terminal-host/index.ts`
+
+Both currently derive their socket/token paths from the default Superset home
+directory rather than an explicit `SUPERSET_HOME_DIR`. In
+`doydeck/safe-dev-isolation`, both were patched to prefer
+`process.env.SUPERSET_HOME_DIR`.
+
+Because latest main lacks explicit Electron userData redirection and terminal
+host home-dir redirection, a live DoyDeck safe-dev launch was not run during
+this S6.1 pass. The next PoC should first port the safe-dev isolation wrapper
+and helper, then launch.
+
+### QA Harness Minimal Port Feasibility
+
+The full DoyDeck QA harness should not be ported before the shell exists.
+Minimal first step:
+
+- add a latest-main compatible `electron-qa:doydeck` script that only launches,
+  screenshots, and writes a report;
+- do not require Commander, Browser AI, Auto Loop, or terminal Worker locators;
+- keep Real Agent QA out of S6.1.
+
+The existing DoyDeck `doydeck-electron-qa.mjs` can be reused later, but it
+currently expects DoyDeck-specific `data-testid` surfaces and would fail on a
+bare latest-main shell.
+
+### Commander Placeholder Proposal
+
+The first Commander port should be a placeholder, not the full Commander loop:
+
+- add a right/side panel entry labelled DoyDeck Commander;
+- show workspace/tab identity and a disabled "Browser AI pending" area;
+- no Browser AI webview, no Auto Loop, no Worker binding;
+- include stable `data-testid` hooks for Electron QA.
+
+This validates the latest v2 workspace/sidebar integration before introducing
+runtime-heavy webviews.
+
+### Browser AI Single Panel Proposal
+
+After the placeholder compiles and launches:
+
+- add one commander-owned Browser AI panel;
+- no per-tab slots;
+- no stealth preload;
+- no Auto Loop;
+- verify ChatGPT/Claude visual usability and webContents identity.
+
+This should be a separate phase because webview runtime issues are hard to
+separate from sidebar/layout issues.
+
+### Handoff Ledger Copy Proposal
+
+`Copy Handoff Ledger` is the safest first "real" DoyDeck action once the
+Commander placeholder exists:
+
+- derive markdown from workspace/tab/browser placeholder state;
+- no file save;
+- no Browser AI send;
+- no terminal/Worker dependency.
+
+This gives a useful Doy-facing artifact without introducing webview or terminal
+runtime risk.
+
+### S6.1 Blocking Issues
+
+Before running a safe-dev live shell on latest main:
+
+1. Port `dev-doydeck-safe.sh` and `dev:doydeck-safe`.
+2. Port a minimal `doydeck-safe-dev.ts` helper.
+3. Call `configureDoyDeckSafeDevUserData()` before app readiness.
+4. Gate `setupAgentHooks()` behind the safe-dev skip env flags.
+5. Patch `terminal-host/client.ts` and `terminal-host/index.ts` to respect
+   `SUPERSET_HOME_DIR`.
+6. Decide whether the latest package dependency-order warning should be fixed
+   before adding DoyDeck package scripts.
+
+### Recommended S6.2 First Patch
+
+The next implementation should be deliberately narrow:
+
+1. safe-dev isolation script + main helper;
+2. terminal-host `SUPERSET_HOME_DIR` respect;
+3. minimal launch-only Electron QA report;
+4. no Commander UI yet.
+
+Acceptance criteria:
+
+- `bun run --cwd apps/desktop dev:doydeck-safe` prints the DoyDeck safe profile;
+- Electron userData path points at `Superset-DoyDeck-Dev`;
+- `SUPERSET_HOME_DIR` points at `~/.doydeck-superset-dev`;
+- terminal host socket/token paths also use that home;
+- `compile:app` remains green after `generate:icons`.
+
 ## Current Git Status
 
-At the time this report was written, the integration worktree only contained
-this new investigation document as an uncommitted file.
-
+At the time the S6.0 report was first written, the integration worktree only
+contained this investigation document. After S6.1, dependency/build artifacts
+exist only as ignored files (`node_modules`, `dist`, generated icons). The only
+tracked change remains this document.
