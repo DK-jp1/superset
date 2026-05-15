@@ -1,17 +1,9 @@
 import { Button } from "@superset/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@superset/ui/tooltip";
 import { useParams } from "@tanstack/react-router";
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { Swords } from "lucide-react";
-import {
-	LuExpand,
-	LuFile,
-	LuFolderOpen,
-	LuGitCompareArrows,
-	LuShrink,
-	LuX,
-} from "react-icons/lu";
-import { DoyDeckExplorer } from "renderer/components/DoyDeckExplorer";
+import { LuX } from "react-icons/lu";
 import { HotkeyLabel } from "renderer/hotkeys";
 import { electronTrpc } from "renderer/lib/electron-trpc";
 import {
@@ -19,62 +11,8 @@ import {
 	SidebarMode,
 	useSidebarStore,
 } from "renderer/stores/sidebar-state";
-import { useTabsStore } from "renderer/stores/tabs/store";
-import { toAbsoluteWorkspacePath } from "shared/absolute-paths";
-import type { ChangeCategory, ChangedFile } from "shared/changes-types";
-import { useScrollContext } from "../ChangesContent";
 import { CommanderTab } from "renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/components/WorkspaceSidebar/components/CommanderTab/CommanderTab";
 import type { HandoffGitSummary } from "renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/components/WorkspaceSidebar/components/CommanderTab/hooks/useCommanderPrompts";
-import { ChangesView } from "./ChangesView";
-import { FilesView } from "./FilesView";
-import { getSidebarHeaderTabButtonClassName } from "./headerTabStyles";
-
-function TabButton({
-	isActive,
-	onClick,
-	icon,
-	label,
-	compact,
-}: {
-	isActive: boolean;
-	onClick: () => void;
-	icon: React.ReactNode;
-	label: string;
-	compact?: boolean;
-}) {
-	if (compact) {
-		return (
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<button
-						type="button"
-						onClick={onClick}
-						className={getSidebarHeaderTabButtonClassName({
-							isActive,
-							compact: true,
-						})}
-					>
-						{icon}
-					</button>
-				</TooltipTrigger>
-				<TooltipContent side="bottom" showArrow={false}>
-					{label}
-				</TooltipContent>
-			</Tooltip>
-		);
-	}
-
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			className={getSidebarHeaderTabButtonClassName({ isActive })}
-		>
-			{icon}
-			{label}
-		</button>
-	);
-}
 
 export function RightSidebar() {
 	const { workspaceId } = useParams({ strict: false });
@@ -88,18 +26,17 @@ export function RightSidebar() {
 	const setRightSidebarTab = useSidebarStore((s) => s.setRightSidebarTab);
 	const toggleSidebar = useSidebarStore((s) => s.toggleSidebar);
 	const setMode = useSidebarStore((s) => s.setMode);
-	const sidebarWidth = useSidebarStore((s) => s.sidebarWidth);
-	const isExpanded = currentMode === SidebarMode.Changes;
-	const compactTabs = sidebarWidth < 340;
-	const showChangesTab = !!worktreePath;
 
-	const handleExpandToggle = () => {
-		setMode(isExpanded ? SidebarMode.Tabs : SidebarMode.Changes);
-	};
+	useEffect(() => {
+		if (rightSidebarTab !== RightSidebarTab.Commander) {
+			setRightSidebarTab(RightSidebarTab.Commander);
+		}
+		if (currentMode !== SidebarMode.Tabs) {
+			setMode(SidebarMode.Tabs);
+		}
+	}, [currentMode, rightSidebarTab, setMode, setRightSidebarTab]);
 
-	const addFileViewerPane = useTabsStore((s) => s.addFileViewerPane);
 	const trpcUtils = electronTrpc.useUtils();
-	const { scrollToFile } = useScrollContext();
 	const fetchCommanderGitSummary =
 		useCallback(async (): Promise<HandoffGitSummary> => {
 			if (!worktreePath) {
@@ -114,126 +51,15 @@ export function RightSidebar() {
 			return trpcUtils.changes.getHandoffSummary.fetch({ worktreePath });
 		}, [trpcUtils, worktreePath]);
 
-	const invalidateFileContent = useCallback(
-		(absolutePath: string) => {
-			const invalidations: Promise<unknown>[] = [];
-			if (workspaceId) {
-				invalidations.push(
-					trpcUtils.filesystem.readFile.invalidate({
-						workspaceId,
-						absolutePath,
-					}),
-				);
-			}
-			if (worktreePath) {
-				invalidations.push(
-					trpcUtils.changes.getGitFileContents.invalidate({
-						worktreePath,
-						absolutePath,
-					}),
-				);
-			}
-			Promise.all(invalidations).catch((error) => {
-				console.error(
-					"[RightSidebar/invalidateFileContent] Failed to invalidate file content queries:",
-					{ absolutePath, error },
-				);
-			});
-		},
-		[workspaceId, worktreePath, trpcUtils],
-	);
-
-	const handleFileOpenPane = useCallback(
-		(file: ChangedFile, category: ChangeCategory, commitHash?: string) => {
-			if (!workspaceId || !worktreePath) return;
-			const absolutePath = toAbsoluteWorkspacePath(worktreePath, file.path);
-			addFileViewerPane(workspaceId, {
-				filePath: absolutePath,
-				diffCategory: category,
-				fileStatus: file.status,
-				commitHash,
-				oldPath: file.oldPath
-					? toAbsoluteWorkspacePath(worktreePath, file.oldPath)
-					: undefined,
-			});
-			invalidateFileContent(absolutePath);
-		},
-		[workspaceId, worktreePath, addFileViewerPane, invalidateFileContent],
-	);
-
-	const handleFileScrollTo = useCallback(
-		(file: ChangedFile, category: ChangeCategory, commitHash?: string) => {
-			scrollToFile(file, category, commitHash, worktreePath);
-		},
-		[scrollToFile, worktreePath],
-	);
-
-	const handleFileOpen =
-		workspaceId && worktreePath
-			? isExpanded
-				? handleFileScrollTo
-				: handleFileOpenPane
-			: undefined;
-
 	return (
 		<aside className="h-full flex flex-col overflow-hidden">
 			<div className="flex items-center bg-background shrink-0 h-10 border-b">
-				<div className="flex items-center h-full">
-					{showChangesTab && (
-						<TabButton
-							isActive={rightSidebarTab === RightSidebarTab.Changes}
-							onClick={() => setRightSidebarTab(RightSidebarTab.Changes)}
-							icon={<LuGitCompareArrows className="size-3.5" />}
-							label="Changes"
-							compact={compactTabs}
-						/>
-					)}
-					<TabButton
-						isActive={rightSidebarTab === RightSidebarTab.Files}
-						onClick={() => setRightSidebarTab(RightSidebarTab.Files)}
-						icon={<LuFile className="size-3.5" />}
-						label="Files"
-						compact={compactTabs}
-					/>
-					<TabButton
-						isActive={rightSidebarTab === RightSidebarTab.Explorer}
-						onClick={() => setRightSidebarTab(RightSidebarTab.Explorer)}
-						icon={<LuFolderOpen className="size-3.5" />}
-						label="Explorer"
-						compact={compactTabs}
-					/>
-					<TabButton
-						isActive={rightSidebarTab === RightSidebarTab.Commander}
-						onClick={() => setRightSidebarTab(RightSidebarTab.Commander)}
-						icon={<Swords className="size-3.5" />}
-						label="Commander"
-						compact={compactTabs}
-					/>
+				<div className="flex min-w-0 items-center gap-2 px-3 text-sm font-medium">
+					<Swords className="size-3.5 text-muted-foreground" />
+					<span className="truncate">Commander</span>
 				</div>
 				<div className="flex-1" />
 				<div className="flex items-center h-10 pr-2 gap-0.5">
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<Button
-								variant="ghost"
-								size="icon"
-								onClick={handleExpandToggle}
-								className="size-6 p-0"
-							>
-								{isExpanded ? (
-									<LuShrink className="size-3.5" />
-								) : (
-									<LuExpand className="size-3.5" />
-								)}
-							</Button>
-						</TooltipTrigger>
-						<TooltipContent side="bottom" showArrow={false}>
-							<HotkeyLabel
-								label={isExpanded ? "Collapse sidebar" : "Expand sidebar"}
-								id="OPEN_DIFF_VIEWER"
-							/>
-						</TooltipContent>
-					</Tooltip>
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<Button
@@ -251,46 +77,7 @@ export function RightSidebar() {
 					</Tooltip>
 				</div>
 			</div>
-			{showChangesTab && (
-				<div
-					className={
-						rightSidebarTab === RightSidebarTab.Changes
-							? "flex-1 min-h-0 flex flex-col overflow-hidden"
-							: "hidden"
-					}
-				>
-					<ChangesView
-						onFileOpen={handleFileOpen}
-						isExpandedView={isExpanded}
-						isActive={rightSidebarTab === RightSidebarTab.Changes}
-					/>
-				</div>
-			)}
-			<div
-				className={
-					rightSidebarTab === RightSidebarTab.Files
-						? "flex-1 min-h-0 flex flex-col overflow-hidden"
-						: "hidden"
-				}
-			>
-				<FilesView />
-			</div>
-			<div
-				className={
-					rightSidebarTab === RightSidebarTab.Explorer
-						? "flex-1 min-h-0 flex flex-col overflow-hidden"
-						: "hidden"
-				}
-			>
-				<DoyDeckExplorer workspaceId={workspaceId} />
-			</div>
-			<div
-				className={
-					rightSidebarTab === RightSidebarTab.Commander
-						? "flex-1 min-h-0 flex flex-col overflow-hidden"
-						: "hidden"
-				}
-			>
+			<div className="flex-1 min-h-0 flex flex-col overflow-hidden">
 				<CommanderTab
 					workspaceId={workspaceId ?? ""}
 					fetchGitSummary={fetchCommanderGitSummary}

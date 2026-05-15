@@ -43,7 +43,7 @@ export const useSidebarStore = create<SidebarState>()(
 				currentMode: SidebarMode.Tabs,
 				lastMode: SidebarMode.Tabs,
 				isResizing: false,
-				rightSidebarTab: RightSidebarTab.Changes,
+				rightSidebarTab: RightSidebarTab.Commander,
 
 				toggleSidebar: () => {
 					const { isSidebarOpen, lastOpenSidebarWidth, currentMode, lastMode } =

@@ -318,46 +318,28 @@ export function CommanderHelperBar({
 							<LuChevronDown className="size-2.5" />
 						</Button>
 					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end" className="w-44">
+					<DropdownMenuContent align="end" className="w-56">
 						<DropdownMenuLabel className="text-[10px] font-normal text-muted-foreground">
-							Setup
-						</DropdownMenuLabel>
-						<DropdownMenuItem
-							disabled={!hasProvider}
-							onSelect={onSendBrowserAiStarterPrompt}
-							data-testid="commander-send-starter-prompt"
-						>
-							<LuZap className="size-3.5" />
-							Send Starter Prompt
-						</DropdownMenuItem>
-						<DropdownMenuItem
-							onSelect={onCopyBrowserAiStarterPrompt}
-							data-testid="commander-copy-starter-prompt"
-						>
-							<LuClipboard className="size-3.5" />
-							Copy Starter Prompt
-						</DropdownMenuItem>
-						<DropdownMenuSeparator />
-						<DropdownMenuLabel className="text-[10px] font-normal text-muted-foreground">
-							Main
+							Core
 						</DropdownMenuLabel>
 						<DropdownMenuItem
 							disabled={!activeTerminal || !hasProvider}
 							onSelect={onSendSelectionToAI}
 						>
 							<LuZap className="size-3.5" />
-							Term → AI
+							Send Worker Response to AI
 						</DropdownMenuItem>
 						<DropdownMenuItem
 							disabled={!hasProvider}
 							onSelect={onCaptureResponse}
 						>
-							<LuDownload className="size-3.5" />← AI
+							<LuDownload className="size-3.5" />
+							Capture AI Instruction
 						</DropdownMenuItem>
-						<DropdownMenuItem onSelect={onGenerateHandoff}>
-							<LuFileText className="size-3.5" />
-							Generate Handoff
-						</DropdownMenuItem>
+						<DropdownMenuSeparator />
+						<DropdownMenuLabel className="text-[10px] font-normal text-muted-foreground">
+							Handoff
+						</DropdownMenuLabel>
 						<DropdownMenuItem
 							onSelect={onCopyHandoffLedger}
 							data-testid="commander-copy-handoff-ledger"
@@ -379,37 +361,10 @@ export function CommanderHelperBar({
 							<LuSave className="size-3.5" />
 							Save Handoff as Markdown
 						</DropdownMenuItem>
-						<DropdownMenuItem
-							disabled={!hasProvider}
-							onSelect={onExtractSessionFromAI}
-						>
-							<LuListChecks className="size-3.5" />
-							Extract Session from AI
-						</DropdownMenuItem>
-						<DropdownMenuItem onSelect={onExtractPlanFromWorker}>
-							<LuListChecks className="size-3.5" />
-							Extract Plan from Worker
-						</DropdownMenuItem>
-						<DropdownMenuItem onSelect={onViewEditSession}>
-							<LuPencil className="size-3.5" />
-							View / Edit Session
-						</DropdownMenuItem>
-						<DropdownMenuItem onSelect={onClearSession}>
-							<LuTrash2 className="size-3.5" />
-							Clear Session
-						</DropdownMenuItem>
 						<DropdownMenuSeparator />
 						<DropdownMenuLabel className="text-[10px] font-normal text-muted-foreground">
-							Worker Binding
+							Worker
 						</DropdownMenuLabel>
-						<DropdownMenuCheckboxItem
-							checked={requireBoundWorkerForAutoLoop}
-							onCheckedChange={onRequireBoundWorkerForAutoLoopChange}
-							onSelect={(event) => event.preventDefault()}
-							data-testid="commander-require-bound-worker"
-						>
-							Require bound Worker for Auto Loop
-						</DropdownMenuCheckboxItem>
 						<DropdownMenuItem
 							disabled={!activeTerminal}
 							onSelect={onBindActiveTerminalToTab}
@@ -426,18 +381,60 @@ export function CommanderHelperBar({
 							<LuTrash2 className="size-3.5" />
 							Unbind worker from this tab
 						</DropdownMenuItem>
-						{autoRelayMode === "loop" && (
-							<DropdownMenuItem
-								onSelect={() => setDiagnosticsOpen((open) => !open)}
-							>
-								<LuListChecks className="size-3.5" />
-								Diagnostics
-							</DropdownMenuItem>
-						)}
+						<DropdownMenuCheckboxItem
+							checked={requireBoundWorkerForAutoLoop}
+							onCheckedChange={onRequireBoundWorkerForAutoLoopChange}
+							onSelect={(event) => event.preventDefault()}
+							data-testid="commander-require-bound-worker"
+						>
+							Require bound Worker for Auto Loop
+						</DropdownMenuCheckboxItem>
 						<DropdownMenuSeparator />
 						<DropdownMenuLabel className="text-[10px] font-normal text-muted-foreground">
-							Advanced / Legacy
+							Setup
 						</DropdownMenuLabel>
+						<DropdownMenuItem
+							disabled={!hasProvider}
+							onSelect={onSendBrowserAiStarterPrompt}
+							data-testid="commander-send-starter-prompt"
+						>
+							<LuZap className="size-3.5" />
+							Send Starter Prompt
+						</DropdownMenuItem>
+						<DropdownMenuItem
+							onSelect={onCopyBrowserAiStarterPrompt}
+							data-testid="commander-copy-starter-prompt"
+						>
+							<LuClipboard className="size-3.5" />
+							Copy Starter Prompt
+						</DropdownMenuItem>
+						<DropdownMenuItem onSelect={onViewEditSession}>
+							<LuPencil className="size-3.5" />
+							View / Edit Session
+						</DropdownMenuItem>
+						<DropdownMenuSeparator />
+						<DropdownMenuLabel className="text-[10px] font-normal text-muted-foreground">
+							Advanced
+						</DropdownMenuLabel>
+						<DropdownMenuItem onSelect={onGenerateHandoff}>
+							<LuFileText className="size-3.5" />
+							Generate Handoff
+						</DropdownMenuItem>
+						<DropdownMenuItem
+							disabled={!hasProvider}
+							onSelect={onExtractSessionFromAI}
+						>
+							<LuListChecks className="size-3.5" />
+							Extract Session from AI
+						</DropdownMenuItem>
+						<DropdownMenuItem onSelect={onExtractPlanFromWorker}>
+							<LuListChecks className="size-3.5" />
+							Extract Plan from Worker
+						</DropdownMenuItem>
+						<DropdownMenuItem onSelect={onClearSession}>
+							<LuTrash2 className="size-3.5" />
+							Clear Session
+						</DropdownMenuItem>
 						<DropdownMenuItem
 							disabled={!workerPrompt}
 							onSelect={() => copyToClipboard(workerPrompt)}
@@ -477,13 +474,15 @@ export function CommanderHelperBar({
 							disabled={!hasSetup || !activeTerminal}
 							onSelect={() => handleTerminalSend("worker")}
 						>
-							<LuSend className="size-3.5" />→ Term
+							<LuSend className="size-3.5" />
+							Send Prompt to Worker
 						</DropdownMenuItem>
 						<DropdownMenuItem
 							disabled={!activeTerminal}
 							onSelect={onGrabSelection}
 						>
-							<LuTerminal className="size-3.5" />← Term
+							<LuTerminal className="size-3.5" />
+							Grab Terminal Selection
 						</DropdownMenuItem>
 					</DropdownMenuContent>
 				</DropdownMenu>
