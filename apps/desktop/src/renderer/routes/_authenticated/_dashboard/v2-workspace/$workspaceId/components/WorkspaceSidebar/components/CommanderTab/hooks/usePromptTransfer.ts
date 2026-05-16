@@ -3559,78 +3559,85 @@ export function usePromptTransfer({
 		void copyToClipboard(handoffPreview.text);
 	}, [handoffPreview.text]);
 
-	const buildHandoffLedger = useCallback(() => {
-		const liveUrl = getLiveUrl() || currentUrl;
-		const provider = detectProvider(liveUrl);
-		const commanderRuntime = getCommanderBrowserRuntimeSnapshot();
-		const latestWorkerReport =
-			workerResponsePreview.text || latestWorkerResponseText;
-		const latestBrowserDecision =
-			captureForTerminalPreview.text ||
-			capturePreview ||
-			latestBrowserAiDirectionText;
-		return generateWorkSessionLedgerMarkdown({
-			workspaceId,
-			tabId: currentActiveTabId,
-			state,
+	const buildHandoffLedger = useCallback(
+		(overrides: { state?: CommanderState; session?: CommanderSession } = {}) => {
+			const liveUrl = getLiveUrl() || currentUrl;
+			const provider = detectProvider(liveUrl);
+			const commanderRuntime = getCommanderBrowserRuntimeSnapshot();
+			const latestWorkerReport =
+				workerResponsePreview.text || latestWorkerResponseText;
+			const latestBrowserDecision =
+				captureForTerminalPreview.text ||
+				capturePreview ||
+				latestBrowserAiDirectionText;
+			const ledgerState = overrides.state ?? state;
+			const ledgerSession = overrides.session ?? session;
+			return generateWorkSessionLedgerMarkdown({
+				workspaceId,
+				tabId: currentActiveTabId,
+				state: ledgerState,
+				session: ledgerSession,
+				browser: {
+					ownerType: commanderRuntime.ownerType,
+					slotKey: commanderRuntime.browserSlotKey,
+					providerLabel:
+						commanderRuntime.providerLabel ?? getProviderLabel(provider),
+					currentUrl: commanderRuntime.currentUrl || liveUrl,
+					webContentsId: commanderRuntime.webContentsId,
+					usableWidth: commanderRuntime.usableWidth,
+					visualStatus: commanderRuntime.visualStatus,
+				},
+				worker: {
+					paneId: workerBinding.workerPaneId,
+					terminalId: workerBinding.terminalId,
+					workerType: workerBinding.workerType,
+					bindingStatus: workerBinding.bindingStatus,
+					bindingPolicy: requireBoundWorkerForAutoLoop
+						? "strict"
+						: "fallback",
+					fallbackUsed:
+						!requireBoundWorkerForAutoLoop &&
+						workerBinding.bindingStatus !== "bound",
+					reason: workerBinding.reason,
+				},
+				autoLoop: {
+					mode: autoRelayMode,
+					phase: autoLoopPhase,
+					turn: autoLoopTurn,
+					maxTurns: autoLoopMaxTurns,
+					stopReason: autoLoopStopReason,
+					lastAction: autoLoopLastAction,
+					tabContextStatus: autoLoopDiagnostics.tabContextStatus,
+				},
+				latestWorkerReport,
+				latestBrowserDecision,
+				latestQaResult: null,
+			});
+		},
+		[
+			autoLoopDiagnostics.tabContextStatus,
+			autoLoopLastAction,
+			autoLoopMaxTurns,
+			autoLoopPhase,
+			autoLoopStopReason,
+			autoLoopTurn,
+			autoRelayMode,
+			captureForTerminalPreview.text,
+			capturePreview,
+			currentActiveTabId,
+			currentUrl,
+			getCommanderBrowserRuntimeSnapshot,
+			getLiveUrl,
+			latestBrowserAiDirectionText,
+			latestWorkerResponseText,
+			requireBoundWorkerForAutoLoop,
 			session,
-			browser: {
-				ownerType: commanderRuntime.ownerType,
-				slotKey: commanderRuntime.browserSlotKey,
-				providerLabel:
-					commanderRuntime.providerLabel ?? getProviderLabel(provider),
-				currentUrl: commanderRuntime.currentUrl || liveUrl,
-				webContentsId: commanderRuntime.webContentsId,
-				usableWidth: commanderRuntime.usableWidth,
-				visualStatus: commanderRuntime.visualStatus,
-			},
-			worker: {
-				paneId: workerBinding.workerPaneId,
-				terminalId: workerBinding.terminalId,
-				workerType: workerBinding.workerType,
-				bindingStatus: workerBinding.bindingStatus,
-				bindingPolicy: requireBoundWorkerForAutoLoop ? "strict" : "fallback",
-				fallbackUsed:
-					!requireBoundWorkerForAutoLoop &&
-					workerBinding.bindingStatus !== "bound",
-				reason: workerBinding.reason,
-			},
-			autoLoop: {
-				mode: autoRelayMode,
-				phase: autoLoopPhase,
-				turn: autoLoopTurn,
-				maxTurns: autoLoopMaxTurns,
-				stopReason: autoLoopStopReason,
-				lastAction: autoLoopLastAction,
-				tabContextStatus: autoLoopDiagnostics.tabContextStatus,
-			},
-			latestWorkerReport,
-			latestBrowserDecision,
-			latestQaResult: null,
-		});
-	}, [
-		autoLoopDiagnostics.tabContextStatus,
-		autoLoopLastAction,
-		autoLoopMaxTurns,
-		autoLoopPhase,
-		autoLoopStopReason,
-		autoLoopTurn,
-		autoRelayMode,
-		captureForTerminalPreview.text,
-		capturePreview,
-		currentActiveTabId,
-		currentUrl,
-		getCommanderBrowserRuntimeSnapshot,
-		getLiveUrl,
-		latestBrowserAiDirectionText,
-		latestWorkerResponseText,
-		requireBoundWorkerForAutoLoop,
-		session,
-		state,
-		workerBinding,
-		workerResponsePreview.text,
-		workspaceId,
-	]);
+			state,
+			workerBinding,
+			workerResponsePreview.text,
+			workspaceId,
+		],
+	);
 
 	const handleCopyHandoffLedger = useCallback(() => {
 		void copyToClipboard(buildHandoffLedger());
@@ -3945,6 +3952,7 @@ export function usePromptTransfer({
 		handleTerminalSubmitBeforeSend,
 		handleSendWorkerResponseToBrowserAI,
 		handleGenerateHandoff,
+		buildHandoffLedger,
 		handleCopyHandoff,
 		handleCopyHandoffLedger,
 		handleSendHandoffLedgerToBrowserAI,

@@ -1,6 +1,6 @@
 import { Button } from "@superset/ui/button";
 import { toast } from "@superset/ui/sonner";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LuLoader, LuX } from "react-icons/lu";
 import { registerDoyDeckCommanderActionBridge } from "renderer/stores/doydeck-commander-actions";
 import {
@@ -52,6 +52,56 @@ import {
 	WorkerResponsePreview,
 } from "./PromptPreviewPanel";
 
+type CommanderSessionTextField = Exclude<
+	keyof CommanderSession,
+	"targetFiles" | "selectedFiles"
+>;
+
+type CommanderControllerSessionInput = Partial<
+	Record<CommanderSessionTextField | "nextAction" | "notes", unknown>
+> & {
+	targetFiles?: unknown;
+};
+
+interface CommanderControllerCommandResult {
+	ok: boolean;
+	reason?: string;
+	workspaceId: string;
+	tabId: string | null;
+}
+
+interface CommanderControllerSessionResult
+	extends CommanderControllerCommandResult {
+	session?: CommanderSession;
+	changedFields?: string[];
+	skippedFields?: string[];
+}
+
+interface CommanderControllerHandoffResult
+	extends CommanderControllerCommandResult {
+	ledger?: string;
+	missingFields?: string[];
+	session?: CommanderSession;
+}
+
+interface CommanderControllerCommands {
+	version: "0.1";
+	workspaceId: string;
+	getActiveTabId: () => string | null;
+	getCommanderSession: () => CommanderControllerSessionResult;
+	setCommanderSession: (
+		input: CommanderControllerSessionInput,
+	) => CommanderControllerSessionResult;
+	buildHandoffLedger: () => CommanderControllerHandoffResult;
+	getHandoffLedger: () => CommanderControllerHandoffResult;
+}
+
+type CommanderControllerWindow = Window &
+	typeof globalThis & {
+		doydeckQa?: { terminalOutputLogAccessorEnabled?: boolean };
+		__doydeckCommanderController?: CommanderControllerCommands;
+	};
+
 export function CommanderTab({
 	workspaceId,
 	fetchGitSummary,
@@ -69,6 +119,7 @@ export function CommanderTab({
 	const [session, setSession] = useState<CommanderSession>(
 		createEmptyCommanderSession,
 	);
+	const sessionRef = useRef<CommanderSession>(session);
 	const [autoRelayMode, setAutoRelayMode] = useState<AutoRelayMode>("off");
 	const [
 		requireBoundWorkerForAutoLoop,
@@ -118,8 +169,13 @@ export function CommanderTab({
 		const loadedSession =
 			sessionPersistence.loadSession() ?? createEmptyCommanderSession();
 		setSession(loadedSession);
+		sessionRef.current = loadedSession;
 		setState(commanderStateFromSession(loadedSession));
 	}, [workspaceId, sessionPersistence.loadSession]);
+
+	useEffect(() => {
+		sessionRef.current = session;
+	}, [session]);
 
 	const handleSessionApplied = useCallback(
 		(appliedSession: CommanderSession) => {
@@ -138,6 +194,7 @@ export function CommanderTab({
 		}
 		sessionPersistence.clearSession();
 		const emptySession = createEmptyCommanderSession();
+		sessionRef.current = emptySession;
 		setSession(emptySession);
 		setState(commanderStateFromSession(emptySession));
 		toast.success("Commander Sessionを削除しました");
@@ -221,6 +278,95 @@ export function CommanderTab({
 		toast.success("このtabのWorker bindingを解除しました");
 	}, [workspaceId, activeTabId, unbindWorker]);
 
+	const getCommanderControllerContext = useCallback(
+		(): Pick<CommanderControllerCommandResult, "workspaceId" | "tabId"> => ({
+			workspaceId,
+			tabId: activeTabId,
+		}),
+		[workspaceId, activeTabId],
+	);
+
+	const getCommanderSessionControllerResult =
+		useCallback((): CommanderControllerSessionResult => {
+			return {
+				ok: true,
+				...getCommanderControllerContext(),
+				session: sessionRef.current,
+				changedFields: [],
+				skippedFields: [],
+			};
+		}, [getCommanderControllerContext]);
+
+	const setCommanderSessionController = useCallback(
+		(
+			input: CommanderControllerSessionInput,
+		): CommanderControllerSessionResult => {
+			if (!input || typeof input !== "object") {
+				return {
+					ok: false,
+					...getCommanderControllerContext(),
+					reason: "input must be an object",
+				};
+			}
+			const baseSession = sessionRef.current;
+			const { session: nextSession, changedFields, skippedFields } =
+				mergeCommanderSessionControllerInput(baseSession, input);
+			if (changedFields.length === 0) {
+				return {
+					ok: false,
+					...getCommanderControllerContext(),
+					reason: "no supported non-empty fields provided",
+					session: baseSession,
+					changedFields,
+					skippedFields,
+				};
+			}
+
+			sessionRef.current = nextSession;
+			setSession(nextSession);
+			setState(commanderStateFromSession(nextSession));
+			handleSessionApplied(nextSession);
+
+			return {
+				ok: true,
+				...getCommanderControllerContext(),
+				session: nextSession,
+				changedFields,
+				skippedFields,
+			};
+		},
+		[getCommanderControllerContext, handleSessionApplied],
+	);
+
+	const buildHandoffLedgerController =
+		useCallback((): CommanderControllerHandoffResult => {
+			const sessionSnapshot = sessionRef.current;
+			try {
+				const stateSnapshot = commanderStateFromSession(sessionSnapshot);
+				return {
+					ok: true,
+					...getCommanderControllerContext(),
+					ledger: transfer.buildHandoffLedger({
+						session: sessionSnapshot,
+						state: stateSnapshot,
+					}),
+					missingFields:
+						getCommanderSessionMissingFields(sessionSnapshot),
+					session: sessionSnapshot,
+				};
+			} catch (error) {
+				return {
+					ok: false,
+					...getCommanderControllerContext(),
+					reason:
+						error instanceof Error ? error.message : "unknown error",
+					missingFields:
+						getCommanderSessionMissingFields(sessionSnapshot),
+					session: sessionSnapshot,
+				};
+			}
+		}, [getCommanderControllerContext, transfer.buildHandoffLedger]);
+
 	useEffect(() => {
 		console.log(
 			"[S3.11] registerCommanderBridge with onAutoCaptureTrigger =",
@@ -246,6 +392,32 @@ export function CommanderTab({
 		transfer.handleAddSelectedPathToSession,
 		transfer.handleSendPathToBrowserAI,
 		transfer.handleSendPathToTerminalPreview,
+	]);
+
+	useEffect(() => {
+		const target = window as CommanderControllerWindow;
+		if (target.doydeckQa?.terminalOutputLogAccessorEnabled !== true) return;
+		const commands: CommanderControllerCommands = {
+			version: "0.1",
+			workspaceId,
+			getActiveTabId: () => activeTabId,
+			getCommanderSession: getCommanderSessionControllerResult,
+			setCommanderSession: setCommanderSessionController,
+			buildHandoffLedger: buildHandoffLedgerController,
+			getHandoffLedger: buildHandoffLedgerController,
+		};
+		target.__doydeckCommanderController = commands;
+		return () => {
+			if (target.__doydeckCommanderController === commands) {
+				delete target.__doydeckCommanderController;
+			}
+		};
+	}, [
+		workspaceId,
+		activeTabId,
+		getCommanderSessionControllerResult,
+		setCommanderSessionController,
+		buildHandoffLedgerController,
 	]);
 
 	const currentProvider = detectProvider(webview.currentUrl);
@@ -419,4 +591,125 @@ export function CommanderTab({
 			</div>
 		</div>
 	);
+}
+
+function mergeCommanderSessionControllerInput(
+	base: CommanderSession,
+	input: CommanderControllerSessionInput,
+): {
+	session: CommanderSession;
+	changedFields: string[];
+	skippedFields: string[];
+} {
+	const next: CommanderSession = {
+		...base,
+		targetFiles: [...base.targetFiles],
+		selectedFiles: [...base.selectedFiles],
+	};
+	const changedFields: string[] = [];
+	const skippedFields: string[] = [];
+	const textFields: CommanderSessionTextField[] = [
+		"goal",
+		"intentNotes",
+		"completionCriteria",
+		"constraints",
+		"allowedScope",
+		"forbiddenScope",
+		"currentTask",
+		"implementationPlan",
+		"testPlan",
+		"risksOpenQuestions",
+	];
+
+	for (const field of textFields) {
+		if (!Object.prototype.hasOwnProperty.call(input, field)) continue;
+		const value = normalizeControllerTextInput(input[field]);
+		if (!value) {
+			skippedFields.push(field);
+			continue;
+		}
+		next[field] = value;
+		changedFields.push(field);
+	}
+
+	if (!input.intentNotes && input.notes !== undefined) {
+		const notes = normalizeControllerTextInput(input.notes);
+		if (notes) {
+			next.intentNotes = appendCommanderControllerSection(
+				next.intentNotes,
+				notes,
+				"Meta AI Notes",
+			);
+			changedFields.push("notes");
+		} else {
+			skippedFields.push("notes");
+		}
+	}
+
+	if (input.nextAction !== undefined) {
+		const nextAction = normalizeControllerTextInput(input.nextAction);
+		if (nextAction) {
+			next.implementationPlan = appendCommanderControllerSection(
+				next.implementationPlan,
+				nextAction,
+				"Next Action",
+			);
+			changedFields.push("nextAction");
+		} else {
+			skippedFields.push("nextAction");
+		}
+	}
+
+	if (input.targetFiles !== undefined) {
+		const targetFiles = normalizeControllerStringArray(input.targetFiles);
+		if (targetFiles.length > 0) {
+			next.targetFiles = targetFiles;
+			changedFields.push("targetFiles");
+		} else {
+			skippedFields.push("targetFiles");
+		}
+	}
+
+	return { session: next, changedFields, skippedFields };
+}
+
+function normalizeControllerTextInput(value: unknown): string {
+	if (typeof value !== "string") return "";
+	return value.trim();
+}
+
+function normalizeControllerStringArray(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.map((item) => (typeof item === "string" ? item.trim() : ""))
+		.filter(Boolean);
+}
+
+function appendCommanderControllerSection(
+	base: string,
+	value: string,
+	label: string,
+): string {
+	const trimmedBase = base.trim();
+	const trimmedValue = value.trim();
+	if (!trimmedValue) return trimmedBase;
+	const section = `--- ${label} ---\n${trimmedValue}`;
+	if (!trimmedBase) return section;
+	if (trimmedBase.includes(trimmedValue)) return trimmedBase;
+	return `${trimmedBase}\n\n${section}`;
+}
+
+function getCommanderSessionMissingFields(
+	session: CommanderSession,
+): string[] {
+	const missingFields: string[] = [];
+	if (!session.goal.trim()) missingFields.push("goal");
+	if (!session.currentTask.trim()) missingFields.push("currentTask");
+	if (!session.implementationPlan.trim()) {
+		missingFields.push("implementationPlan");
+	}
+	if (!session.risksOpenQuestions.trim()) {
+		missingFields.push("risksOpenQuestions");
+	}
+	return missingFields;
 }
