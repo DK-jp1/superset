@@ -3576,6 +3576,9 @@ export function usePromptTransfer({
 			const liveUrl = getLiveUrl() || currentUrl;
 			const provider = detectProvider(liveUrl);
 			const commanderRuntime = getCommanderBrowserRuntimeSnapshot();
+			const workerIdentity = evaluateDoyDeckWorkerIdentity(
+				workerBinding.workerType,
+			);
 			const latestWorkerReport =
 				workerResponsePreview.text || latestWorkerResponseText;
 			const latestBrowserDecision =
@@ -3594,6 +3597,12 @@ export function usePromptTransfer({
 					slotKey: commanderRuntime.browserSlotKey,
 					providerLabel:
 						commanderRuntime.providerLabel ?? getProviderLabel(provider),
+					ready:
+						Boolean(commanderRuntime.provider) &&
+						commanderRuntime.status === "available" &&
+						commanderRuntime.bridgeAvailable,
+					status: commanderRuntime.status,
+					bridgeAvailable: commanderRuntime.bridgeAvailable,
 					currentUrl: commanderRuntime.currentUrl || liveUrl,
 					webContentsId: commanderRuntime.webContentsId,
 					usableWidth: commanderRuntime.usableWidth,
@@ -3603,6 +3612,7 @@ export function usePromptTransfer({
 					paneId: workerBinding.workerPaneId,
 					terminalId: workerBinding.terminalId,
 					workerType: workerBinding.workerType,
+					workerIdentityOk: workerIdentity.workerIdentityOk,
 					bindingStatus: workerBinding.bindingStatus,
 					bindingPolicy: requireBoundWorkerForAutoLoop
 						? "strict"

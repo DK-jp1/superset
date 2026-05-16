@@ -133,6 +133,9 @@ interface WorkSessionLedgerInput {
 		ownerType: string;
 		slotKey: string | null;
 		providerLabel: string;
+		ready: boolean;
+		status: string;
+		bridgeAvailable: boolean;
 		currentUrl: string;
 		webContentsId: number | null;
 		usableWidth: number | null;
@@ -142,6 +145,7 @@ interface WorkSessionLedgerInput {
 		paneId: string | null;
 		terminalId: string | null;
 		workerType: string;
+		workerIdentityOk: boolean;
 		bindingStatus: string;
 		bindingPolicy: string;
 		fallbackUsed: boolean;
@@ -441,6 +445,100 @@ export function generateWorkSessionLedgerMarkdown({
 					`- Auto Loop: ${recordedOutcome.autoLoop || "未取得"}`,
 				].join("\n")
 			: "";
+	const recordedOutcomeSection = recordedOutcome
+		? `## 記録済みController Chain Outcome
+- chainStatus: ${recordedOutcome.chainStatus || "RECORDED"}
+- finalDecision: ${recordedOutcome.finalDecision || "記録済み"}
+- nextAction: ${recordedOutcome.nextAction || "未取得"}
+- Browser AI review result: ${recordedOutcome.latestBrowserAiReviewStatus || "未取得"}
+- Worker response result: ${recordedOutcome.latestWorkerResponseStatus || "未取得"}
+- Worker response returned to Browser AI: ${recordedOutcome.workerResponseReturnedToBrowserAi || "未取得"}
+- STOP / 次のCodex指示不要: ${recordedOutcome.hasStopSignal === "true" ? recordedOutcome.extractedStopSignal || "true" : "false"}
+- Codex instruction: ${recordedOutcome.hasCodexInstruction || "false"}
+- Doy confirmation: ${recordedOutcome.hasDoyConfirmationItems || "false"}
+- recorded Browser provider: ${recordedOutcome.browserAiProvider || "未取得"}
+- recorded worker type: ${recordedOutcome.workerType || "未取得"}
+- recorded workerIdentityOk: ${recordedOutcome.workerIdentityOk || "未取得"}
+- Auto Loop at record time: ${recordedOutcome.autoLoop || "未取得"}
+- completedAt / recordedAt: ${recordedOutcome.completedAt || "未取得"}
+`
+		: "";
+	const liveWarnings = [
+		browser.ready
+			? ""
+			: `Browser AI live ready is false (${browser.providerLabel || "Unsupported"})`,
+		worker.workerIdentityOk
+			? ""
+			: `Worker identity live check is false (${worker.workerType || "unknown"})`,
+		worker.reason ? `Worker binding reason: ${worker.reason}` : "",
+		autoLoop.stopReason ? `Auto Loop stop reason: ${autoLoop.stopReason}` : "",
+	].filter(Boolean);
+	const liveStateSection = recordedOutcome
+		? `## 現在のlive状態
+注: このlive状態は現在のUI/Binding状態です。上記のController Chain Outcomeは記録済みの完了結果です。
+${!browser.ready || !worker.workerIdentityOk ? "注: live状態がUnsupported/unknownでも、記録済みoutcomeが自動的にBLOCKEDへ変わるわけではありません。" : ""}
+
+### Browser AI
+- Browser provider: ${browser.providerLabel}
+- browserAiReady: ${browser.ready ? "yes" : "no"}
+- Browser runtime status: ${browser.status || "unknown"}
+- Browser bridge available: ${browser.bridgeAvailable ? "yes" : "no"}
+- Browser URL: ${browser.currentUrl || "未取得"}
+- Browser owner: ${browser.ownerType || "unknown"}
+- Browser slot: ${browser.slotKey || "未取得"}
+- Browser webContentsId: ${browser.webContentsId ?? "未取得"}
+- Browser usable width: ${browser.usableWidth ?? "未取得"}
+- Browser visual: ${browser.visualStatus || "UNKNOWN"}
+
+### Worker Binding
+- status: ${worker.bindingStatus}
+- policy: ${worker.bindingPolicy}
+- fallback used: ${worker.fallbackUsed ? "yes" : "no"}
+- worker type: ${worker.workerType}
+- workerIdentityOk: ${worker.workerIdentityOk ? "yes" : "no"}
+- paneId: ${worker.paneId || "未取得"}
+- terminalId: ${worker.terminalId || "未取得"}
+- reason: ${worker.reason || "なし"}
+
+### Auto Loop
+- mode: ${autoLoop.mode}
+- phase: ${autoLoop.phase}
+- turn: ${autoLoop.turn}/${autoLoop.maxTurns}
+- stop reason: ${autoLoop.stopReason || "なし"}
+- last action: ${autoLoop.lastAction || "なし"}
+- tab context: ${autoLoop.tabContextStatus}
+
+### live blockers / warnings
+${liveWarnings.length ? liveWarnings.map((warning) => `- ${warning}`).join("\n") : "- なし"}
+`
+		: `## Worker / Browser AI
+- latest worker: ${latestWorkerReport.trim() ? "あり" : "未取得"}
+- latest browser decision: ${latestBrowserDecision.trim() ? "あり" : "未取得"}
+- Browser provider: ${browser.providerLabel}
+- Browser URL: ${browser.currentUrl || "未取得"}
+- Browser owner: ${browser.ownerType || "unknown"}
+- Browser slot: ${browser.slotKey || "未取得"}
+- Browser webContentsId: ${browser.webContentsId ?? "未取得"}
+- Browser usable width: ${browser.usableWidth ?? "未取得"}
+- Browser visual: ${browser.visualStatus || "UNKNOWN"}
+
+## Worker Binding
+- status: ${worker.bindingStatus}
+- policy: ${worker.bindingPolicy}
+- fallback used: ${worker.fallbackUsed ? "yes" : "no"}
+- worker type: ${worker.workerType}
+- paneId: ${worker.paneId || "未取得"}
+- terminalId: ${worker.terminalId || "未取得"}
+- reason: ${worker.reason || "なし"}
+
+## Auto Loop
+- mode: ${autoLoop.mode}
+- phase: ${autoLoop.phase}
+- turn: ${autoLoop.turn}/${autoLoop.maxTurns}
+- stop reason: ${autoLoop.stopReason || "なし"}
+- last action: ${autoLoop.lastAction || "なし"}
+- tab context: ${autoLoop.tabContextStatus}
+`;
 	const targetFiles = session.targetFiles.length
 		? session.targetFiles.map((path) => `- ${path}`).join("\n")
 		: "未設定";
@@ -469,33 +567,7 @@ ${unresolved}
 ## 最新QA
 ${recordedQaLines || qaLines}
 
-## Worker / Browser AI
-- latest worker: ${latestWorkerReport.trim() ? "あり" : "未取得"}
-- latest browser decision: ${latestBrowserDecision.trim() ? "あり" : "未取得"}
-- Browser provider: ${browser.providerLabel}
-- Browser URL: ${browser.currentUrl || "未取得"}
-- Browser owner: ${browser.ownerType || "unknown"}
-- Browser slot: ${browser.slotKey || "未取得"}
-- Browser webContentsId: ${browser.webContentsId ?? "未取得"}
-- Browser usable width: ${browser.usableWidth ?? "未取得"}
-- Browser visual: ${browser.visualStatus || "UNKNOWN"}
-
-## Worker Binding
-- status: ${worker.bindingStatus}
-- policy: ${worker.bindingPolicy}
-- fallback used: ${worker.fallbackUsed ? "yes" : "no"}
-- worker type: ${worker.workerType}
-- paneId: ${worker.paneId || "未取得"}
-- terminalId: ${worker.terminalId || "未取得"}
-- reason: ${worker.reason || "なし"}
-
-## Auto Loop
-- mode: ${autoLoop.mode}
-- phase: ${autoLoop.phase}
-- turn: ${autoLoop.turn}/${autoLoop.maxTurns}
-- stop reason: ${autoLoop.stopReason || "なし"}
-- last action: ${autoLoop.lastAction || "なし"}
-- tab context: ${autoLoop.tabContextStatus}
+${recordedOutcomeSection}${recordedOutcomeSection ? "\n" : ""}${liveStateSection}
 
 ## 関連ファイル
 Target Files:
@@ -550,6 +622,9 @@ function sanitizeHandoffLedgerFileName(value: string): string {
 }
 
 interface RecordedControllerChainOutcome {
+	browserAiProvider: string;
+	workerType: string;
+	workerIdentityOk: string;
 	chainStatus: string;
 	finalDecision: string;
 	nextAction: string;
@@ -563,6 +638,7 @@ interface RecordedControllerChainOutcome {
 	extractedCodexInstructionSummary: string;
 	extractedDoyConfirmationItems: string;
 	autoLoop: string;
+	completedAt: string;
 }
 
 function extractLatestControllerChainOutcome(
@@ -585,6 +661,9 @@ function extractLatestControllerChainOutcome(
 		return match?.[1]?.trim() ?? "";
 	};
 	return {
+		browserAiProvider: readLine("browserAiProvider"),
+		workerType: readLine("workerType"),
+		workerIdentityOk: readLine("workerIdentityOk"),
 		chainStatus: readLine("chainStatus"),
 		finalDecision: readLine("finalDecision"),
 		nextAction: readLine("nextAction"),
@@ -602,6 +681,7 @@ function extractLatestControllerChainOutcome(
 		),
 		extractedDoyConfirmationItems: readLine("extractedDoyConfirmationItems"),
 		autoLoop: readLine("autoLoop"),
+		completedAt: readLine("completedAt"),
 	};
 }
 
