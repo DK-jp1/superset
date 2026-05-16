@@ -4043,12 +4043,15 @@ function normalizeBrowserAiDecisionLine(line: string): string {
 function extractBrowserAiStopSignalFromLine(line: string): string | null {
 	const normalized = normalizeBrowserAiDecisionLine(line);
 	const patterns = [
-		/^(?:STOP|停止)[。.!！]?$/i,
+		/^(?:STOP|停止)[\s　]*[。.!！:：]?$/i,
+		/^STOP[\s　]*(?:[。.!！:：]|[\/／])[\s　]*(?:次の\s*(?:作業側(?:の)?\s*)?Codex\s*指示(?:は|が)?不要|次の\s*Worker\s*指示(?:は|が)?不要|追加作業不要|追加の\s*(?:作業側(?:の)?\s*)?Codex\s*作業(?:は|が)?不要)/i,
 		/^STOP\s*[：:]\s*(?:追加作業不要|次の(?:作業側(?:の)?\s*)?Codex\s*指示(?:は|が)?不要|次のWorker\s*指示(?:は|が)?不要)/i,
 		/^次の\s*(?:作業側(?:の)?\s*)?Codex\s*指示(?:は|が)?不要[。.!！]?$/i,
 		/^(?:作業側(?:の)?\s*)?Codex\s*指示(?:は|が)?不要[。.!！]?$/i,
 		/^次の\s*Worker\s*指示(?:は|が)?不要[。.!！]?$/i,
 		/^Worker(?:へ渡す)?指示(?:は|が)?不要[。.!！]?$/i,
+		/^追加作業不要[。.!！]?$/i,
+		/^追加の\s*(?:作業側(?:の)?\s*)?Codex\s*作業(?:は|が)?不要[。.!！]?$/i,
 	];
 	for (const pattern of patterns) {
 		const match = pattern.exec(normalized);
@@ -4061,7 +4064,7 @@ function isBrowserAiStopConditionalLine(line: string): boolean {
 	const normalized = normalizeBrowserAiDecisionLine(line);
 	return [
 		/条件付き\s*STOP/i,
-		/\bSTOP\b.*(?:出たら|出た場合|の場合|した場合|なら|であれば|必要な場合|された場合|するとき|ルール|条件|判断して|でよいか)/i,
+		/\bSTOP\b.*(?:出たら|出た場合|の場合|した場合|なら|であれば|必要な場合|された場合|するとき|ルール|条件|判断して|でよいか|返してください|返して)/i,
 		/(?:出たら|出た場合|の場合|した場合|なら|であれば|必要な場合|された場合).*\bSTOP\b/i,
 		/(?:停止|止める|中断).*?(?:場合|なら|出たら|出た場合|条件)/,
 	].some((pattern) => pattern.test(normalized));
