@@ -55,6 +55,7 @@ import type { AssistantCaptureSnapshot } from "./hooks/usePromptTransfer";
 import type { AutoRelayMode } from "./hooks/usePromptTransfer";
 import {
 	extractInstructionBlock,
+	sendToTerminal,
 	usePromptTransfer,
 } from "./hooks/usePromptTransfer";
 import { CommanderBrowser } from "./CommanderBrowser";
@@ -206,6 +207,42 @@ interface CommanderControllerLatestReplyResult
 	expectedBrowserAiSlotKey: string | null;
 }
 
+type CommanderControllerSendInstructionStatus =
+	| "SENT"
+	| "DRY_RUN"
+	| "BLOCKED"
+	| "FAILED";
+type CommanderControllerAllowedWorkerType = "codex" | "claude";
+
+interface CommanderControllerSendInstructionInput {
+	instruction?: unknown;
+	source?: unknown;
+	requirePreflight?: unknown;
+	allowWorkerTypes?: unknown;
+	dryRun?: unknown;
+}
+
+interface CommanderControllerSendInstructionResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerSendInstructionStatus;
+	activeTabId: string | null;
+	paneId: string | null;
+	terminalId: string | null;
+	workerType: string;
+	workerIdentityOk: boolean;
+	instructionLength: number;
+	source: string;
+	requirePreflight: boolean;
+	dryRun: boolean;
+	blockers: string[];
+	warnings: string[];
+	message: string;
+	sentAt: string | null;
+	preflightStatus: CommanderControllerPreflightStatus;
+	preflightBlockers: string[];
+	preflightWarnings: string[];
+}
+
 interface CommanderControllerCommands {
 	version: "0.1";
 	workspaceId: string;
@@ -223,6 +260,9 @@ interface CommanderControllerCommands {
 	) => Promise<CommanderControllerSendHandoffResult>;
 	readBrowserAiLatestReply: () => Promise<CommanderControllerLatestReplyResult>;
 	getBrowserAiLatestReply: () => Promise<CommanderControllerLatestReplyResult>;
+	sendInstructionToBoundWorker: (
+		input: CommanderControllerSendInstructionInput,
+	) => Promise<CommanderControllerSendInstructionResult>;
 }
 
 type CommanderControllerWindow = Window &
@@ -1007,6 +1047,127 @@ export function CommanderTab({
 			workspaceId,
 		]);
 
+	const sendInstructionToBoundWorkerController =
+		useCallback(async (
+			input: CommanderControllerSendInstructionInput,
+		): Promise<CommanderControllerSendInstructionResult> => {
+			const blockers: string[] = [];
+			const warnings: string[] = [];
+			const normalizedInput = normalizeSendInstructionInput(input);
+			const instruction = normalizedInput.instruction;
+			const requirePreflight = normalizedInput.requirePreflight;
+			const dryRun = normalizedInput.dryRun;
+			const source = normalizedInput.source;
+			const allowedWorkerTypes = normalizedInput.allowWorkerTypes;
+			const preflight = await getAutoLoopPreflightController();
+			const workerType = preflight.workerType;
+			const targetPaneId = preflight.workerPaneId;
+			const workerTypeAllowed = allowedWorkerTypes.includes(
+				workerType as CommanderControllerAllowedWorkerType,
+			);
+
+			if (!instruction) blockers.push("instruction is empty");
+			if (requirePreflight && preflight.status === "BLOCKED") {
+				blockers.push(...preflight.blockers.map((blocker) => `preflight: ${blocker}`));
+			}
+			if (!preflight.workerBound) blockers.push("worker binding required");
+			if (!preflight.workerIdentityOk) {
+				blockers.push(...preflight.workerIdentityBlockers);
+			}
+			if (!workerTypeAllowed) {
+				blockers.push(`worker type is not allowed: ${workerType || "unknown"}`);
+			}
+			if (!targetPaneId) blockers.push("bound worker paneId not found");
+			if (
+				preflight.autoLoopPhase !== "idle" &&
+				preflight.autoLoopPhase !== "stopped"
+			) {
+				blockers.push(`auto loop is already in phase: ${preflight.autoLoopPhase}`);
+			}
+			const safetyBlockers = findInstructionSafetyBlockers(instruction);
+			blockers.push(...safetyBlockers);
+			warnings.push(...preflight.warnings.map((warning) => `preflight: ${warning}`));
+			if (!requirePreflight) {
+				warnings.push("preflight blocking is disabled for this request");
+			}
+
+			const baseResult = {
+				...getCommanderControllerContext(),
+				activeTabId,
+				paneId: targetPaneId,
+				terminalId: preflight.terminalId,
+				workerType,
+				workerIdentityOk: preflight.workerIdentityOk,
+				instructionLength: instruction.length,
+				source,
+				requirePreflight,
+				dryRun,
+				blockers,
+				warnings,
+				sentAt: null,
+				preflightStatus: preflight.status,
+				preflightBlockers: preflight.blockers,
+				preflightWarnings: preflight.warnings,
+			};
+
+			if (blockers.length > 0) {
+				return {
+					ok: false,
+					...baseResult,
+					status: "BLOCKED",
+					message: getSendInstructionBlockedMessage(blockers),
+				};
+			}
+			if (!targetPaneId) {
+				return {
+					ok: false,
+					...baseResult,
+					status: "FAILED",
+					message: "bound worker paneId not found after safety checks",
+				};
+			}
+
+			if (dryRun) {
+				return {
+					ok: true,
+					...baseResult,
+					status: "DRY_RUN",
+					message: `Instruction can be sent to ${workerType} worker`,
+				};
+			}
+
+			try {
+				const ok = await sendToTerminal(targetPaneId, instruction, {
+					submit: true,
+				});
+				if (!ok) {
+					return {
+						ok: false,
+						...baseResult,
+						status: "FAILED",
+						message: "terminal submit failed",
+					};
+				}
+				return {
+					ok: true,
+					...baseResult,
+					status: "SENT",
+					message: `Instruction sent to ${workerType} worker`,
+					sentAt: new Date().toISOString(),
+				};
+			} catch (error) {
+				return {
+					ok: false,
+					...baseResult,
+					status: "FAILED",
+					message:
+						error instanceof Error
+							? `terminal submit failed: ${error.message}`
+							: "terminal submit failed",
+				};
+			}
+		}, [activeTabId, getAutoLoopPreflightController, getCommanderControllerContext]);
+
 	useEffect(() => {
 		console.log(
 			"[S3.11] registerCommanderBridge with onAutoCaptureTrigger =",
@@ -1050,6 +1211,7 @@ export function CommanderTab({
 			sendHandoffToBrowserAI: sendHandoffToBrowserAiController,
 			readBrowserAiLatestReply: readBrowserAiLatestReplyController,
 			getBrowserAiLatestReply: readBrowserAiLatestReplyController,
+			sendInstructionToBoundWorker: sendInstructionToBoundWorkerController,
 		};
 		target.__doydeckCommanderController = commands;
 		return () => {
@@ -1066,6 +1228,7 @@ export function CommanderTab({
 		getAutoLoopPreflightController,
 		sendHandoffToBrowserAiController,
 		readBrowserAiLatestReplyController,
+		sendInstructionToBoundWorkerController,
 	]);
 
 	const currentProvider = detectProvider(webview.currentUrl);
@@ -1588,6 +1751,85 @@ function getBrowserAiLatestReplyMessage(
 			: "Browser AI latest reply read blocked";
 	}
 	return "Browser AI latest reply read failed";
+}
+
+function normalizeSendInstructionInput(
+	input: CommanderControllerSendInstructionInput,
+): {
+	instruction: string;
+	source: string;
+	requirePreflight: boolean;
+	allowWorkerTypes: CommanderControllerAllowedWorkerType[];
+	dryRun: boolean;
+} {
+	const source =
+		typeof input?.source === "string" && input.source.trim()
+			? input.source.trim()
+			: "meta-ai";
+	const allowWorkerTypes = Array.isArray(input?.allowWorkerTypes)
+		? input.allowWorkerTypes.filter(
+				(type): type is CommanderControllerAllowedWorkerType =>
+					type === "codex" || type === "claude",
+			)
+		: [];
+	return {
+		instruction:
+			typeof input?.instruction === "string" ? input.instruction.trim() : "",
+		source,
+		requirePreflight: input?.requirePreflight !== false,
+		allowWorkerTypes:
+			allowWorkerTypes.length > 0 ? allowWorkerTypes : ["codex", "claude"],
+		dryRun: input?.dryRun === true,
+	};
+}
+
+function findInstructionSafetyBlockers(instruction: string): string[] {
+	const blockers: string[] = [];
+	const normalized = instruction.trim();
+	if (!normalized) return blockers;
+	const checks: Array<{ label: string; pattern: RegExp }> = [
+		{ label: "commit requires Doy confirmation", pattern: /\bcommit\b|コミット/i },
+		{ label: "push requires Doy confirmation", pattern: /\bpush\b|プッシュ/i },
+		{
+			label: "destructive file operation requires Doy confirmation",
+			pattern:
+				/\brm\s+-rf\b|\brm\s+-fr\b|\bgit\s+reset\s+--hard\b|\bgit\s+clean\s+-[A-Za-z]*f\b|\btruncate\b|\bdd\s+if=|\bmkfs\b|\bdelete\b|\bremove\b|削除|破壊/i,
+		},
+		{
+			label: "database/app-state direct operation is not allowed",
+			pattern:
+				/local\.db|app-state\.json|~\/\.superset|~\/\.doydeck-superset-dev|\.doydeck-superset-dev/i,
+		},
+		{
+			label: "cookie/token/private API operation is not allowed",
+			pattern:
+				/\bcookie\b|\bcookies\b|\btoken\b|\bprivate\s+api\b|秘密鍵|認証情報|トークン/i,
+		},
+	];
+	for (const check of checks) {
+		if (check.pattern.test(normalized) && !blockers.includes(check.label)) {
+			blockers.push(check.label);
+		}
+	}
+	return blockers;
+}
+
+function getSendInstructionBlockedMessage(blockers: string[]): string {
+	const firstBlocker = blockers[0];
+	if (!firstBlocker) return "Instruction send blocked";
+	if (firstBlocker.includes("instruction is empty")) {
+		return "Instruction send blocked: instruction is empty";
+	}
+	if (firstBlocker.includes("preflight:")) {
+		return `Instruction send blocked by ${firstBlocker}`;
+	}
+	if (firstBlocker.includes("worker")) {
+		return `Instruction send blocked: ${firstBlocker}`;
+	}
+	if (firstBlocker.includes("confirmation")) {
+		return `Instruction send blocked: ${firstBlocker}`;
+	}
+	return `Instruction send blocked: ${firstBlocker}`;
 }
 
 function getAutoLoopPreflightNextAction(
