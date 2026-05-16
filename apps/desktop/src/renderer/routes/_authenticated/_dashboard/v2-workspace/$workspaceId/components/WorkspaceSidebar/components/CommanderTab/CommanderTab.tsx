@@ -6,13 +6,16 @@ import { registerDoyDeckCommanderActionBridge } from "renderer/stores/doydeck-co
 import {
 	evaluateDoyDeckWorkerIdentity,
 	type DoyDeckWorkerIdentityStatus,
-	inferDoyDeckWorkerTypeFromText,
+	inferDoyDeckWorkerTypeFromEvidence,
 	makeDoyDeckWorkerBindingKey,
 	resolveDoyDeckWorkerBindingSnapshot,
 	useDoyDeckWorkerBindingsStore,
 } from "renderer/stores/doydeck-worker-bindings";
 import { useTabsStore } from "renderer/stores/tabs/store";
-import { getOutputLogSince } from "renderer/screens/main/components/WorkspaceView/ContentView/TabsContent/Terminal/v1-terminal-cache";
+import {
+	getOutputLogSince,
+	getTerminalOutputSnapshot,
+} from "renderer/screens/main/components/WorkspaceView/ContentView/TabsContent/Terminal/v1-terminal-cache";
 import type {
 	CommanderSession,
 	CommanderState,
@@ -383,7 +386,13 @@ export function CommanderTab({
 			return;
 		}
 		const terminalOutput = getOutputLogSince(activeTerminalInfo.paneId, 0);
-		const workerType = inferDoyDeckWorkerTypeFromText(terminalOutput);
+		const terminalSnapshot = getTerminalOutputSnapshot(activeTerminalInfo.paneId);
+		const workerType = inferDoyDeckWorkerTypeFromEvidence({
+			outputText: terminalOutput,
+			screenText: terminalSnapshot?.screenText,
+			viewportText: terminalSnapshot?.viewportText,
+			selectionText: getTerminalSelection(activeTerminalInfo.paneId),
+		});
 		bindWorker({
 			workspaceId,
 			tabId: activeTabId,

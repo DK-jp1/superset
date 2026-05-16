@@ -15,6 +15,16 @@ export interface DoyDeckWorkerIdentityCheck {
 	workerIdentityBlockers: string[];
 }
 
+export interface DoyDeckWorkerIdentityEvidence {
+	outputText?: string | null;
+	screenText?: string | null;
+	viewportText?: string | null;
+	selectionText?: string | null;
+	title?: string | null;
+	command?: string | null;
+	processName?: string | null;
+}
+
 export interface DoyDeckWorkerBinding {
 	workspaceId: string;
 	tabId: string;
@@ -86,19 +96,32 @@ export function makeDoyDeckWorkerBindingKey(
 export function inferDoyDeckWorkerTypeFromText(
 	text: string,
 ): DoyDeckWorkerType {
-	const tail = text.slice(-8000);
+	const tail = text.slice(-12000);
+	const codexSignalPatterns = [
+		/\bOpenAI\s+Codex\b/i,
+		/\bcodex\s+--dangerously-bypass-approvals-and-sandbox\b/i,
+		/\bCODEX_WORKER_READY\b/i,
+		/\bCodex\b/i,
+		/\bcodex\b/i,
+		/\bmodel:\s*gpt-/i,
+		/\bpermissions:\s*YOLO\s+mode\b/i,
+	];
 	if (
-		/\bOpenAI\s+Codex\b/i.test(tail) ||
-		/\bcodex\s+--dangerously-bypass-approvals-and-sandbox\b/i.test(tail) ||
-		/\bCODEX_WORKER_READY\b/i.test(tail)
+		codexSignalPatterns.some((pattern) => pattern.test(tail))
 	) {
 		return "codex";
 	}
+	const claudeSignalPatterns = [
+		/\bClaude\s+Code\b/i,
+		/\bclaude\s+--dangerously-skip-permissions\b/i,
+		/\bCLAUDE_WORKER_READY\b/i,
+		/\bAnthropic\b/i,
+		/\bclaude\b/i,
+		/\bOpus\s+\d/i,
+		/[⏺●]\s*完了報告/,
+	];
 	if (
-		/\bClaude\s+Code\b/i.test(tail) ||
-		/\bclaude\s+--dangerously-skip-permissions\b/i.test(tail) ||
-		/\bOpus\s+\d/i.test(tail) ||
-		/[⏺●]\s*完了報告/.test(tail)
+		claudeSignalPatterns.some((pattern) => pattern.test(tail))
 	) {
 		return "claude";
 	}
@@ -106,6 +129,24 @@ export function inferDoyDeckWorkerTypeFromText(
 		return "shell";
 	}
 	return "unknown";
+}
+
+export function inferDoyDeckWorkerTypeFromEvidence(
+	evidence: DoyDeckWorkerIdentityEvidence,
+): DoyDeckWorkerType {
+	return inferDoyDeckWorkerTypeFromText(
+		[
+			evidence.outputText,
+			evidence.screenText,
+			evidence.viewportText,
+			evidence.selectionText,
+			evidence.title,
+			evidence.command,
+			evidence.processName,
+		]
+			.filter((value): value is string => typeof value === "string")
+			.join("\n"),
+	);
 }
 
 export function evaluateDoyDeckWorkerIdentity(

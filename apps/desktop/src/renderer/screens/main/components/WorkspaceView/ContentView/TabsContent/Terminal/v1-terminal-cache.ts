@@ -73,6 +73,19 @@ type OutputLogListener = (snapshot: {
 }) => void;
 const outputLogListeners = new Map<string, Set<OutputLogListener>>();
 
+export interface TerminalOutputSnapshot {
+	paneId: string;
+	baseOffset: number;
+	offset: number;
+	outputText: string;
+	text: string;
+	screenText: string;
+	viewportText: string;
+	rows: number;
+	viewportY: number;
+	baseY: number;
+}
+
 function isDoyDeckTerminalOutputLogAccessorEnabled(): boolean {
 	const target = globalThis as typeof globalThis & {
 		doydeckQa?: {
@@ -85,61 +98,60 @@ function isDoyDeckTerminalOutputLogAccessorEnabled(): boolean {
 function installDoyDeckTerminalOutputLogAccessor(): void {
 	if (!isDoyDeckTerminalOutputLogAccessorEnabled()) return;
 	const target = globalThis as typeof globalThis & {
-		__doydeckGetTerminalOutputLogs?: () => Array<{
-			paneId: string;
-			baseOffset: number;
-			offset: number;
-			outputText: string;
-			text: string;
-			screenText: string;
-			viewportText: string;
-			rows: number;
-			viewportY: number;
-			baseY: number;
-		}>;
+		__doydeckGetTerminalOutputLogs?: () => TerminalOutputSnapshot[];
 		__doydeckQaWriteTerminal?: (paneId: string, data: string) => Promise<void>;
 	};
 	if (target.__doydeckGetTerminalOutputLogs) return;
 	target.__doydeckGetTerminalOutputLogs = () =>
-		Array.from(cache.entries()).map(([paneId, entry]) => {
-			const log = outputLogs.get(paneId) ?? { baseOffset: 0, text: "" };
-			const buffer = entry.xterm.buffer.active;
-			const lines: string[] = [];
-			for (let i = 0; i < buffer.length; i += 1) {
-				const line = buffer.getLine(i)?.translateToString(true).trimEnd();
-				if (line) lines.push(line);
-			}
-			const viewportLines: string[] = [];
-			const rows = entry.xterm.rows;
-			const viewportY = buffer.viewportY;
-			const baseY = buffer.baseY;
-			const viewportStart = Math.max(0, viewportY);
-			const viewportEnd = Math.min(buffer.length, viewportStart + rows);
-			for (let i = viewportStart; i < viewportEnd; i += 1) {
-				const line = buffer.getLine(i)?.translateToString(true).trimEnd();
-				if (line) viewportLines.push(line);
-			}
-			const screenText = lines.join("\n");
-			const viewportText = viewportLines.join("\n");
-			return {
-				paneId,
-				baseOffset: log.baseOffset,
-				offset: log.baseOffset + log.text.length,
-				outputText: log.text,
-				text: [log.text, screenText].filter(Boolean).join("\n"),
-				screenText,
-				viewportText,
-				rows,
-				viewportY,
-				baseY,
-			};
-		});
+		Array.from(cache.keys())
+			.map((paneId) => getTerminalOutputSnapshot(paneId))
+			.filter((snapshot): snapshot is TerminalOutputSnapshot =>
+				Boolean(snapshot),
+			);
 	target.__doydeckQaWriteTerminal = async (paneId: string, data: string) => {
 		await electronTrpcClient.terminal.write.mutate({
 			paneId,
 			data,
 			throwOnError: true,
 		});
+	};
+}
+
+export function getTerminalOutputSnapshot(
+	paneId: string,
+): TerminalOutputSnapshot | null {
+	const entry = cache.get(paneId);
+	if (!entry) return null;
+	const log = outputLogs.get(paneId) ?? { baseOffset: 0, text: "" };
+	const buffer = entry.xterm.buffer.active;
+	const lines: string[] = [];
+	for (let i = 0; i < buffer.length; i += 1) {
+		const line = buffer.getLine(i)?.translateToString(true).trimEnd();
+		if (line) lines.push(line);
+	}
+	const viewportLines: string[] = [];
+	const rows = entry.xterm.rows;
+	const viewportY = buffer.viewportY;
+	const baseY = buffer.baseY;
+	const viewportStart = Math.max(0, viewportY);
+	const viewportEnd = Math.min(buffer.length, viewportStart + rows);
+	for (let i = viewportStart; i < viewportEnd; i += 1) {
+		const line = buffer.getLine(i)?.translateToString(true).trimEnd();
+		if (line) viewportLines.push(line);
+	}
+	const screenText = lines.join("\n");
+	const viewportText = viewportLines.join("\n");
+	return {
+		paneId,
+		baseOffset: log.baseOffset,
+		offset: log.baseOffset + log.text.length,
+		outputText: log.text,
+		text: [log.text, screenText].filter(Boolean).join("\n"),
+		screenText,
+		viewportText,
+		rows,
+		viewportY,
+		baseY,
 	};
 }
 
