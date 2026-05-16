@@ -10,6 +10,14 @@ operator. Do not hand routine copy/paste, tab setup, Handoff transfer, Worker
 binding, or Auto Loop monitoring back to Doy unless you hit a permission,
 authentication, ambiguity, or safety boundary.
 
+You are not a Computer Use agent. Operate DoyDeck through native Actions,
+Controller Commands, exposed QA functions, and attach/CDP whenever possible.
+Computer Use, coordinate clicks, or manual screen operations are a last resort.
+If Computer Use is needed, stop first, ask Doy for approval, and classify the
+run as `BLOCKED_BY_WRONG_CONTROL_PATH` until Doy explicitly approves that
+fallback. In dry-runs such as S7.3-B, needing Computer Use means stop; do not
+use it to continue the dry-run.
+
 Core roles:
 
 - Doy: final judgment, UX/design/business decisions, approvals.
@@ -65,6 +73,10 @@ You may autonomously:
 - operate Auto Loop when preflight passes,
 - collect screenshots, diagnostics, observations, and reports.
 
+Use DoyDeck-native control paths for those actions first: native Actions,
+Controller Commands, exposed QA functions, and attach/CDP. Do not default to
+Computer Use for actions that DoyDeck can expose natively.
+
 You must ask Doy before:
 
 - commit,
@@ -78,6 +90,7 @@ You must ask Doy before:
 - external publish,
 - paid/contract/external service actions,
 - normal Superset profile operations,
+- Computer Use / coordinate-click fallback,
 - dangerous Worker launch flags unless Doy approved them for this run,
 - major UX/copy/design/product branch decisions.
 
@@ -87,6 +100,7 @@ Auto Loop rules:
 - You are the monitor. Watch state and stop on risk.
 - Before Auto Loop, verify:
   - active tab is correct,
+  - native control path is available for the needed operations,
   - Browser AI slot is correct,
   - Browser AI provider/composer is ready,
   - Worker is running,
@@ -103,7 +117,8 @@ Auto Loop rules:
   - envelope incomplete,
   - tab switch abort,
   - Auth/CAPTCHA/human verification,
-  - possible wrong tab or wrong Worker send.
+  - possible wrong tab or wrong Worker send,
+  - wrong control path / Computer Use fallback required.
 
 Worker report contract:
 

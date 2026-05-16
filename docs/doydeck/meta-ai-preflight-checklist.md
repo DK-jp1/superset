@@ -19,6 +19,22 @@ This checklist is for Meta AI before operating DoyDeck as Controller.
 - [ ] `SUPERSET_HOME_DIR` points at the DoyDeck safe-dev home.
 - [ ] Electron `userData` points at the DoyDeck dev profile.
 
+## Native Control Path Preflight
+
+- [ ] Meta AI is operating as DoyDeck Controller, not as a Computer Use agent.
+- [ ] The next operation can use native Actions, Controller Commands, exposed
+  QA functions, or attach/CDP.
+- [ ] Computer Use, coordinate clicks, or manual screen operations are not
+  needed.
+- [ ] If Computer Use is needed, Doy has explicitly approved the fallback.
+- [ ] If this is a dry-run, requiring Computer Use stops the run.
+
+Stop before proceeding if any of these is true:
+
+- [ ] the only available path is Computer Use / coordinate click
+- [ ] Computer Use fallback is not approved by Doy
+- [ ] dry-run requires Computer Use to continue
+
 ## Tab Preflight
 
 - [ ] Active workspace is the intended workspace.
@@ -64,6 +80,7 @@ This checklist is for Meta AI before operating DoyDeck as Controller.
 ## Auto Loop Preflight
 
 - [ ] Active tab is correct.
+- [ ] Native control path is available for all required DoyDeck operations.
 - [ ] Browser AI slot is correct.
 - [ ] Browser AI provider is ready.
 - [ ] Handoff Ledger is current enough for this loop.
@@ -87,6 +104,7 @@ Stop before starting Auto Loop if any of these is true:
 - [ ] Worker target ambiguous
 - [ ] possible send to wrong Worker
 - [ ] possible send to wrong tab
+- [ ] wrong control path / Computer Use fallback required
 
 ## During Auto Loop
 
@@ -181,6 +199,12 @@ Environment:
 - `safe-dev profile mismatch`
 - `workspace not found`
 - `renderer not reachable`
+
+Control path:
+
+- `BLOCKED_BY_WRONG_CONTROL_PATH`
+- `Computer Use fallback requires Doy approval`
+- `dry-run stopped because native control path is unavailable`
 
 ## Reporting Shape
 
