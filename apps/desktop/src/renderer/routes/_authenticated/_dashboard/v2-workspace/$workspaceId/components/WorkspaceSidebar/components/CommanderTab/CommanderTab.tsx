@@ -55,7 +55,6 @@ import { useCommanderSessionPersistence } from "./hooks/useCommanderSessionPersi
 import type { AssistantCaptureSnapshot } from "./hooks/usePromptTransfer";
 import type { AutoRelayMode } from "./hooks/usePromptTransfer";
 import {
-	extractInstructionBlock,
 	sendToTerminal,
 	usePromptTransfer,
 } from "./hooks/usePromptTransfer";
@@ -303,6 +302,10 @@ interface CommanderControllerLatestReplyResult
 	hasStopSignal: boolean;
 	hasDoyConfirmationItems: boolean;
 	extractedCodexInstruction: string;
+	extractedCodexInstructionSource?: string | null;
+	extractedCodexInstructionLineCount?: number;
+	instructionExtractionStoppedAt?: string | null;
+	instructionExtractionWarnings?: string[];
 	extractedStopSignal: string | null;
 	extractedDoyConfirmationItems: string[];
 	doyConfirmationNegated?: boolean;
@@ -1621,7 +1624,7 @@ export function CommanderTab({
 				};
 			}
 
-			const extractedCodexInstruction = extractBrowserAiCodexInstruction(
+			const codexInstruction = extractBrowserAiCodexInstruction(
 				latestState.latestText,
 			);
 			const extractedStopSignal = extractBrowserAiStopSignal(latestState.latestText);
@@ -1650,10 +1653,14 @@ export function CommanderTab({
 				latestReplyLength: latestState.latestText.length,
 				latestReplyFingerprint: latestState.latestFingerprint,
 				assistantCount: latestState.assistantCount,
-				hasCodexInstruction: Boolean(extractedCodexInstruction),
+				hasCodexInstruction: Boolean(codexInstruction.instruction),
 				hasStopSignal: Boolean(extractedStopSignal),
 				hasDoyConfirmationItems: doyConfirmation.items.length > 0,
-				extractedCodexInstruction,
+				extractedCodexInstruction: codexInstruction.instruction,
+				extractedCodexInstructionSource: codexInstruction.source,
+				extractedCodexInstructionLineCount: codexInstruction.lineCount,
+				instructionExtractionStoppedAt: codexInstruction.stoppedAt,
+				instructionExtractionWarnings: codexInstruction.warnings,
 				extractedStopSignal,
 				extractedDoyConfirmationItems: doyConfirmation.items,
 				doyConfirmationNegated: doyConfirmation.negated,
@@ -3389,22 +3396,35 @@ function normalizeBrowserAiLatestReplyState(
 	};
 }
 
-function extractBrowserAiCodexInstruction(text: string): string {
+function extractBrowserAiCodexInstruction(text: string): {
+	instruction: string;
+	source: string | null;
+	lineCount: number;
+	stoppedAt: string | null;
+	warnings: string[];
+} {
 	const fromHeading = extractBrowserAiInstructionFromHeading(text);
-	if (fromHeading) return fromHeading;
-	return extractInstructionBlock(text);
+	return {
+		instruction: fromHeading.instruction,
+		source: fromHeading.source,
+		lineCount: fromHeading.lineCount,
+		stoppedAt: fromHeading.stoppedAt,
+		warnings: fromHeading.warnings,
+	};
 }
 
-function extractBrowserAiInstructionFromHeading(text: string): string {
+function extractBrowserAiInstructionFromHeading(text: string): {
+	instruction: string;
+	source: string | null;
+	lineCount: number;
+	stoppedAt: string | null;
+	warnings: string[];
+} {
 	const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
 	const headingKeywords = [
-		"(?:作業側(?:の)?\\s*)?Codex\\s*[へに]\\s*渡す\\s*指示",
-		"(?:作業側(?:の)?\\s*)?Codex\\s*[へに]\\s*投げる\\s*指示",
-		"Codex\\s*指示",
+		"Codex\\s*へ\\s*渡す\\s*指示",
+		"作業側(?:の)?\\s*Codex\\s*へ\\s*渡す\\s*指示",
 		"Worker\\s*[へに]\\s*渡す\\s*指示",
-		"Worker\\s*指示",
-		"Claude\\s*Code\\s*[へに]\\s*渡す\\s*指示",
-		"Claude\\s*Code\\s*指示",
 	].join("|");
 	const prefix = String.raw`^\s*(?:>\s*)?(?:[-*•・]\s*)?(?:#{1,6}\s*)?(?:\*\*)?\s*`;
 	const suffix = String.raw`\s*(?:[：:]?\s*\*\*|\*\*\s*[：:]?|[：:]|\*\*)?`;
@@ -3423,34 +3443,194 @@ function extractBrowserAiInstructionFromHeading(text: string): string {
 		const isHeading = headingPattern.test(line);
 		if (!inlineMatch && !isHeading) continue;
 
-		const bodyLines: string[] = [];
-		if (inlineMatch?.[1]?.trim()) bodyLines.push(inlineMatch[1]);
+		const inlineBody = inlineMatch?.[1]?.trim();
+		if (inlineBody) {
+			const instruction = inlineBody.trim();
+			return {
+				instruction,
+				source: "inline-marker",
+				lineCount: countNonEmptyLines(instruction),
+				stoppedAt: "same-line marker body",
+				warnings: [],
+			};
+		}
 
-		for (let j = i + 1; j < lines.length; j++) {
-			const next = lines[j].trim();
+		const firstBodyIndex = findNextNonEmptyLineIndex(lines, i + 1);
+		if (firstBodyIndex === -1) {
+			return {
+				instruction: "",
+				source: null,
+				lineCount: 0,
+				stoppedAt: "empty instruction body",
+				warnings: ["instruction marker found without body"],
+			};
+		}
+
+		const firstBodyLine = lines[firstBodyIndex].trim();
+		if (/^```/.test(firstBodyLine)) {
+			const fenced = extractFencedInstructionBlock(lines, firstBodyIndex);
+			if (fenced.instruction) {
+				return {
+					...fenced,
+					source: "fenced-block",
+				};
+			}
+		}
+
+		if (isOneLineOnlyInstruction(firstBodyLine)) {
+			return {
+				instruction: firstBodyLine,
+				source: "one-line-instruction",
+				lineCount: 1,
+				stoppedAt: "one-line instruction marker",
+				warnings: [],
+			};
+		}
+
+		const bodyLines: string[] = [];
+		let stoppedAt: string | null = null;
+		for (let j = firstBodyIndex; j < lines.length; j++) {
+			const raw = lines[j];
+			const next = raw.trim();
 			if (
 				bodyLines.some((bodyLine) => bodyLine.trim().length > 0) &&
 				isBrowserAiInstructionBoundary(next)
 			) {
+				stoppedAt = next || "blank boundary";
 				break;
 			}
-			bodyLines.push(lines[j]);
+			bodyLines.push(raw);
 		}
 
-		const body = bodyLines.join("\n").trim();
-		if (body) return body;
+		const body = trimInstructionBody(bodyLines.join("\n"));
+		if (body) {
+			return {
+				instruction: body,
+				source: "heading-block",
+				lineCount: countNonEmptyLines(body),
+				stoppedAt,
+				warnings: stoppedAt ? [`instruction extraction stopped at: ${stoppedAt}`] : [],
+			};
+		}
 	}
-	return "";
+	return {
+		instruction: "",
+		source: null,
+		lineCount: 0,
+		stoppedAt: null,
+		warnings: [],
+	};
 }
 
 function isBrowserAiInstructionBoundary(line: string): boolean {
 	if (!line) return false;
 	if (/^(?:#{1,6}\s*)/.test(line)) return true;
-	if (/^(?:[-*•・]\s*)?(?:\*\*)?(?:Doy確認|Doyへ確認|Doyに確認|確認事項|未解決|次アクション|補足|理由|判断|レビュー|STOP)(?:\*\*)?[：:]?\s*$/i.test(line)) {
+	const boundaryLabels = [
+		"現在地",
+		"完了",
+		"決定事項",
+		"未解決",
+		"次アクション",
+		"最新QA",
+		"Handoff",
+		"補足",
+		"理由",
+		"注意点",
+		"BLOCKED理由",
+		"Doy確認",
+		"Doyへ確認",
+		"Doyに確認",
+		"確認事項",
+		"判断",
+		"レビュー",
+		"STOP",
+		"まとめ",
+		"セルフレビュー",
+		"報告",
+	];
+	const normalized = line
+		.trim()
+		.replace(/^(?:[-*•・]\s*)+/, "")
+		.replace(/^\*\*/, "")
+		.replace(/\*\*$/, "")
+		.trim();
+	if (
+		boundaryLabels.some(
+			(label) =>
+				normalized === label ||
+				normalized.startsWith(`${label}:`) ||
+				normalized.startsWith(`${label}：`) ||
+				normalized.startsWith(`${label}**:`) ||
+				normalized.startsWith(`${label}**：`),
+		)
+	) {
 		return true;
 	}
-	if (/^---\s*.+\s*---$/.test(line)) return true;
+	if (/^---.*$/.test(line)) return true;
 	return false;
+}
+
+function findNextNonEmptyLineIndex(lines: string[], startIndex: number): number {
+	for (let index = startIndex; index < lines.length; index++) {
+		if (lines[index].trim()) return index;
+	}
+	return -1;
+}
+
+function extractFencedInstructionBlock(
+	lines: string[],
+	fenceStartIndex: number,
+): {
+	instruction: string;
+	source: string;
+	lineCount: number;
+	stoppedAt: string | null;
+	warnings: string[];
+} {
+	const bodyLines: string[] = [];
+	for (let index = fenceStartIndex + 1; index < lines.length; index++) {
+		const line = lines[index];
+		if (/^```/.test(line.trim())) {
+			const instruction = trimInstructionBody(bodyLines.join("\n"));
+			return {
+				instruction,
+				source: "fenced-block",
+				lineCount: countNonEmptyLines(instruction),
+				stoppedAt: "closing fence",
+				warnings: [],
+			};
+		}
+		bodyLines.push(line);
+	}
+	const instruction = trimInstructionBody(bodyLines.join("\n"));
+	return {
+		instruction,
+		source: "fenced-block",
+		lineCount: countNonEmptyLines(instruction),
+		stoppedAt: "missing closing fence",
+		warnings: ["instruction fenced block missing closing fence"],
+	};
+}
+
+function isOneLineOnlyInstruction(line: string): boolean {
+	return /次の\s*1\s*行だけ(?:返信|返答|出力|返|答え)(?:して)?ください/i.test(line);
+}
+
+function trimInstructionBody(value: string): string {
+	return value
+		.replace(/\r\n/g, "\n")
+		.replace(/\r/g, "\n")
+		.split("\n")
+		.map((line) => line.replace(/\s+$/g, ""))
+		.join("\n")
+		.trim();
+}
+
+function countNonEmptyLines(value: string): number {
+	return value
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean).length;
 }
 
 function extractBrowserAiStopSignal(text: string): string | null {
