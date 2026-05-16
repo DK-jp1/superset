@@ -371,8 +371,11 @@ interface CommanderControllerLatestReplyResult
 	instructionExtractionStoppedAt?: string | null;
 	instructionExtractionWarnings?: string[];
 	extractedStopSignal: string | null;
+	stopSignalNegatedOrConditional?: boolean;
+	stopSignalReason?: string | null;
 	extractedDoyConfirmationItems: string[];
 	doyConfirmationNegated?: boolean;
+	doyConfirmationConditionalOnly?: boolean;
 	doyConfirmationReason?: string | null;
 	blockers: string[];
 	warnings: string[];
@@ -459,6 +462,9 @@ interface CommanderControllerBoundWorkerLatestResponseResult
 	hasFileChangeSignal: boolean;
 	hasGitOperationSignal: boolean;
 	receivedInstructionAck: boolean;
+	receivedInstructionAckByMarker: boolean;
+	ackMarkerDetected: string | null;
+	ackDetectionReason: string;
 	summary: string;
 	promptEchoRemoved: boolean;
 	usedLastSendMarker: boolean;
@@ -1892,7 +1898,7 @@ export function CommanderTab({
 			const codexInstruction = extractBrowserAiCodexInstruction(
 				latestState.latestText,
 			);
-			const extractedStopSignal = extractBrowserAiStopSignal(latestState.latestText);
+			const stopSignal = classifyBrowserAiStopSignal(latestState.latestText);
 			const doyConfirmation = classifyDoyConfirmationItems(
 				latestState.latestText,
 			);
@@ -1919,16 +1925,19 @@ export function CommanderTab({
 				latestReplyFingerprint: latestState.latestFingerprint,
 				assistantCount: latestState.assistantCount,
 				hasCodexInstruction: Boolean(codexInstruction.instruction),
-				hasStopSignal: Boolean(extractedStopSignal),
+				hasStopSignal: Boolean(stopSignal.signal),
 				hasDoyConfirmationItems: doyConfirmation.items.length > 0,
 				extractedCodexInstruction: codexInstruction.instruction,
 				extractedCodexInstructionSource: codexInstruction.source,
 				extractedCodexInstructionLineCount: codexInstruction.lineCount,
 				instructionExtractionStoppedAt: codexInstruction.stoppedAt,
 				instructionExtractionWarnings: codexInstruction.warnings,
-				extractedStopSignal,
+				extractedStopSignal: stopSignal.signal,
+				stopSignalNegatedOrConditional: stopSignal.conditional,
+				stopSignalReason: stopSignal.reason,
 				extractedDoyConfirmationItems: doyConfirmation.items,
 				doyConfirmationNegated: doyConfirmation.negated,
+				doyConfirmationConditionalOnly: doyConfirmation.conditionalOnly,
 				doyConfirmationReason: doyConfirmation.reason,
 				blockers,
 				warnings,
@@ -2133,6 +2142,9 @@ export function CommanderTab({
 					hasFileChangeSignal: false,
 					hasGitOperationSignal: false,
 					receivedInstructionAck: false,
+					receivedInstructionAckByMarker: false,
+					ackMarkerDetected: null,
+					ackDetectionReason: "read blocked before worker output analysis",
 					summary: "Bound worker output read blocked.",
 					blockers,
 					warnings,
@@ -2152,6 +2164,9 @@ export function CommanderTab({
 					hasFileChangeSignal: false,
 					hasGitOperationSignal: false,
 					receivedInstructionAck: false,
+					receivedInstructionAckByMarker: false,
+					ackMarkerDetected: null,
+					ackDetectionReason: "bound worker paneId unavailable",
 					summary: "Bound worker paneId was unavailable after safety checks.",
 					blockers,
 					warnings,
@@ -2173,6 +2188,9 @@ export function CommanderTab({
 					hasFileChangeSignal: false,
 					hasGitOperationSignal: false,
 					receivedInstructionAck: false,
+					receivedInstructionAckByMarker: false,
+					ackMarkerDetected: null,
+					ackDetectionReason: "bound worker terminal output snapshot unavailable",
 					summary: "Bound worker terminal output snapshot is unavailable.",
 					blockers,
 					warnings,
@@ -2205,7 +2223,10 @@ export function CommanderTab({
 				waitingReason,
 			} = extractedResponse;
 			const latestResponseText = analyzedResponseText;
-			const analysis = analyzeBoundWorkerOutput(latestResponseText);
+			const analysis = analyzeBoundWorkerOutput(latestResponseText, {
+				lastInstructionMarker,
+				deltaText,
+			});
 
 			if (!latestResponseText.trim()) {
 				warnings.push("bound worker output not found");
@@ -2227,6 +2248,9 @@ export function CommanderTab({
 					hasFileChangeSignal: false,
 					hasGitOperationSignal: false,
 					receivedInstructionAck: false,
+					receivedInstructionAckByMarker: false,
+					ackMarkerDetected: null,
+					ackDetectionReason: "no bound worker output found",
 					summary: "No bound worker output has been captured yet.",
 					promptEchoRemoved,
 					usedLastSendMarker,
@@ -2264,6 +2288,9 @@ export function CommanderTab({
 					hasFileChangeSignal: analysis.hasFileChangeSignal,
 					hasGitOperationSignal: analysis.hasGitOperationSignal,
 					receivedInstructionAck: analysis.receivedInstructionAck,
+					receivedInstructionAckByMarker: analysis.receivedInstructionAckByMarker,
+					ackMarkerDetected: analysis.ackMarkerDetected,
+					ackDetectionReason: analysis.ackDetectionReason,
 					summary: getBoundWorkerLatestResponseSummary(analysis, latestResponseText),
 					promptEchoRemoved,
 					usedLastSendMarker,
@@ -2309,6 +2336,9 @@ export function CommanderTab({
 				hasFileChangeSignal: analysis.hasFileChangeSignal,
 				hasGitOperationSignal: analysis.hasGitOperationSignal,
 				receivedInstructionAck: analysis.receivedInstructionAck,
+				receivedInstructionAckByMarker: analysis.receivedInstructionAckByMarker,
+				ackMarkerDetected: analysis.ackMarkerDetected,
+				ackDetectionReason: analysis.ackDetectionReason,
 				summary: getBoundWorkerLatestResponseSummary(analysis, latestResponseText),
 				promptEchoRemoved,
 				usedLastSendMarker,
@@ -3903,19 +3933,39 @@ function countNonEmptyLines(value: string): number {
 		.filter(Boolean).length;
 }
 
-function extractBrowserAiStopSignal(text: string): string | null {
-	const patterns = [
-		/\bSTOP\b[。.!！]?/i,
-		/次の\s*(?:作業側(?:の)?\s*)?Codex\s*指示(?:は|が)?不要/,
-		/(?:作業側(?:の)?\s*)?Codex\s*指示(?:は|が)?不要/,
-		/次の\s*Worker\s*指示(?:は|が)?不要/,
-		/Worker(?:へ渡す)?指示(?:は|が)?不要/,
-	];
-	for (const pattern of patterns) {
-		const match = pattern.exec(text);
-		if (match?.[0]) return match[0].trim();
+function classifyBrowserAiStopSignal(text: string): {
+	signal: string | null;
+	conditional: boolean;
+	reason: string | null;
+} {
+	const lines = text
+		.replace(/\r\n/g, "\n")
+		.replace(/\r/g, "\n")
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean);
+	let conditionalReason: string | null = null;
+	for (const line of lines) {
+		const normalized = normalizeBrowserAiDecisionLine(line);
+		if (!normalized) continue;
+		if (isBrowserAiStopConditionalLine(normalized)) {
+			conditionalReason ??= normalized;
+			continue;
+		}
+		const signal = extractBrowserAiStopSignalFromLine(normalized);
+		if (signal) {
+			return {
+				signal,
+				conditional: false,
+				reason: "explicit stop signal",
+			};
+		}
 	}
-	return null;
+	return {
+		signal: null,
+		conditional: Boolean(conditionalReason),
+		reason: conditionalReason,
+	};
 }
 
 function extractDoyConfirmationItems(text: string): string[] {
@@ -3925,6 +3975,7 @@ function extractDoyConfirmationItems(text: string): string[] {
 function classifyDoyConfirmationItems(text: string): {
 	items: string[];
 	negated: boolean;
+	conditionalOnly: boolean;
 	reason: string | null;
 } {
 	const lines = text
@@ -3937,8 +3988,11 @@ function classifyDoyConfirmationItems(text: string): {
 		/(Doy\s*(?:の)?\s*(?:確認|判断|承認|アクション|へ確認|に確認)|確認事項|追加確認|確認が必要|要確認|判断が必要|承認が必要|質問|決めてください|どちら|仕様判断が必要|UX判断が必要)/i;
 	const items: string[] = [];
 	let negated = lines.some((line) => isDoyConfirmationNegated(line));
+	let conditional = false;
 	let negatedReason: string | null =
 		lines.find((line) => isDoyConfirmationNegated(line)) ?? null;
+	let conditionalReason: string | null =
+		lines.find((line) => isDoyConfirmationConditional(line)) ?? null;
 	for (const line of lines) {
 		if (!confirmationPattern.test(line)) continue;
 		const normalized = line.replace(/^[-*•・\d.)\s]+/, "").trim();
@@ -3947,11 +4001,21 @@ function classifyDoyConfirmationItems(text: string): {
 			negatedReason ??= normalized;
 			continue;
 		}
+		if (isDoyConfirmationConditional(normalized)) {
+			conditional = true;
+			conditionalReason ??= normalized;
+			continue;
+		}
 		const inlineBody = extractInlineDoyConfirmationBody(normalized);
 		if (inlineBody !== null) {
 			if (!inlineBody || isDoyConfirmationNegated(inlineBody)) {
 				negated = true;
 				negatedReason ??= normalized;
+				continue;
+			}
+			if (isDoyConfirmationConditional(inlineBody)) {
+				conditional = true;
+				conditionalReason ??= normalized;
 				continue;
 			}
 		}
@@ -3962,8 +4026,45 @@ function classifyDoyConfirmationItems(text: string): {
 	return {
 		items,
 		negated: items.length === 0 && negated,
-		reason: items.length === 0 ? negatedReason : null,
+		conditionalOnly: items.length === 0 && conditional,
+		reason: items.length === 0 ? negatedReason ?? conditionalReason : null,
 	};
+}
+
+function normalizeBrowserAiDecisionLine(line: string): string {
+	return line
+		.replace(/^>\s*/, "")
+		.replace(/^[-*•・\d.)\s]+/, "")
+		.replace(/^\*\*/, "")
+		.replace(/\*\*$/, "")
+		.trim();
+}
+
+function extractBrowserAiStopSignalFromLine(line: string): string | null {
+	const normalized = normalizeBrowserAiDecisionLine(line);
+	const patterns = [
+		/^(?:STOP|停止)[。.!！]?$/i,
+		/^STOP\s*[：:]\s*(?:追加作業不要|次の(?:作業側(?:の)?\s*)?Codex\s*指示(?:は|が)?不要|次のWorker\s*指示(?:は|が)?不要)/i,
+		/^次の\s*(?:作業側(?:の)?\s*)?Codex\s*指示(?:は|が)?不要[。.!！]?$/i,
+		/^(?:作業側(?:の)?\s*)?Codex\s*指示(?:は|が)?不要[。.!！]?$/i,
+		/^次の\s*Worker\s*指示(?:は|が)?不要[。.!！]?$/i,
+		/^Worker(?:へ渡す)?指示(?:は|が)?不要[。.!！]?$/i,
+	];
+	for (const pattern of patterns) {
+		const match = pattern.exec(normalized);
+		if (match?.[0]) return match[0].trim();
+	}
+	return null;
+}
+
+function isBrowserAiStopConditionalLine(line: string): boolean {
+	const normalized = normalizeBrowserAiDecisionLine(line);
+	return [
+		/条件付き\s*STOP/i,
+		/\bSTOP\b.*(?:出たら|出た場合|の場合|した場合|なら|であれば|必要な場合|された場合|するとき|ルール|条件|判断して|でよいか)/i,
+		/(?:出たら|出た場合|の場合|した場合|なら|であれば|必要な場合|された場合).*\bSTOP\b/i,
+		/(?:停止|止める|中断).*?(?:場合|なら|出たら|出た場合|条件)/,
+	].some((pattern) => pattern.test(normalized));
 }
 
 function extractInlineDoyConfirmationBody(line: string): string | null {
@@ -3997,6 +4098,22 @@ function isDoyConfirmationNegated(line: string): boolean {
 		/確認(?:は|が)?(?:不要|なし|無し|ありません|不要です|なしです)/i,
 		/判断(?:は|が)?(?:不要|なし|無し|ありません|不要です|なしです)/i,
 		/特になし/i,
+	].some((pattern) => pattern.test(normalized));
+}
+
+function isDoyConfirmationConditional(line: string): boolean {
+	const normalized = line.replace(/\*\*/g, "").replace(/\s+/g, "");
+	return [
+		/Doy確認事項が出たら/,
+		/Doy確認(?:事項)?(?:が|は)?必要な場合/,
+		/Doy判断(?:が|は)?必要な場合/,
+		/Doy(?:へ|に)確認(?:が|は)?必要な場合/,
+		/確認事項が出たら/,
+		/確認(?:が|は)?必要な場合/,
+		/判断(?:が|は)?必要な場合/,
+		/承認(?:が|は)?必要な場合/,
+		/(?:確認|判断|承認|Doy確認|Doy判断).*(?:場合|なら|出たら|出た場合|条件|ルール)/,
+		/(?:場合|なら|出たら|出た場合).*(?:確認|判断|承認|Doy確認|Doy判断)/,
 	].some((pattern) => pattern.test(normalized));
 }
 
@@ -4103,6 +4220,9 @@ interface BoundWorkerOutputAnalysis {
 	hasFileChangeSignal: boolean;
 	hasGitOperationSignal: boolean;
 	receivedInstructionAck: boolean;
+	receivedInstructionAckByMarker: boolean;
+	ackMarkerDetected: string | null;
+	ackDetectionReason: string;
 	isIdleOrReady: boolean;
 }
 
@@ -4366,6 +4486,8 @@ function scoreBoundWorkerResponseCandidate(line: string): number {
 	if (!normalized || isBoundWorkerUiNoiseLine(normalized)) return 0;
 	if (/返信してください|返答してください|reply\s+with/i.test(normalized)) return 0;
 	const scoredPatterns: Array<[RegExp, number]> = [
+		[/\bS[78]_[A-Za-z0-9_]*\b/, 130],
+		[/\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*(?:SAFE|NOOP)_ACK(?:_[A-Za-z0-9]+)*\b/i, 130],
 		[/受け取りました/, 120],
 		[/受信しました/, 115],
 		[/現在待機中です/, 110],
@@ -4476,7 +4598,13 @@ function compactWorkerInstructionForComparison(text: string): string {
 	return normalizeWorkerInstructionForComparison(text).replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
-function analyzeBoundWorkerOutput(text: string): BoundWorkerOutputAnalysis {
+function analyzeBoundWorkerOutput(
+	text: string,
+	context?: {
+		lastInstructionMarker?: CommanderControllerLastWorkerInstructionMarker | null;
+		deltaText?: string;
+	},
+): BoundWorkerOutputAnalysis {
 	const normalized = text.trim();
 	const isIdleOrReady = hasAnyWorkerOutputSignal(normalized, [
 		/\bready\b/i,
@@ -4493,7 +4621,7 @@ function analyzeBoundWorkerOutput(text: string): BoundWorkerOutputAnalysis {
 		/ファイル変更なし/,
 		/Git操作なし/i,
 	]);
-	const receivedInstructionAck = hasAnyWorkerOutputSignal(normalized, [
+	const receivedInstructionAckByText = hasAnyWorkerOutputSignal(normalized, [
 		/受信確認/,
 		/受け取りました/,
 		/確認しました/,
@@ -4502,6 +4630,13 @@ function analyzeBoundWorkerOutput(text: string): BoundWorkerOutputAnalysis {
 		/\breceived\b/i,
 		/DOYDECK_BOUND_WORKER_SEND_TEST_OK/,
 	]);
+	const ackMarker = detectWorkerAckMarker({
+		instruction: context?.lastInstructionMarker?.instruction ?? "",
+		analyzedResponseText: normalized,
+		deltaText: context?.deltaText ?? "",
+	});
+	const receivedInstructionAck =
+		receivedInstructionAckByText || ackMarker.receivedInstructionAckByMarker;
 	const isRunning =
 		!isIdleOrReady &&
 		hasAnyWorkerOutputSignal(normalized, [
@@ -4586,6 +4721,13 @@ function analyzeBoundWorkerOutput(text: string): BoundWorkerOutputAnalysis {
 		hasFileChangeSignal,
 		hasGitOperationSignal,
 		receivedInstructionAck,
+		receivedInstructionAckByMarker: ackMarker.receivedInstructionAckByMarker,
+		ackMarkerDetected: ackMarker.ackMarkerDetected,
+		ackDetectionReason: ackMarker.receivedInstructionAckByMarker
+			? ackMarker.ackDetectionReason
+			: receivedInstructionAckByText
+				? "natural language ack detected"
+				: "ack not detected",
 		isIdleOrReady,
 	};
 }
@@ -4603,6 +4745,75 @@ function hasAnyWorkerOutputSignal(
 				!negativePatterns.some((pattern) => pattern.test(line)) &&
 				patterns.some((pattern) => pattern.test(line)),
 		);
+}
+
+function detectWorkerAckMarker({
+	instruction,
+	analyzedResponseText,
+	deltaText,
+}: {
+	instruction: string;
+	analyzedResponseText: string;
+	deltaText: string;
+}): {
+	receivedInstructionAckByMarker: boolean;
+	ackMarkerDetected: string | null;
+	ackDetectionReason: string;
+} {
+	const markers = extractWorkerAckMarkersFromInstruction(instruction);
+	if (markers.length === 0) {
+		return {
+			receivedInstructionAckByMarker: false,
+			ackMarkerDetected: null,
+			ackDetectionReason: "no ack marker found in last instruction",
+		};
+	}
+	const analyzed = analyzedResponseText.trim();
+	const delta = stripBoundWorkerPromptEcho(deltaText, instruction).text.trim();
+	const markerInAnalyzed = markers.find((marker) =>
+		includesAckMarker(analyzed, marker),
+	);
+	if (markerInAnalyzed) {
+		return {
+			receivedInstructionAckByMarker: true,
+			ackMarkerDetected: markerInAnalyzed,
+			ackDetectionReason: "ack marker detected in analyzed worker response",
+		};
+	}
+	const markerInDelta = markers.find((marker) => includesAckMarker(delta, marker));
+	if (markerInDelta) {
+		return {
+			receivedInstructionAckByMarker: true,
+			ackMarkerDetected: markerInDelta,
+			ackDetectionReason: "ack marker detected in last-send output delta",
+		};
+	}
+	return {
+		receivedInstructionAckByMarker: false,
+		ackMarkerDetected: null,
+		ackDetectionReason: "last instruction ack marker not found in response delta",
+	};
+}
+
+function extractWorkerAckMarkersFromInstruction(instruction: string): string[] {
+	const markers = new Set<string>();
+	const patterns = [
+		/\bS[78]_[A-Za-z0-9_]*\b/g,
+		/\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*(?:SAFE|NOOP)_ACK(?:_[A-Za-z0-9]+)*\b/gi,
+		/\b[A-Za-z0-9]{8,}(?:_[A-Za-z0-9]{3,}){2,}\b/g,
+	];
+	for (const pattern of patterns) {
+		for (const match of instruction.matchAll(pattern)) {
+			const marker = match[0]?.trim();
+			if (marker && marker.length >= 8) markers.add(marker);
+		}
+	}
+	return [...markers];
+}
+
+function includesAckMarker(text: string, marker: string): boolean {
+	if (!text || !marker) return false;
+	return text.includes(marker);
 }
 
 function getBoundWorkerLatestResponseSummary(
