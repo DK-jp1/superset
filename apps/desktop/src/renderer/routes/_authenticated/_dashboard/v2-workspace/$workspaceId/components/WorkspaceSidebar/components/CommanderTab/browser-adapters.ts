@@ -163,6 +163,72 @@ const SUBMIT_SELECTORS: Record<BrowserProvider, string[]> = {
 	],
 };
 
+export function buildComposerReadinessScript(
+	provider: BrowserProvider,
+): string {
+	const submitSelectors = JSON.stringify(SUBMIT_SELECTORS[provider]);
+	return `(function() {
+  var selectors = [
+    '#prompt-textarea',
+    '.ProseMirror[contenteditable="true"]',
+    'rich-textarea .ql-editor',
+    'div.ql-editor[contenteditable="true"]',
+    'div[contenteditable="true"]',
+    'textarea',
+    'input[type="text"]'
+  ];
+  function isVisible(el) {
+    if (!el) return false;
+    var rect = el.getBoundingClientRect();
+    var style = window.getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 &&
+      style.visibility !== 'hidden' &&
+      style.display !== 'none' &&
+      !el.closest('[hidden], [aria-hidden="true"]');
+  }
+  function isEditable(el) {
+    if (!el) return false;
+    if (el.disabled) return false;
+    if (el.getAttribute('aria-disabled') === 'true') return false;
+    if (el.getAttribute('contenteditable') === 'false') return false;
+    return Boolean(el.isContentEditable || el.matches('textarea,input'));
+  }
+  var composer = null;
+  for (var i = 0; i < selectors.length; i++) {
+    var candidate = document.querySelector(selectors[i]);
+    if (candidate && isVisible(candidate)) {
+      composer = candidate;
+      break;
+    }
+  }
+  var submitButton = null;
+  var submitSelectors = ${submitSelectors};
+  for (var j = 0; j < submitSelectors.length; j++) {
+    submitButton = document.querySelector(submitSelectors[j]);
+    if (submitButton && isVisible(submitButton)) break;
+  }
+  var composerFound = Boolean(composer);
+  var composerVisible = Boolean(composer && isVisible(composer));
+  var composerEditable = Boolean(composer && isEditable(composer));
+  return {
+    provider: ${JSON.stringify(provider)},
+    composerFound: composerFound,
+    composerVisible: composerVisible,
+    composerEditable: composerEditable,
+    submitButtonFound: Boolean(submitButton),
+    submitButtonEnabled: Boolean(submitButton && !submitButton.disabled && submitButton.getAttribute('aria-disabled') !== 'true'),
+    ready: Boolean(composerFound && composerVisible && composerEditable),
+    reason: !composerFound
+      ? 'composer not found'
+      : !composerVisible
+        ? 'composer not visible'
+        : !composerEditable
+          ? 'composer not editable'
+          : 'composer ready'
+  };
+})()`;
+}
+
 export function buildInjectionWithSubmitScript(
 	text: string,
 	provider: BrowserProvider,

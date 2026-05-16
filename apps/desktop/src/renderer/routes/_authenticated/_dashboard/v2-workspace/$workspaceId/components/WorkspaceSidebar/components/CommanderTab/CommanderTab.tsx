@@ -23,7 +23,11 @@ import {
 	getTerminalSelection,
 } from "./useActiveTerminal";
 import { useCommanderWebview } from "./useCommanderWebview";
-import { detectProvider, getProviderLabel } from "./browser-adapters";
+import {
+	buildComposerReadinessScript,
+	detectProvider,
+	getProviderLabel,
+} from "./browser-adapters";
 import {
 	registerCommanderBridge,
 	unregisterCommanderBridge,
@@ -51,6 +55,7 @@ import {
 	SessionDraftPreviewPanel,
 	WorkerResponsePreview,
 } from "./PromptPreviewPanel";
+import { buildCommanderBrowserSlotKey } from "./commander-browser-runtime";
 
 type CommanderSessionTextField = Exclude<
 	keyof CommanderSession,
@@ -84,6 +89,52 @@ interface CommanderControllerHandoffResult
 	session?: CommanderSession;
 }
 
+type CommanderControllerPreflightStatus =
+	| "READY"
+	| "READY_WITH_NOTES"
+	| "BLOCKED";
+
+interface CommanderControllerBrowserAiReadiness {
+	checked: boolean;
+	ready: boolean;
+	reason: string;
+	composerFound: boolean;
+	composerVisible: boolean;
+	composerEditable: boolean;
+	submitButtonFound: boolean;
+	submitButtonEnabled: boolean;
+}
+
+interface CommanderControllerAutoLoopPreflightResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerPreflightStatus;
+	activeTabId: string | null;
+	browserAiReady: boolean;
+	browserAiProvider: string;
+	browserAiSlotOk: boolean;
+	workerBound: boolean;
+	workerBindingStatus: string;
+	strictWorkerBinding: boolean;
+	fallbackUsed: boolean;
+	handoffLedgerAvailable: boolean;
+	maxTurnsConfigured: boolean;
+	diagnosticsOk: boolean;
+	blockers: string[];
+	warnings: string[];
+	nextRequiredAction: string;
+	browserAiComposer: CommanderControllerBrowserAiReadiness;
+	browserAiUrl: string;
+	browserAiSlotKey: string | null;
+	expectedBrowserAiSlotKey: string | null;
+	autoLoopMode: AutoRelayMode;
+	autoLoopPhase: string;
+	autoLoopMaxTurns: number;
+	workerPaneId: string | null;
+	terminalId: string | null;
+	workerType: string;
+	handoffMissingFields: string[];
+}
+
 interface CommanderControllerCommands {
 	version: "0.1";
 	workspaceId: string;
@@ -94,6 +145,8 @@ interface CommanderControllerCommands {
 	) => CommanderControllerSessionResult;
 	buildHandoffLedger: () => CommanderControllerHandoffResult;
 	getHandoffLedger: () => CommanderControllerHandoffResult;
+	getAutoLoopPreflight: () => Promise<CommanderControllerAutoLoopPreflightResult>;
+	runAutoLoopPreflight: () => Promise<CommanderControllerAutoLoopPreflightResult>;
 }
 
 type CommanderControllerWindow = Window &
@@ -367,6 +420,149 @@ export function CommanderTab({
 			}
 		}, [getCommanderControllerContext, transfer.buildHandoffLedger]);
 
+	const getAutoLoopPreflightController =
+		useCallback(async (): Promise<CommanderControllerAutoLoopPreflightResult> => {
+			const blockers: string[] = [];
+			const warnings: string[] = [];
+			const activeTabIdSnapshot = activeTabId;
+			const runtime = webview.getRuntimeSnapshot();
+			const liveUrl = webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
+			const provider = detectProvider(liveUrl);
+			const expectedBrowserAiSlotKey = buildCommanderBrowserSlotKey({
+				workspaceId,
+				activeTabId: activeTabIdSnapshot,
+			});
+			const browserAiSlotOk =
+				Boolean(activeTabIdSnapshot) &&
+				runtime.browserSlotKey === expectedBrowserAiSlotKey &&
+				runtime.activeTabId === activeTabIdSnapshot;
+			const composerReadiness = await readBrowserAiComposerReadiness({
+				provider,
+				injectIntoPage: webview.injectIntoPage,
+			});
+			const browserAiReady =
+				Boolean(provider) &&
+				runtime.status === "available" &&
+				runtime.bridgeAvailable &&
+				composerReadiness.ready;
+			const workerBound = workerBinding.bindingStatus === "bound";
+			const fallbackUsed =
+				!requireBoundWorkerForAutoLoop &&
+				workerBinding.bindingStatus !== "bound";
+			const handoffResult = buildHandoffLedgerController();
+			const handoffMissingFields = handoffResult.missingFields ?? [];
+			const handoffLedgerAvailable =
+				Boolean(handoffResult.ok && handoffResult.ledger) &&
+				handoffMissingFields.length === 0;
+			const maxTurnsConfigured = [10, 25, 50, 100].includes(
+				transfer.autoLoopMaxTurns,
+			);
+			const diagnostics = transfer.autoLoopDiagnostics;
+			const hasRunningTabMismatch =
+				transfer.autoLoopPhase !== "idle" &&
+				transfer.autoLoopPhase !== "stopped" &&
+				diagnostics.tabContextStatus === "changed";
+			const diagnosticsBlockers: string[] = [];
+
+			if (!activeTabIdSnapshot) blockers.push("active tab not found");
+			if (!provider) blockers.push("browser ai provider not ready");
+			if (runtime.status !== "available") {
+				blockers.push("browser ai runtime unavailable");
+			}
+			if (!runtime.bridgeAvailable) {
+				blockers.push("browser ai bridge unavailable");
+			}
+			if (provider && !composerReadiness.ready) {
+				blockers.push(`browser ai composer not ready: ${composerReadiness.reason}`);
+			}
+			if (!browserAiSlotOk) blockers.push("browser ai slot mismatch");
+			if (workerBinding.bindingStatus === "stale") {
+				blockers.push("bound worker stale");
+			} else if (!workerBound) {
+				blockers.push("worker binding required");
+			}
+			if (fallbackUsed) blockers.push("active terminal fallback would be used");
+			if (workerBinding.workerBindingMismatch) {
+				blockers.push("worker binding mismatch");
+				diagnosticsBlockers.push("worker binding mismatch");
+			}
+			if (hasRunningTabMismatch) {
+				blockers.push("active tab mismatch");
+				diagnosticsBlockers.push("active tab mismatch");
+			}
+			if (!maxTurnsConfigured) warnings.push("auto loop max turns is not configured");
+			if (!handoffLedgerAvailable) {
+				warnings.push(
+					handoffMissingFields.length
+						? `handoff ledger missing fields: ${handoffMissingFields.join(", ")}`
+						: "handoff ledger unavailable",
+				);
+			}
+			if (runtime.visualStatus === "NEEDS_FIX") {
+				warnings.push(`browser ai visual status needs fix: ${runtime.visualReason}`);
+			}
+			if (runtime.status === "available" && runtime.webContentsId === null) {
+				warnings.push("browser ai webContentsId is unavailable");
+			}
+			if (transfer.autoLoopPhase !== "idle" && transfer.autoLoopPhase !== "stopped") {
+				warnings.push(`auto loop is already in phase: ${transfer.autoLoopPhase}`);
+			}
+
+			const diagnosticsOk = diagnosticsBlockers.length === 0;
+			const status: CommanderControllerPreflightStatus =
+				blockers.length > 0
+					? "BLOCKED"
+					: warnings.length > 0
+						? "READY_WITH_NOTES"
+						: "READY";
+
+			return {
+				ok: blockers.length === 0,
+				...getCommanderControllerContext(),
+				status,
+				activeTabId: activeTabIdSnapshot,
+				browserAiReady,
+				browserAiProvider: runtime.providerLabel || getProviderLabel(provider),
+				browserAiSlotOk,
+				workerBound,
+				workerBindingStatus: workerBinding.bindingStatus,
+				strictWorkerBinding: requireBoundWorkerForAutoLoop,
+				fallbackUsed,
+				handoffLedgerAvailable,
+				maxTurnsConfigured,
+				diagnosticsOk,
+				blockers,
+				warnings,
+				nextRequiredAction: getAutoLoopPreflightNextAction(blockers, warnings),
+				browserAiComposer: composerReadiness,
+				browserAiUrl: liveUrl,
+				browserAiSlotKey: runtime.browserSlotKey,
+				expectedBrowserAiSlotKey,
+				autoLoopMode: autoRelayMode,
+				autoLoopPhase: transfer.autoLoopPhase,
+				autoLoopMaxTurns: transfer.autoLoopMaxTurns,
+				workerPaneId: workerBinding.workerPaneId,
+				terminalId: workerBinding.terminalId,
+				workerType: workerBinding.workerType,
+				handoffMissingFields,
+			};
+		}, [
+			activeTabId,
+			autoRelayMode,
+			buildHandoffLedgerController,
+			getCommanderControllerContext,
+			requireBoundWorkerForAutoLoop,
+			transfer.autoLoopDiagnostics,
+			transfer.autoLoopMaxTurns,
+			transfer.autoLoopPhase,
+			webview.currentUrl,
+			webview.getLiveUrl,
+			webview.getRuntimeSnapshot,
+			webview.injectIntoPage,
+			workerBinding,
+			workspaceId,
+		]);
+
 	useEffect(() => {
 		console.log(
 			"[S3.11] registerCommanderBridge with onAutoCaptureTrigger =",
@@ -405,6 +601,8 @@ export function CommanderTab({
 			setCommanderSession: setCommanderSessionController,
 			buildHandoffLedger: buildHandoffLedgerController,
 			getHandoffLedger: buildHandoffLedgerController,
+			getAutoLoopPreflight: getAutoLoopPreflightController,
+			runAutoLoopPreflight: getAutoLoopPreflightController,
 		};
 		target.__doydeckCommanderController = commands;
 		return () => {
@@ -418,6 +616,7 @@ export function CommanderTab({
 		getCommanderSessionControllerResult,
 		setCommanderSessionController,
 		buildHandoffLedgerController,
+		getAutoLoopPreflightController,
 	]);
 
 	const currentProvider = detectProvider(webview.currentUrl);
@@ -712,4 +911,117 @@ function getCommanderSessionMissingFields(
 		missingFields.push("risksOpenQuestions");
 	}
 	return missingFields;
+}
+
+async function readBrowserAiComposerReadiness({
+	provider,
+	injectIntoPage,
+}: {
+	provider: ReturnType<typeof detectProvider>;
+	injectIntoPage: (script: string) => Promise<unknown>;
+}): Promise<CommanderControllerBrowserAiReadiness> {
+	if (!provider) {
+		return {
+			checked: false,
+			ready: false,
+			reason: "browser provider unsupported",
+			composerFound: false,
+			composerVisible: false,
+			composerEditable: false,
+			submitButtonFound: false,
+			submitButtonEnabled: false,
+		};
+	}
+	try {
+		return normalizeBrowserAiComposerReadiness(
+			await injectIntoPage(buildComposerReadinessScript(provider)),
+		);
+	} catch (error) {
+		return {
+			checked: true,
+			ready: false,
+			reason:
+				error instanceof Error
+					? `composer readiness check failed: ${error.message}`
+					: "composer readiness check failed",
+			composerFound: false,
+			composerVisible: false,
+			composerEditable: false,
+			submitButtonFound: false,
+			submitButtonEnabled: false,
+		};
+	}
+}
+
+function normalizeBrowserAiComposerReadiness(
+	value: unknown,
+): CommanderControllerBrowserAiReadiness {
+	if (!value || typeof value !== "object") {
+		return {
+			checked: true,
+			ready: false,
+			reason: "composer readiness result invalid",
+			composerFound: false,
+			composerVisible: false,
+			composerEditable: false,
+			submitButtonFound: false,
+			submitButtonEnabled: false,
+		};
+	}
+	const candidate = value as Partial<CommanderControllerBrowserAiReadiness>;
+	const composerFound = candidate.composerFound === true;
+	const composerVisible = candidate.composerVisible === true;
+	const composerEditable = candidate.composerEditable === true;
+	const ready = composerFound && composerVisible && composerEditable;
+	return {
+		checked: true,
+		ready,
+		reason:
+			typeof candidate.reason === "string"
+				? candidate.reason
+				: ready
+					? "composer ready"
+					: "composer not ready",
+		composerFound,
+		composerVisible,
+		composerEditable,
+		submitButtonFound: candidate.submitButtonFound === true,
+		submitButtonEnabled: candidate.submitButtonEnabled === true,
+	};
+}
+
+function getAutoLoopPreflightNextAction(
+	blockers: string[],
+	warnings: string[],
+): string {
+	const firstBlocker = blockers[0];
+	if (firstBlocker) {
+		if (firstBlocker.includes("worker binding required")) {
+			return "Bind active terminal to this tab before starting Auto Loop.";
+		}
+		if (firstBlocker.includes("bound worker stale")) {
+			return "Rebind an existing Worker terminal to this tab.";
+		}
+		if (firstBlocker.includes("browser ai provider")) {
+			return "Select ChatGPT or Claude and wait until the Browser AI composer is ready.";
+		}
+		if (firstBlocker.includes("composer")) {
+			return "Wait for the Browser AI composer, then rerun preflight.";
+		}
+		if (firstBlocker.includes("slot")) {
+			return "Confirm the active tab and Browser AI slot, then rerun preflight.";
+		}
+		if (firstBlocker.includes("fallback")) {
+			return "Use explicit Worker binding so fallback is not required.";
+		}
+		if (firstBlocker.includes("tab")) {
+			return "Return to the armed tab or stop/rearm Auto Loop on the active tab.";
+		}
+		return `Resolve blocker: ${firstBlocker}`;
+	}
+	const firstWarning = warnings[0];
+	if (firstWarning) {
+		return `Review warning before starting Auto Loop: ${firstWarning}`;
+	}
+	return "Auto Loop preflight passed. Start Auto Loop only if Doy has approved the Worker action.";
 }
