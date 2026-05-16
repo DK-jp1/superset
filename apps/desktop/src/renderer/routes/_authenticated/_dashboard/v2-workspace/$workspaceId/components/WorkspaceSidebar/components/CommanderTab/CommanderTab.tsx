@@ -305,6 +305,8 @@ interface CommanderControllerLatestReplyResult
 	extractedCodexInstruction: string;
 	extractedStopSignal: string | null;
 	extractedDoyConfirmationItems: string[];
+	doyConfirmationNegated?: boolean;
+	doyConfirmationReason?: string | null;
 	blockers: string[];
 	warnings: string[];
 	message: string;
@@ -1623,7 +1625,7 @@ export function CommanderTab({
 				latestState.latestText,
 			);
 			const extractedStopSignal = extractBrowserAiStopSignal(latestState.latestText);
-			const extractedDoyConfirmationItems = extractDoyConfirmationItems(
+			const doyConfirmation = classifyDoyConfirmationItems(
 				latestState.latestText,
 			);
 			const readAt = new Date().toISOString();
@@ -1650,10 +1652,12 @@ export function CommanderTab({
 				assistantCount: latestState.assistantCount,
 				hasCodexInstruction: Boolean(extractedCodexInstruction),
 				hasStopSignal: Boolean(extractedStopSignal),
-				hasDoyConfirmationItems: extractedDoyConfirmationItems.length > 0,
+				hasDoyConfirmationItems: doyConfirmation.items.length > 0,
 				extractedCodexInstruction,
 				extractedStopSignal,
-				extractedDoyConfirmationItems,
+				extractedDoyConfirmationItems: doyConfirmation.items,
+				doyConfirmationNegated: doyConfirmation.negated,
+				doyConfirmationReason: doyConfirmation.reason,
 				blockers,
 				warnings,
 				message: getBrowserAiLatestReplyMessage("READY", blockers, warnings),
@@ -3465,6 +3469,14 @@ function extractBrowserAiStopSignal(text: string): string | null {
 }
 
 function extractDoyConfirmationItems(text: string): string[] {
+	return classifyDoyConfirmationItems(text).items;
+}
+
+function classifyDoyConfirmationItems(text: string): {
+	items: string[];
+	negated: boolean;
+	reason: string | null;
+} {
 	const lines = text
 		.replace(/\r\n/g, "\n")
 		.replace(/\r/g, "\n")
@@ -3472,15 +3484,70 @@ function extractDoyConfirmationItems(text: string): string[] {
 		.map((line) => line.trim())
 		.filter(Boolean);
 	const confirmationPattern =
-		/(Doy\s*(?:確認|へ確認|に確認)|確認事項|確認が必要|要確認|判断が必要|承認が必要|質問|決めてください|どちら)/i;
+		/(Doy\s*(?:の)?\s*(?:確認|判断|承認|アクション|へ確認|に確認)|確認事項|追加確認|確認が必要|要確認|判断が必要|承認が必要|質問|決めてください|どちら|仕様判断が必要|UX判断が必要)/i;
 	const items: string[] = [];
+	let negated = lines.some((line) => isDoyConfirmationNegated(line));
+	let negatedReason: string | null =
+		lines.find((line) => isDoyConfirmationNegated(line)) ?? null;
 	for (const line of lines) {
 		if (!confirmationPattern.test(line)) continue;
 		const normalized = line.replace(/^[-*•・\d.)\s]+/, "").trim();
+		if (isDoyConfirmationNegated(normalized)) {
+			negated = true;
+			negatedReason ??= normalized;
+			continue;
+		}
+		const inlineBody = extractInlineDoyConfirmationBody(normalized);
+		if (inlineBody !== null) {
+			if (!inlineBody || isDoyConfirmationNegated(inlineBody)) {
+				negated = true;
+				negatedReason ??= normalized;
+				continue;
+			}
+		}
+		if (isDoyConfirmationHeadingOnly(normalized)) continue;
 		if (normalized && !items.includes(normalized)) items.push(normalized);
 		if (items.length >= 8) break;
 	}
-	return items;
+	return {
+		items,
+		negated: items.length === 0 && negated,
+		reason: items.length === 0 ? negatedReason : null,
+	};
+}
+
+function extractInlineDoyConfirmationBody(line: string): string | null {
+	const match =
+		/^(?:\*\*)?(?:Doy\s*(?:確認|判断|承認|アクション)|Doy(?:へ|に)確認|確認事項|追加確認)(?:\*\*)?\s*[：:]\s*(.*)$/i.exec(
+			line,
+		);
+	return match ? match[1].replace(/\*\*/g, "").trim() : null;
+}
+
+function isDoyConfirmationHeadingOnly(line: string): boolean {
+	return /^(?:\*\*)?(?:Doy\s*(?:確認|判断|承認|アクション)|Doy(?:へ|に)確認|確認事項|追加確認)(?:\*\*)?\s*[：:]?\s*$/i.test(
+		line,
+	);
+}
+
+function isDoyConfirmationNegated(line: string): boolean {
+	const normalized = line
+		.replace(/\*\*/g, "")
+		.replace(/\s+/g, "")
+		.replace(/[：:]/g, "")
+		.replace(/[。.!！]+$/g, "");
+	return [
+		/^(?:不要|なし|無し|ありません|不要です|なしです)$/i,
+		/Doy確認(?:事項)?(?:は|が)?(?:不要|なし|無し|ありません|不要です|なしです)/i,
+		/Doy判断(?:は|が)?(?:不要|なし|無し|ありません|不要です|なしです)/i,
+		/Doy承認(?:は|が)?(?:不要|なし|無し|ありません|不要です|なしです)/i,
+		/Doyアクション(?:は|が)?(?:不要|なし|無し|ありません|不要です|なしです)/i,
+		/確認事項(?:は|が)?(?:不要|なし|無し|ありません|不要です|なしです)/i,
+		/追加確認(?:は|が)?(?:不要|なし|無し|ありません|不要です|なしです)/i,
+		/確認(?:は|が)?(?:不要|なし|無し|ありません|不要です|なしです)/i,
+		/判断(?:は|が)?(?:不要|なし|無し|ありません|不要です|なしです)/i,
+		/特になし/i,
+	].some((pattern) => pattern.test(normalized));
 }
 
 function getBrowserAiLatestReplyMessage(
