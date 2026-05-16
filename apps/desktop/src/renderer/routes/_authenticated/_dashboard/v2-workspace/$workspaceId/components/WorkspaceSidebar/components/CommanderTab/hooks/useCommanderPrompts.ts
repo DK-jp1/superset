@@ -591,6 +591,11 @@ export function buildSendHandoffLedgerPrompt(ledger: string): string {
 内容を読み取り、現在地・未解決・次アクションを整理してください。
 次にWorkerへ作業指示を出す必要がある場合は、必ず「Workerへ渡す指示:」から始めてください。
 完了または追加作業不要なら「次のWorker指示は不要」または「STOP」と明記してください。
+Doy判断が必要な場合だけ「Doy確認事項:」を書いてください。
+Doy判断が不要なら「Doy確認事項なし」と明記してください。
+単なる観点リストや報告欄として「Doy確認事項」見出しを作らないでください。
+docs-only指示が安全条件を満たす場合は「Doy確認事項なし」としてください。
+仕様判断、UX判断、文言の最終判断、commit/push、destructive操作が必要な場合だけDoy確認事項ありにしてください。
 
 --- Handoff Ledger ---
 ${ledger}`;

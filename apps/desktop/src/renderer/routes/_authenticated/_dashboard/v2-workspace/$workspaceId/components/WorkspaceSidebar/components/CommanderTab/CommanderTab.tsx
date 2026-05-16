@@ -376,6 +376,8 @@ interface CommanderControllerLatestReplyResult
 	extractedDoyConfirmationItems: string[];
 	doyConfirmationNegated?: boolean;
 	doyConfirmationConditionalOnly?: boolean;
+	doyConfirmationSectionOnly?: boolean;
+	doyConfirmationRequiresHumanDecision?: boolean;
 	doyConfirmationReason?: string | null;
 	blockers: string[];
 	warnings: string[];
@@ -1938,6 +1940,9 @@ export function CommanderTab({
 				extractedDoyConfirmationItems: doyConfirmation.items,
 				doyConfirmationNegated: doyConfirmation.negated,
 				doyConfirmationConditionalOnly: doyConfirmation.conditionalOnly,
+				doyConfirmationSectionOnly: doyConfirmation.sectionOnly,
+				doyConfirmationRequiresHumanDecision:
+					doyConfirmation.requiresHumanDecision,
 				doyConfirmationReason: doyConfirmation.reason,
 				blockers,
 				warnings,
@@ -3976,6 +3981,8 @@ function classifyDoyConfirmationItems(text: string): {
 	items: string[];
 	negated: boolean;
 	conditionalOnly: boolean;
+	sectionOnly: boolean;
+	requiresHumanDecision: boolean;
 	reason: string | null;
 } {
 	const lines = text
@@ -3989,13 +3996,15 @@ function classifyDoyConfirmationItems(text: string): {
 	const items: string[] = [];
 	let negated = lines.some((line) => isDoyConfirmationNegated(line));
 	let conditional = false;
+	let sectionOnly = false;
 	let negatedReason: string | null =
 		lines.find((line) => isDoyConfirmationNegated(line)) ?? null;
 	let conditionalReason: string | null =
 		lines.find((line) => isDoyConfirmationConditional(line)) ?? null;
+	let sectionOnlyReason: string | null = null;
 	for (const line of lines) {
 		if (!confirmationPattern.test(line)) continue;
-		const normalized = line.replace(/^[-*•・\d.)\s]+/, "").trim();
+		const normalized = normalizeDoyConfirmationLine(line);
 		if (isDoyConfirmationNegated(normalized)) {
 			negated = true;
 			negatedReason ??= normalized;
@@ -4008,18 +4017,38 @@ function classifyDoyConfirmationItems(text: string): {
 		}
 		const inlineBody = extractInlineDoyConfirmationBody(normalized);
 		if (inlineBody !== null) {
-			if (!inlineBody || isDoyConfirmationNegated(inlineBody)) {
+			const normalizedBody = normalizeDoyConfirmationLine(inlineBody);
+			if (!normalizedBody) {
+				sectionOnly = true;
+				sectionOnlyReason ??= normalized;
+				continue;
+			}
+			if (isDoyConfirmationNegated(normalizedBody)) {
 				negated = true;
 				negatedReason ??= normalized;
 				continue;
 			}
-			if (isDoyConfirmationConditional(inlineBody)) {
+			if (isDoyConfirmationConditional(normalizedBody)) {
 				conditional = true;
 				conditionalReason ??= normalized;
 				continue;
 			}
+			if (!isDoyConfirmationDecisionRequest(normalizedBody)) {
+				sectionOnly = true;
+				sectionOnlyReason ??= normalized;
+				continue;
+			}
 		}
-		if (isDoyConfirmationHeadingOnly(normalized)) continue;
+		if (isDoyConfirmationHeadingOnly(normalized)) {
+			sectionOnly = true;
+			sectionOnlyReason ??= normalized;
+			continue;
+		}
+		if (!isDoyConfirmationDecisionRequest(normalized)) {
+			sectionOnly = true;
+			sectionOnlyReason ??= normalized;
+			continue;
+		}
 		if (normalized && !items.includes(normalized)) items.push(normalized);
 		if (items.length >= 8) break;
 	}
@@ -4027,7 +4056,12 @@ function classifyDoyConfirmationItems(text: string): {
 		items,
 		negated: items.length === 0 && negated,
 		conditionalOnly: items.length === 0 && conditional,
-		reason: items.length === 0 ? negatedReason ?? conditionalReason : null,
+		sectionOnly: items.length === 0 && sectionOnly,
+		requiresHumanDecision: items.length > 0,
+		reason:
+			items.length === 0
+				? negatedReason ?? conditionalReason ?? sectionOnlyReason
+				: "explicit Doy decision request",
 	};
 }
 
@@ -4084,6 +4118,16 @@ function isDoyConfirmationHeadingOnly(line: string): boolean {
 	);
 }
 
+function normalizeDoyConfirmationLine(line: string): string {
+	return line
+		.replace(/^>\s*/, "")
+		.replace(/^#{1,6}\s*/, "")
+		.replace(/^[-*•・\d.)\s]+/, "")
+		.replace(/^\*\*/, "")
+		.replace(/\*\*$/, "")
+		.trim();
+}
+
 function isDoyConfirmationNegated(line: string): boolean {
 	const normalized = line
 		.replace(/\*\*/g, "")
@@ -4109,14 +4153,44 @@ function isDoyConfirmationConditional(line: string): boolean {
 	return [
 		/Doy確認事項が出たら/,
 		/Doy確認(?:事項)?(?:が|は)?必要な場合/,
+		/Doy確認(?:事項)?(?:が|は)?必要なら/,
 		/Doy判断(?:が|は)?必要な場合/,
+		/Doy判断(?:が|は)?必要なら/,
 		/Doy(?:へ|に)確認(?:が|は)?必要な場合/,
+		/Doy(?:へ|に)確認(?:が|は)?必要なら/,
 		/確認事項が出たら/,
 		/確認(?:が|は)?必要な場合/,
+		/確認(?:が|は)?必要なら/,
 		/判断(?:が|は)?必要な場合/,
+		/判断(?:が|は)?必要なら/,
 		/承認(?:が|は)?必要な場合/,
+		/承認(?:が|は)?必要なら/,
 		/(?:確認|判断|承認|Doy確認|Doy判断).*(?:場合|なら|出たら|出た場合|条件|ルール)/,
 		/(?:場合|なら|出たら|出た場合).*(?:確認|判断|承認|Doy確認|Doy判断)/,
+	].some((pattern) => pattern.test(normalized));
+}
+
+function isDoyConfirmationDecisionRequest(line: string): boolean {
+	const normalized = normalizeDoyConfirmationLine(line)
+		.replace(/\*\*/g, "")
+		.replace(/\s+/g, "");
+	return [
+		/Doy(?:の)?判断(?:が|は)?必要/,
+		/Doy確認(?:事項)?(?:が|は)?必要/,
+		/Doy(?:に|へ)確認(?:してください|が必要|は必要)?/,
+		/Doy(?:の)?承認(?:が|は)?必要/,
+		/仕様判断(?:が|は)?必要/,
+		/UX判断(?:が|は)?必要/,
+		/文言(?:の)?最終判断(?:が|は)?必要/,
+		/最終判断(?:が|は)?必要/,
+		/commit\/push確認(?:が|は)?必要/i,
+		/(?:commit|push).*確認(?:が|は)?必要/i,
+		/destructive操作(?:の)?確認(?:が|は)?必要/i,
+		/(?:削除|rename|move|destructive操作).*(?:確認|承認)(?:が|は)?必要/i,
+		/どちら(?:の案)?で進めるか.*Doy判断(?:が|は)?必要/,
+		/Doy判断.*どちら/,
+		/Doy.*(?:決めてください|選んでください|選択してください)/,
+		/どちら(?:に|で)(?:します|する|進める|すべき|よい|良い)(?:か|？|\?)/,
 	].some((pattern) => pattern.test(normalized));
 }
 
@@ -4892,6 +4966,8 @@ function buildSendBoundWorkerResponseToBrowserAiPrompt({
 		"結果をレビューし、次の作業指示が必要か、Doy確認が必要か、STOPでよいかを判断してください。",
 		"",
 		"次に作業側Codexへ渡す指示が必要な場合は、必ず「Codexへ渡す指示:」または「作業側のCodexへ渡す指示:」から始めてください。追加作業不要なら「STOP」または「次のCodex指示は不要」と明記してください。",
+		"実際にDoy判断が必要な場合だけ「Doy確認事項:」を書いてください。Doy判断が不要なら「Doy確認事項なし」と明記してください。",
+		"単なる観点リストや報告欄として「Doy確認事項」見出しを作らないでください。",
 		"",
 		"--- Worker Context ---",
 		`activeTabId: ${activeTabId ?? "unknown"}`,
