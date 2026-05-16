@@ -463,6 +463,9 @@ interface CommanderControllerBoundWorkerLatestResponseResult
 	hasToolUse: boolean;
 	hasFileChangeSignal: boolean;
 	hasGitOperationSignal: boolean;
+	fileChangeSignalReason: string | null;
+	gitOperationSignalReason: string | null;
+	gitOperationRiskLevel: "safe-check" | "write-operation" | "unknown";
 	receivedInstructionAck: boolean;
 	receivedInstructionAckByMarker: boolean;
 	ackMarkerDetected: string | null;
@@ -472,6 +475,7 @@ interface CommanderControllerBoundWorkerLatestResponseResult
 	runningSignalReason: string | null;
 	outputLooksComplete: boolean;
 	outputLooksStillRunning: boolean;
+	workerReportLooksComplete: boolean;
 	summary: string;
 	promptEchoRemoved: boolean;
 	usedLastSendMarker: boolean;
@@ -2151,6 +2155,9 @@ export function CommanderTab({
 					hasToolUse: false,
 					hasFileChangeSignal: false,
 					hasGitOperationSignal: false,
+					fileChangeSignalReason: null,
+					gitOperationSignalReason: null,
+					gitOperationRiskLevel: "unknown",
 					receivedInstructionAck: false,
 					receivedInstructionAckByMarker: false,
 					ackMarkerDetected: null,
@@ -2173,6 +2180,9 @@ export function CommanderTab({
 					hasToolUse: false,
 					hasFileChangeSignal: false,
 					hasGitOperationSignal: false,
+					fileChangeSignalReason: null,
+					gitOperationSignalReason: null,
+					gitOperationRiskLevel: "unknown",
 					receivedInstructionAck: false,
 					receivedInstructionAckByMarker: false,
 					ackMarkerDetected: null,
@@ -2197,6 +2207,9 @@ export function CommanderTab({
 					hasToolUse: false,
 					hasFileChangeSignal: false,
 					hasGitOperationSignal: false,
+					fileChangeSignalReason: null,
+					gitOperationSignalReason: null,
+					gitOperationRiskLevel: "unknown",
 					receivedInstructionAck: false,
 					receivedInstructionAckByMarker: false,
 					ackMarkerDetected: null,
@@ -2257,6 +2270,9 @@ export function CommanderTab({
 					hasToolUse: false,
 					hasFileChangeSignal: false,
 					hasGitOperationSignal: false,
+					fileChangeSignalReason: null,
+					gitOperationSignalReason: null,
+					gitOperationRiskLevel: "unknown",
 					receivedInstructionAck: false,
 					receivedInstructionAckByMarker: false,
 					ackMarkerDetected: null,
@@ -2266,6 +2282,7 @@ export function CommanderTab({
 					runningSignalReason: null,
 					outputLooksComplete: false,
 					outputLooksStillRunning: false,
+					workerReportLooksComplete: false,
 					summary: "No bound worker output has been captured yet.",
 					promptEchoRemoved,
 					usedLastSendMarker,
@@ -2302,6 +2319,9 @@ export function CommanderTab({
 					hasToolUse: analysis.hasToolUse,
 					hasFileChangeSignal: analysis.hasFileChangeSignal,
 					hasGitOperationSignal: analysis.hasGitOperationSignal,
+					fileChangeSignalReason: analysis.fileChangeSignalReason,
+					gitOperationSignalReason: analysis.gitOperationSignalReason,
+					gitOperationRiskLevel: analysis.gitOperationRiskLevel,
 					receivedInstructionAck: analysis.receivedInstructionAck,
 					receivedInstructionAckByMarker: analysis.receivedInstructionAckByMarker,
 					ackMarkerDetected: analysis.ackMarkerDetected,
@@ -2311,6 +2331,7 @@ export function CommanderTab({
 					runningSignalReason: analysis.runningSignalReason,
 					outputLooksComplete: analysis.outputLooksComplete,
 					outputLooksStillRunning: analysis.outputLooksStillRunning,
+					workerReportLooksComplete: analysis.workerReportLooksComplete,
 					summary: getBoundWorkerLatestResponseSummary(analysis, latestResponseText),
 					promptEchoRemoved,
 					usedLastSendMarker,
@@ -2332,10 +2353,18 @@ export function CommanderTab({
 			if (analysis.hasError) warnings.push("bound worker output contains error signal");
 			if (analysis.hasToolUse) warnings.push("bound worker output contains tool-use signal");
 			if (analysis.hasFileChangeSignal) {
-				warnings.push("bound worker output contains file-change signal");
+				warnings.push(
+					analysis.fileChangeSignalReason
+						? `bound worker output contains file-change signal: ${analysis.fileChangeSignalReason}`
+						: "bound worker output contains file-change signal",
+				);
 			}
 			if (analysis.hasGitOperationSignal) {
-				warnings.push("bound worker output contains git-operation signal");
+				warnings.push(
+					analysis.gitOperationRiskLevel === "safe-check"
+						? `bound worker output contains safe git check: ${analysis.gitOperationSignalReason}`
+						: `bound worker output contains git-operation signal: ${analysis.gitOperationSignalReason ?? "unknown"}`,
+				);
 			}
 
 			return {
@@ -2355,6 +2384,9 @@ export function CommanderTab({
 				hasToolUse: analysis.hasToolUse,
 				hasFileChangeSignal: analysis.hasFileChangeSignal,
 				hasGitOperationSignal: analysis.hasGitOperationSignal,
+				fileChangeSignalReason: analysis.fileChangeSignalReason,
+				gitOperationSignalReason: analysis.gitOperationSignalReason,
+				gitOperationRiskLevel: analysis.gitOperationRiskLevel,
 				receivedInstructionAck: analysis.receivedInstructionAck,
 				receivedInstructionAckByMarker: analysis.receivedInstructionAckByMarker,
 				ackMarkerDetected: analysis.ackMarkerDetected,
@@ -2364,6 +2396,7 @@ export function CommanderTab({
 				runningSignalReason: analysis.runningSignalReason,
 				outputLooksComplete: analysis.outputLooksComplete,
 				outputLooksStillRunning: analysis.outputLooksStillRunning,
+				workerReportLooksComplete: analysis.workerReportLooksComplete,
 				summary: getBoundWorkerLatestResponseSummary(analysis, latestResponseText),
 				promptEchoRemoved,
 				usedLastSendMarker,
@@ -4324,6 +4357,9 @@ interface BoundWorkerOutputAnalysis {
 	hasToolUse: boolean;
 	hasFileChangeSignal: boolean;
 	hasGitOperationSignal: boolean;
+	fileChangeSignalReason: string | null;
+	gitOperationSignalReason: string | null;
+	gitOperationRiskLevel: "safe-check" | "write-operation" | "unknown";
 	receivedInstructionAck: boolean;
 	receivedInstructionAckByMarker: boolean;
 	ackMarkerDetected: string | null;
@@ -4333,6 +4369,7 @@ interface BoundWorkerOutputAnalysis {
 	runningSignalReason: string | null;
 	outputLooksComplete: boolean;
 	outputLooksStillRunning: boolean;
+	workerReportLooksComplete: boolean;
 	isIdleOrReady: boolean;
 }
 
@@ -4355,6 +4392,9 @@ function getEmptyBoundWorkerOutputFields(
 	| "analysisWarnings"
 	| "completionDetected"
 	| "completionSignalReason"
+	| "fileChangeSignalReason"
+	| "gitOperationSignalReason"
+	| "gitOperationRiskLevel"
 	| "uiNoiseRemoved"
 	| "ignoredUiNoiseLines"
 	| "extractedResponseCandidates"
@@ -4362,6 +4402,7 @@ function getEmptyBoundWorkerOutputFields(
 	| "selectedResponseReason"
 	| "outputLooksComplete"
 	| "outputLooksStillRunning"
+	| "workerReportLooksComplete"
 	| "waitingReason"
 > {
 	return {
@@ -4380,6 +4421,9 @@ function getEmptyBoundWorkerOutputFields(
 		analysisWarnings: [],
 		completionDetected: false,
 		completionSignalReason: null,
+		fileChangeSignalReason: null,
+		gitOperationSignalReason: null,
+		gitOperationRiskLevel: "unknown",
 		uiNoiseRemoved: false,
 		ignoredUiNoiseLines: [],
 		extractedResponseCandidates: [],
@@ -4387,6 +4431,7 @@ function getEmptyBoundWorkerOutputFields(
 		selectedResponseReason: "none",
 		outputLooksComplete: false,
 		outputLooksStillRunning: false,
+		workerReportLooksComplete: false,
 		waitingReason: null,
 	};
 }
@@ -4728,8 +4773,14 @@ function analyzeBoundWorkerOutput(
 	const normalized = text.trim();
 	const completionSignal = detectBoundWorkerCompletionSignal(normalized);
 	const outputLooksComplete = completionSignal.completionDetected;
-	const runningSignal = detectBoundWorkerRunningSignal(normalized);
-	const outputLooksStillRunning = runningSignal.outputLooksStillRunning;
+	const rawRunningSignal = detectBoundWorkerRunningSignal(normalized);
+	const outputLooksStillRunning =
+		rawRunningSignal.outputLooksStillRunning && !outputLooksComplete;
+	const runningSignalReason = outputLooksStillRunning
+		? rawRunningSignal.runningSignalReason
+		: rawRunningSignal.runningSignalReason
+			? `ignored stale running signal after completion: ${rawRunningSignal.runningSignalReason}`
+			: null;
 	const isIdleOrReady = outputLooksComplete || hasAnyWorkerOutputSignal(normalized, [
 		/\bready\b/i,
 		/\bidle\b/i,
@@ -4762,19 +4813,7 @@ function analyzeBoundWorkerOutput(
 	const receivedInstructionAck =
 		receivedInstructionAckByText || ackMarker.receivedInstructionAckByMarker;
 	const isRunning = outputLooksStillRunning && !outputLooksComplete;
-	const hasError = hasAnyWorkerOutputSignal(
-		normalized,
-		[
-			/\berror\b/i,
-			/\bfailed\b/i,
-			/\bfatal\b/i,
-			/\bexception\b/i,
-			/\btraceback\b/i,
-			/エラー/,
-			/失敗/,
-		],
-		[/エラーなし/, /\bno errors?\b/i],
-	);
+	const errorSignal = detectBoundWorkerErrorSignal(normalized);
 	const hasToolUse = hasAnyWorkerOutputSignal(
 		normalized,
 		[
@@ -4795,43 +4834,17 @@ function analyzeBoundWorkerOutput(
 			/\bno commands?\b/i,
 		],
 	);
-	const hasFileChangeSignal = hasAnyWorkerOutputSignal(
-		normalized,
-		[
-			/\bfile changed\b/i,
-			/\bfiles changed\b/i,
-			/\bmodified\b/i,
-			/\bdiff\b/i,
-			/\bpatch\b/i,
-			/\bapply_patch\b/,
-			/ファイル変更/,
-			/変更しました/,
-			/修正しました/,
-		],
-		[
-			/ファイル変更なし/,
-			/\bno file changes?\b/i,
-			/\bdo not change files?\b/i,
-		],
-	);
-	const hasGitOperationSignal = hasAnyWorkerOutputSignal(
-		normalized,
-		[
-			/\bgit\b/i,
-			/\bcommit\b/i,
-			/\bpush\b/i,
-			/Git操作/i,
-			/コミット/,
-			/プッシュ/,
-		],
-		[/Git操作なし/i, /\bno git operations?\b/i, /\bdo not use git\b/i],
-	);
+	const fileChangeSignal = detectBoundWorkerFileChangeSignal(normalized);
+	const gitOperationSignal = detectBoundWorkerGitOperationSignal(normalized);
 	return {
 		isRunning,
-		hasError,
+		hasError: errorSignal.hasError,
 		hasToolUse,
-		hasFileChangeSignal,
-		hasGitOperationSignal,
+		hasFileChangeSignal: fileChangeSignal.hasFileChangeSignal,
+		hasGitOperationSignal: gitOperationSignal.hasGitOperationSignal,
+		fileChangeSignalReason: fileChangeSignal.fileChangeSignalReason,
+		gitOperationSignalReason: gitOperationSignal.gitOperationSignalReason,
+		gitOperationRiskLevel: gitOperationSignal.gitOperationRiskLevel,
 		receivedInstructionAck,
 		receivedInstructionAckByMarker: ackMarker.receivedInstructionAckByMarker,
 		ackMarkerDetected: ackMarker.ackMarkerDetected,
@@ -4842,9 +4855,10 @@ function analyzeBoundWorkerOutput(
 				: "ack not detected",
 		completionDetected: completionSignal.completionDetected,
 		completionSignalReason: completionSignal.completionSignalReason,
-		runningSignalReason: runningSignal.runningSignalReason,
+		runningSignalReason,
 		outputLooksComplete,
 		outputLooksStillRunning,
+		workerReportLooksComplete: outputLooksComplete,
 		isIdleOrReady,
 	};
 }
@@ -4870,15 +4884,17 @@ function detectBoundWorkerCompletionSignal(text: string): {
 } {
 	const completionPatterns: Array<[RegExp, string]> = [
 		[/<<<DOYDECK_WORKER_RESPONSE_START>>>/i, "response envelope start detected"],
-		[/^#{1,4}\s*完了報告(?:\s|$)/m, "completion report heading detected"],
-		[/^###?\s*実施内容(?:\s|$|[:：])/m, "completion section detected: 実施内容"],
-		[/^###?\s*変更ファイル(?:\s|$|[:：])/m, "completion section detected: 変更ファイル"],
-		[/^###?\s*確認結果(?:\s|$|[:：])/m, "completion section detected: 確認結果"],
-		[/^###?\s*git diff --check\s*(?:結果)?\s*[:：]?\s*(?:PASS|成功|通過)?\b/im, "git diff --check result detected"],
-		[/^###?\s*typecheck\s*(?:結果)?\s*[:：]?\s*(?:PASS|成功|通過|未実施)?\b/im, "typecheck result section detected"],
-		[/^###?\s*git status --short\b/im, "git status section detected"],
-		[/^###?\s*未解決(?:\s*\/\s*次にやるなら)?(?:\s|$|[:：])/m, "unresolved/next section detected"],
+		[/^(?:#{1,4}\s*)?完了報告(?:\s|$|[:：])/m, "completion report heading detected"],
+		[/^(?:[-*•・]\s*)?(?:#{1,4}\s*)?実施内容(?:\s|$|[:：])/m, "completion section detected: 実施内容"],
+		[/^(?:[-*•・]\s*)?(?:#{1,4}\s*)?変更ファイル(?:\s|$|[:：])/m, "completion section detected: 変更ファイル"],
+		[/^(?:[-*•・]\s*)?(?:#{1,4}\s*)?確認結果(?:\s|$|[:：])/m, "completion section detected: 確認結果"],
+		[/^(?:[-*•・]\s*)?(?:#{1,4}\s*)?git diff --check\s*(?:結果)?\s*[:：]?\s*(?:PASS|成功|通過)?\b/im, "git diff --check result detected"],
+		[/^(?:[-*•・]\s*)?(?:#{1,4}\s*)?typecheck\s*(?:結果)?\s*[:：]?\s*(?:PASS|成功|通過|未実施)?\b/im, "typecheck result section detected"],
+		[/^(?:[-*•・]\s*)?(?:#{1,4}\s*)?git status --short\b/im, "git status section detected"],
+		[/^(?:[-*•・]\s*)?(?:#{1,4}\s*)?未解決(?:\s*\/\s*次にやるなら)?(?:\s|$|[:：])/m, "unresolved/next section detected"],
 		[/\bWorked for\b.+/i, "Codex worked-for summary detected"],
+		[/docs-only(?:\s+変更|\s+change)?.*(?:完了|completed|done)/i, "docs-only completion detected"],
+		[/commit\/push(?:は|を)?していません/, "commit/push not performed report detected"],
 		[/(?:作業|変更|修正|確認)(?:が)?完了しました/, "Japanese completion sentence detected"],
 	];
 	for (const [pattern, reason] of completionPatterns) {
@@ -4931,6 +4947,135 @@ function detectBoundWorkerRunningSignal(text: string): {
 	return {
 		outputLooksStillRunning: false,
 		runningSignalReason: null,
+	};
+}
+
+function detectBoundWorkerErrorSignal(text: string): {
+	hasError: boolean;
+	errorSignalReason: string | null;
+} {
+	const errorPatterns: Array<[RegExp, string]> = [
+		[/\berror\b/i, "error text detected"],
+		[/\bfailed\b/i, "failed text detected"],
+		[/\bfatal\b/i, "fatal text detected"],
+		[/\bexception\b/i, "exception text detected"],
+		[/\btraceback\b/i, "traceback text detected"],
+		[/エラー/, "Japanese error text detected"],
+		[/失敗/, "Japanese failure text detected"],
+	];
+	const negativePatterns = [
+		/hasError\s*[:=]\s*false/i,
+		/error\s*[:=]\s*false/i,
+		/エラーなし/,
+		/エラーは発生していません/,
+		/問題なし/,
+		/\bno errors?\b/i,
+	];
+	for (const line of text.split("\n")) {
+		if (!line.trim()) continue;
+		if (negativePatterns.some((pattern) => pattern.test(line))) continue;
+		for (const [pattern, reason] of errorPatterns) {
+			if (pattern.test(line)) {
+				return { hasError: true, errorSignalReason: reason };
+			}
+		}
+	}
+	return { hasError: false, errorSignalReason: null };
+}
+
+function detectBoundWorkerFileChangeSignal(text: string): {
+	hasFileChangeSignal: boolean;
+	fileChangeSignalReason: string | null;
+} {
+	const fileChangePatterns: Array<[RegExp, string]> = [
+		[/\bfiles? changed\b/i, "file changed text detected"],
+		[/\bmodified\b/i, "modified text detected"],
+		[/\bpatch\b/i, "patch text detected"],
+		[/\bapply_patch\b/, "apply_patch text detected"],
+		[/ファイル変更/, "Japanese file-change text detected"],
+		[/変更しました/, "Japanese changed text detected"],
+		[/修正しました/, "Japanese modified text detected"],
+	];
+	const negativePatterns = [
+		/ファイル変更なし/,
+		/\bno file changes?\b/i,
+		/\bdo not change files?\b/i,
+	];
+	for (const line of text.split("\n")) {
+		if (!line.trim()) continue;
+		if (negativePatterns.some((pattern) => pattern.test(line))) continue;
+		for (const [pattern, reason] of fileChangePatterns) {
+			if (pattern.test(line)) {
+				return { hasFileChangeSignal: true, fileChangeSignalReason: reason };
+			}
+		}
+	}
+	return { hasFileChangeSignal: false, fileChangeSignalReason: null };
+}
+
+function detectBoundWorkerGitOperationSignal(text: string): {
+	hasGitOperationSignal: boolean;
+	gitOperationSignalReason: string | null;
+	gitOperationRiskLevel: "safe-check" | "write-operation" | "unknown";
+} {
+	const safeGitPatterns: Array<[RegExp, string]> = [
+		[/\bgit\s+diff\s+--check\b/i, "git diff --check safe verification"],
+		[/\bgit\s+diff\b/i, "git diff safe inspection"],
+		[/\bgit\s+status(?:\s+--short)?\b/i, "git status safe inspection"],
+	];
+	const writeGitPatterns: Array<[RegExp, string]> = [
+		[/\bgit\s+commit\b/i, "git commit write operation"],
+		[/\bgit\s+push\b/i, "git push write operation"],
+		[/\bgit\s+reset\s+--hard\b/i, "git reset --hard destructive operation"],
+		[/\bgit\s+clean\b/i, "git clean destructive operation"],
+		[/\bgit\s+checkout\b/i, "git checkout write-risk operation"],
+		[/\bcommit\b/i, "commit text detected"],
+		[/\bpush\b/i, "push text detected"],
+		[/コミット/, "Japanese commit text detected"],
+		[/プッシュ/, "Japanese push text detected"],
+	];
+	const negativeWritePatterns = [
+		/Git操作なし/i,
+		/\bno git operations?\b/i,
+		/\bdo not use git\b/i,
+		/commit\/push(?:は|を)?していません/i,
+		/commit(?:は|を)?していません/i,
+		/push(?:は|を)?していません/i,
+		/コミット(?:は|を)?していません/,
+		/プッシュ(?:は|を)?していません/,
+	];
+	let safeReason: string | null = null;
+	for (const line of text.split("\n")) {
+		if (!line.trim()) continue;
+		const writeNegated = negativeWritePatterns.some((pattern) =>
+			pattern.test(line),
+		);
+		if (!writeNegated) {
+			for (const [pattern, reason] of writeGitPatterns) {
+				if (pattern.test(line)) {
+					return {
+						hasGitOperationSignal: true,
+						gitOperationSignalReason: reason,
+						gitOperationRiskLevel: "write-operation",
+					};
+				}
+			}
+		}
+		for (const [pattern, reason] of safeGitPatterns) {
+			if (pattern.test(line)) safeReason ??= reason;
+		}
+	}
+	if (safeReason) {
+		return {
+			hasGitOperationSignal: true,
+			gitOperationSignalReason: safeReason,
+			gitOperationRiskLevel: "safe-check",
+		};
+	}
+	return {
+		hasGitOperationSignal: false,
+		gitOperationSignalReason: null,
+		gitOperationRiskLevel: "unknown",
 	};
 }
 
@@ -5021,8 +5166,11 @@ function getBoundWorkerLatestResponseSummary(
 			? "file-change signal"
 			: "no file-change signal",
 		analysis.hasGitOperationSignal
-			? "git-operation signal"
+			? `git-operation signal (${analysis.gitOperationRiskLevel})`
 			: "no git-operation signal",
+		analysis.workerReportLooksComplete
+			? "worker report looks complete"
+			: "worker report completion unknown",
 	];
 	const preview = text.replace(/\s+/g, " ").trim().slice(0, 180);
 	return `${flags.join("; ")}. Preview: ${preview}`;
