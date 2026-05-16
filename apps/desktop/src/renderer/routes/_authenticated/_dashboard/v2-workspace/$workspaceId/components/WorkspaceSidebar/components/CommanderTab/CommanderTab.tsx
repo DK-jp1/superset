@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LuLoader, LuX } from "react-icons/lu";
 import { registerDoyDeckCommanderActionBridge } from "renderer/stores/doydeck-commander-actions";
 import {
+	evaluateDoyDeckWorkerIdentity,
+	type DoyDeckWorkerIdentityStatus,
 	inferDoyDeckWorkerTypeFromText,
 	makeDoyDeckWorkerBindingKey,
 	resolveDoyDeckWorkerBindingSnapshot,
@@ -138,6 +140,9 @@ interface CommanderControllerAutoLoopPreflightResult
 	workerPaneId: string | null;
 	terminalId: string | null;
 	workerType: string;
+	workerIdentityOk: boolean;
+	workerIdentityStatus: DoyDeckWorkerIdentityStatus;
+	workerIdentityBlockers: string[];
 	handoffMissingFields: string[];
 }
 
@@ -514,6 +519,9 @@ export function CommanderTab({
 				runtime.bridgeAvailable &&
 				composerReadiness.ready;
 			const workerBound = workerBinding.bindingStatus === "bound";
+			const workerIdentity = evaluateDoyDeckWorkerIdentity(
+				workerBinding.workerType,
+			);
 			const fallbackUsed =
 				!requireBoundWorkerForAutoLoop &&
 				workerBinding.bindingStatus !== "bound";
@@ -548,6 +556,9 @@ export function CommanderTab({
 				blockers.push("bound worker stale");
 			} else if (!workerBound) {
 				blockers.push("worker binding required");
+			} else if (!workerIdentity.workerIdentityOk) {
+				blockers.push(...workerIdentity.workerIdentityBlockers);
+				diagnosticsBlockers.push(...workerIdentity.workerIdentityBlockers);
 			}
 			if (fallbackUsed) blockers.push("active terminal fallback would be used");
 			if (workerBinding.workerBindingMismatch) {
@@ -612,6 +623,9 @@ export function CommanderTab({
 				workerPaneId: workerBinding.workerPaneId,
 				terminalId: workerBinding.terminalId,
 				workerType: workerBinding.workerType,
+				workerIdentityOk: workerIdentity.workerIdentityOk,
+				workerIdentityStatus: workerIdentity.workerIdentityStatus,
+				workerIdentityBlockers: workerIdentity.workerIdentityBlockers,
 				handoffMissingFields,
 			};
 		}, [
@@ -1575,6 +1589,13 @@ function getAutoLoopPreflightNextAction(
 	if (firstBlocker) {
 		if (firstBlocker.includes("worker binding required")) {
 			return "Bind active terminal to this tab before starting Auto Loop.";
+		}
+		if (
+			firstBlocker.includes("recognized worker") ||
+			firstBlocker.includes("worker identity") ||
+			firstBlocker.includes("unsupported worker")
+		) {
+			return "Bind a Codex or Claude Code terminal before sending instructions.";
 		}
 		if (firstBlocker.includes("bound worker stale")) {
 			return "Rebind an existing Worker terminal to this tab.";

@@ -1,10 +1,19 @@
 import { create } from "zustand";
 
 export type DoyDeckWorkerType = "codex" | "claude" | "shell" | "unknown";
+export type DoyDeckWorkerIdentityStatus =
+	| DoyDeckWorkerType
+	| "unsupported";
 export type DoyDeckWorkerBindingMode = "bound" | "active-terminal" | "unbound";
 export type DoyDeckWorkerBindingStatus =
 	| DoyDeckWorkerBindingMode
 	| "stale";
+
+export interface DoyDeckWorkerIdentityCheck {
+	workerIdentityOk: boolean;
+	workerIdentityStatus: DoyDeckWorkerIdentityStatus;
+	workerIdentityBlockers: string[];
+}
 
 export interface DoyDeckWorkerBinding {
 	workspaceId: string;
@@ -97,6 +106,41 @@ export function inferDoyDeckWorkerTypeFromText(
 		return "shell";
 	}
 	return "unknown";
+}
+
+export function evaluateDoyDeckWorkerIdentity(
+	workerType: DoyDeckWorkerType | string | null | undefined,
+): DoyDeckWorkerIdentityCheck {
+	if (workerType === "codex" || workerType === "claude") {
+		return {
+			workerIdentityOk: true,
+			workerIdentityStatus: workerType,
+			workerIdentityBlockers: [],
+		};
+	}
+	if (workerType === "shell") {
+		return {
+			workerIdentityOk: false,
+			workerIdentityStatus: "shell",
+			workerIdentityBlockers: [
+				"bound terminal is shell, not a recognized worker",
+			],
+		};
+	}
+	if (workerType === "unknown" || !workerType) {
+		return {
+			workerIdentityOk: false,
+			workerIdentityStatus: "unknown",
+			workerIdentityBlockers: ["worker identity could not be verified"],
+		};
+	}
+	return {
+		workerIdentityOk: false,
+		workerIdentityStatus: "unsupported",
+		workerIdentityBlockers: [
+			`unsupported worker identity: ${String(workerType)}`,
+		],
+	};
 }
 
 export function createEmptyWorkerBindingSnapshot(params: {

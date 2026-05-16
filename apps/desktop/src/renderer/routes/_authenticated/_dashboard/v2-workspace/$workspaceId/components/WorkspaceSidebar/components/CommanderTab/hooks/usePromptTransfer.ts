@@ -14,6 +14,7 @@ import type {
 	DoyDeckWorkerBindingStatus,
 	DoyDeckWorkerType,
 } from "renderer/stores/doydeck-worker-bindings";
+import { evaluateDoyDeckWorkerIdentity } from "renderer/stores/doydeck-worker-bindings";
 import { useTabsStore } from "renderer/stores/tabs/store";
 import { useWorkspaceEvent } from "renderer/hooks/host-service/useWorkspaceEvent";
 import {
@@ -1792,12 +1793,23 @@ export function usePromptTransfer({
 			requireBoundWorker ? "strict" : "fallback";
 		const bindingFallbackUsed =
 			!requireBoundWorker && armedWorkerBinding.bindingStatus !== "bound";
-		const strictStopReason =
+		const armedWorkerIdentity = evaluateDoyDeckWorkerIdentity(
+			armedWorkerBinding.workerType,
+		);
+		const bindingStopReason =
 			requireBoundWorker && armedWorkerBinding.bindingStatus !== "bound"
 				? armedWorkerBinding.bindingStatus === "stale"
 					? "bound worker stale"
 					: "worker binding required"
 				: null;
+		const identityStopReason =
+			requireBoundWorker &&
+			armedWorkerBinding.bindingStatus === "bound" &&
+			!armedWorkerIdentity.workerIdentityOk
+				? (armedWorkerIdentity.workerIdentityBlockers[0] ??
+					"worker identity could not be verified")
+				: null;
+		const strictStopReason = bindingStopReason ?? identityStopReason;
 		activeTabIdAtArmRef.current = armedTabId;
 		autoLoopWorkerPaneIdAtArmRef.current = strictStopReason
 			? null
