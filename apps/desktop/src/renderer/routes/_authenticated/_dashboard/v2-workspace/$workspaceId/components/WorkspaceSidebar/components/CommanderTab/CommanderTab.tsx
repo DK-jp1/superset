@@ -26,6 +26,7 @@ import { useCommanderWebview } from "./useCommanderWebview";
 import {
 	buildComposerReadinessScript,
 	buildInjectionWithSubmitScript,
+	buildLatestReplyStateScript,
 	detectProvider,
 	getProviderLabel,
 } from "./browser-adapters";
@@ -47,7 +48,10 @@ import {
 import { useCommanderSessionPersistence } from "./hooks/useCommanderSessionPersistence";
 import type { AssistantCaptureSnapshot } from "./hooks/usePromptTransfer";
 import type { AutoRelayMode } from "./hooks/usePromptTransfer";
-import { usePromptTransfer } from "./hooks/usePromptTransfer";
+import {
+	extractInstructionBlock,
+	usePromptTransfer,
+} from "./hooks/usePromptTransfer";
 import { CommanderBrowser } from "./CommanderBrowser";
 import { CommanderHelperBar } from "./CommanderHelperBar";
 import {
@@ -160,6 +164,40 @@ interface CommanderControllerSendHandoffResult
 	handoffMissingFields: string[];
 }
 
+type CommanderControllerLatestReplyStatus =
+	| "READY"
+	| "WAITING"
+	| "BLOCKED"
+	| "FAILED";
+
+interface CommanderControllerLatestReplyResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerLatestReplyStatus;
+	activeTabId: string | null;
+	browserAiProvider: string;
+	browserAiReady: boolean;
+	browserAiSlotOk: boolean;
+	isResponding: boolean;
+	latestReplyText: string;
+	latestReplyLength: number;
+	latestReplyFingerprint: string | null;
+	assistantCount: number | null;
+	hasCodexInstruction: boolean;
+	hasStopSignal: boolean;
+	hasDoyConfirmationItems: boolean;
+	extractedCodexInstruction: string;
+	extractedStopSignal: string | null;
+	extractedDoyConfirmationItems: string[];
+	blockers: string[];
+	warnings: string[];
+	message: string;
+	readAt: string | null;
+	browserAiComposer: CommanderControllerBrowserAiReadiness;
+	browserAiUrl: string;
+	browserAiSlotKey: string | null;
+	expectedBrowserAiSlotKey: string | null;
+}
+
 interface CommanderControllerCommands {
 	version: "0.1";
 	workspaceId: string;
@@ -175,6 +213,8 @@ interface CommanderControllerCommands {
 	sendHandoffToBrowserAI: (
 		input?: unknown,
 	) => Promise<CommanderControllerSendHandoffResult>;
+	readBrowserAiLatestReply: () => Promise<CommanderControllerLatestReplyResult>;
+	getBrowserAiLatestReply: () => Promise<CommanderControllerLatestReplyResult>;
 }
 
 type CommanderControllerWindow = Window &
@@ -730,6 +770,220 @@ export function CommanderTab({
 			workspaceId,
 		]);
 
+	const readBrowserAiLatestReplyController =
+		useCallback(async (): Promise<CommanderControllerLatestReplyResult> => {
+			const blockers: string[] = [];
+			const warnings: string[] = [];
+			const activeTabIdSnapshot = activeTabId;
+			const runtime = webview.getRuntimeSnapshot();
+			const liveUrl = webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
+			const provider = detectProvider(liveUrl);
+			const expectedBrowserAiSlotKey = buildCommanderBrowserSlotKey({
+				workspaceId,
+				activeTabId: activeTabIdSnapshot,
+			});
+			const browserAiSlotOk =
+				Boolean(activeTabIdSnapshot) &&
+				runtime.browserSlotKey === expectedBrowserAiSlotKey &&
+				runtime.activeTabId === activeTabIdSnapshot;
+			const composerReadiness = await readBrowserAiComposerReadiness({
+				provider,
+				injectIntoPage: webview.injectIntoPage,
+			});
+			const browserAiReady =
+				Boolean(provider) &&
+				runtime.status === "available" &&
+				runtime.bridgeAvailable &&
+				composerReadiness.ready;
+
+			if (!activeTabIdSnapshot) blockers.push("active tab not found");
+			if (!provider) blockers.push("browser ai provider not ready");
+			if (runtime.status !== "available") {
+				blockers.push("browser ai runtime unavailable");
+			}
+			if (!runtime.bridgeAvailable) {
+				blockers.push("browser ai bridge unavailable");
+			}
+			if (!browserAiSlotOk) blockers.push("browser ai slot mismatch");
+
+			const baseResult = {
+				...getCommanderControllerContext(),
+				activeTabId: activeTabIdSnapshot,
+				browserAiProvider: runtime.providerLabel || getProviderLabel(provider),
+				browserAiReady,
+				browserAiSlotOk,
+				browserAiComposer: composerReadiness,
+				browserAiUrl: liveUrl,
+				browserAiSlotKey: runtime.browserSlotKey,
+				expectedBrowserAiSlotKey,
+			};
+
+			if (blockers.length > 0 || !provider) {
+				return {
+					ok: false,
+					...baseResult,
+					status: "BLOCKED",
+					isResponding: false,
+					latestReplyText: "",
+					latestReplyLength: 0,
+					latestReplyFingerprint: null,
+					assistantCount: null,
+					hasCodexInstruction: false,
+					hasStopSignal: false,
+					hasDoyConfirmationItems: false,
+					extractedCodexInstruction: "",
+					extractedStopSignal: null,
+					extractedDoyConfirmationItems: [],
+					blockers,
+					warnings,
+					message: getBrowserAiLatestReplyMessage("BLOCKED", blockers, warnings),
+					readAt: null,
+				};
+			}
+
+			let latestState: BrowserAiLatestReplyState;
+			try {
+				latestState = normalizeBrowserAiLatestReplyState(
+					await webview.injectIntoPage(buildLatestReplyStateScript(provider)),
+				);
+			} catch (error) {
+				return {
+					ok: false,
+					...baseResult,
+					status: "FAILED",
+					isResponding: false,
+					latestReplyText: "",
+					latestReplyLength: 0,
+					latestReplyFingerprint: null,
+					assistantCount: null,
+					hasCodexInstruction: false,
+					hasStopSignal: false,
+					hasDoyConfirmationItems: false,
+					extractedCodexInstruction: "",
+					extractedStopSignal: null,
+					extractedDoyConfirmationItems: [],
+					blockers,
+					warnings,
+					message:
+						error instanceof Error
+							? `Browser AI latest reply read failed: ${error.message}`
+							: "Browser AI latest reply read failed",
+					readAt: new Date().toISOString(),
+				};
+			}
+
+			if (latestState.isResponding) {
+				return {
+					ok: false,
+					...baseResult,
+					status: "WAITING",
+					isResponding: true,
+					latestReplyText: latestState.latestText,
+					latestReplyLength: latestState.latestText.length,
+					latestReplyFingerprint: latestState.latestFingerprint,
+					assistantCount: latestState.assistantCount,
+					hasCodexInstruction: false,
+					hasStopSignal: false,
+					hasDoyConfirmationItems: false,
+					extractedCodexInstruction: "",
+					extractedStopSignal: null,
+					extractedDoyConfirmationItems: [],
+					blockers,
+					warnings,
+					message: "Browser AI is still responding",
+					readAt: new Date().toISOString(),
+				};
+			}
+
+			if (provider && !composerReadiness.ready) {
+				blockers.push(`browser ai composer not ready: ${composerReadiness.reason}`);
+			}
+
+			if (blockers.length > 0) {
+				return {
+					ok: false,
+					...baseResult,
+					status: "BLOCKED",
+					isResponding: latestState.isResponding,
+					latestReplyText: latestState.latestText,
+					latestReplyLength: latestState.latestText.length,
+					latestReplyFingerprint: latestState.latestFingerprint,
+					assistantCount: latestState.assistantCount,
+					hasCodexInstruction: false,
+					hasStopSignal: false,
+					hasDoyConfirmationItems: false,
+					extractedCodexInstruction: "",
+					extractedStopSignal: null,
+					extractedDoyConfirmationItems: [],
+					blockers,
+					warnings,
+					message: getBrowserAiLatestReplyMessage("BLOCKED", blockers, warnings),
+					readAt: new Date().toISOString(),
+				};
+			}
+
+			if (!latestState.latestText.trim()) {
+				warnings.push("latest assistant reply not found");
+				return {
+					ok: false,
+					...baseResult,
+					status: "WAITING",
+					isResponding: false,
+					latestReplyText: "",
+					latestReplyLength: 0,
+					latestReplyFingerprint: latestState.latestFingerprint,
+					assistantCount: latestState.assistantCount,
+					hasCodexInstruction: false,
+					hasStopSignal: false,
+					hasDoyConfirmationItems: false,
+					extractedCodexInstruction: "",
+					extractedStopSignal: null,
+					extractedDoyConfirmationItems: [],
+					blockers,
+					warnings,
+					message: getBrowserAiLatestReplyMessage("WAITING", blockers, warnings),
+					readAt: new Date().toISOString(),
+				};
+			}
+
+			const extractedCodexInstruction = extractBrowserAiCodexInstruction(
+				latestState.latestText,
+			);
+			const extractedStopSignal = extractBrowserAiStopSignal(latestState.latestText);
+			const extractedDoyConfirmationItems = extractDoyConfirmationItems(
+				latestState.latestText,
+			);
+
+			return {
+				ok: true,
+				...baseResult,
+				status: "READY",
+				isResponding: false,
+				latestReplyText: latestState.latestText,
+				latestReplyLength: latestState.latestText.length,
+				latestReplyFingerprint: latestState.latestFingerprint,
+				assistantCount: latestState.assistantCount,
+				hasCodexInstruction: Boolean(extractedCodexInstruction),
+				hasStopSignal: Boolean(extractedStopSignal),
+				hasDoyConfirmationItems: extractedDoyConfirmationItems.length > 0,
+				extractedCodexInstruction,
+				extractedStopSignal,
+				extractedDoyConfirmationItems,
+				blockers,
+				warnings,
+				message: getBrowserAiLatestReplyMessage("READY", blockers, warnings),
+				readAt: new Date().toISOString(),
+			};
+		}, [
+			activeTabId,
+			getCommanderControllerContext,
+			webview.currentUrl,
+			webview.getLiveUrl,
+			webview.getRuntimeSnapshot,
+			webview.injectIntoPage,
+			workspaceId,
+		]);
+
 	useEffect(() => {
 		console.log(
 			"[S3.11] registerCommanderBridge with onAutoCaptureTrigger =",
@@ -771,6 +1025,8 @@ export function CommanderTab({
 			getAutoLoopPreflight: getAutoLoopPreflightController,
 			runAutoLoopPreflight: getAutoLoopPreflightController,
 			sendHandoffToBrowserAI: sendHandoffToBrowserAiController,
+			readBrowserAiLatestReply: readBrowserAiLatestReplyController,
+			getBrowserAiLatestReply: readBrowserAiLatestReplyController,
 		};
 		target.__doydeckCommanderController = commands;
 		return () => {
@@ -786,6 +1042,7 @@ export function CommanderTab({
 		buildHandoffLedgerController,
 		getAutoLoopPreflightController,
 		sendHandoffToBrowserAiController,
+		readBrowserAiLatestReplyController,
 	]);
 
 	const currentProvider = detectProvider(webview.currentUrl);
@@ -1082,6 +1339,13 @@ function getCommanderSessionMissingFields(
 	return missingFields;
 }
 
+interface BrowserAiLatestReplyState {
+	assistantCount: number | null;
+	latestText: string;
+	latestFingerprint: string | null;
+	isResponding: boolean;
+}
+
 async function readBrowserAiComposerReadiness({
 	provider,
 	injectIntoPage,
@@ -1157,6 +1421,150 @@ function normalizeBrowserAiComposerReadiness(
 		submitButtonFound: candidate.submitButtonFound === true,
 		submitButtonEnabled: candidate.submitButtonEnabled === true,
 	};
+}
+
+function normalizeBrowserAiLatestReplyState(
+	value: unknown,
+): BrowserAiLatestReplyState {
+	if (!value || typeof value !== "object") {
+		return {
+			assistantCount: null,
+			latestText: "",
+			latestFingerprint: null,
+			isResponding: false,
+		};
+	}
+	const candidate = value as Partial<BrowserAiLatestReplyState>;
+	return {
+		assistantCount:
+			typeof candidate.assistantCount === "number"
+				? candidate.assistantCount
+				: null,
+		latestText:
+			typeof candidate.latestText === "string"
+				? candidate.latestText.trim()
+				: "",
+		latestFingerprint:
+			typeof candidate.latestFingerprint === "string"
+				? candidate.latestFingerprint
+				: null,
+		isResponding: candidate.isResponding === true,
+	};
+}
+
+function extractBrowserAiCodexInstruction(text: string): string {
+	const fromHeading = extractBrowserAiInstructionFromHeading(text);
+	if (fromHeading) return fromHeading;
+	return extractInstructionBlock(text);
+}
+
+function extractBrowserAiInstructionFromHeading(text: string): string {
+	const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+	const headingKeywords = [
+		"(?:作業側(?:の)?\\s*)?Codex\\s*[へに]\\s*渡す\\s*指示",
+		"(?:作業側(?:の)?\\s*)?Codex\\s*[へに]\\s*投げる\\s*指示",
+		"Codex\\s*指示",
+		"Worker\\s*[へに]\\s*渡す\\s*指示",
+		"Worker\\s*指示",
+		"Claude\\s*Code\\s*[へに]\\s*渡す\\s*指示",
+		"Claude\\s*Code\\s*指示",
+	].join("|");
+	const prefix = String.raw`^\s*(?:>\s*)?(?:[-*•・]\s*)?(?:#{1,6}\s*)?(?:\*\*)?\s*`;
+	const suffix = String.raw`\s*(?:[：:]?\s*\*\*|\*\*\s*[：:]?|[：:]|\*\*)?`;
+	const headingPattern = new RegExp(
+		`${prefix}(?:${headingKeywords})${suffix}\\s*$`,
+		"i",
+	);
+	const inlineHeadingPattern = new RegExp(
+		`${prefix}(?:${headingKeywords})${suffix}\\s+(.+)$`,
+		"i",
+	);
+
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i];
+		const inlineMatch = inlineHeadingPattern.exec(line);
+		const isHeading = headingPattern.test(line);
+		if (!inlineMatch && !isHeading) continue;
+
+		const bodyLines: string[] = [];
+		if (inlineMatch?.[1]?.trim()) bodyLines.push(inlineMatch[1]);
+
+		for (let j = i + 1; j < lines.length; j++) {
+			const next = lines[j].trim();
+			if (
+				bodyLines.some((bodyLine) => bodyLine.trim().length > 0) &&
+				isBrowserAiInstructionBoundary(next)
+			) {
+				break;
+			}
+			bodyLines.push(lines[j]);
+		}
+
+		const body = bodyLines.join("\n").trim();
+		if (body) return body;
+	}
+	return "";
+}
+
+function isBrowserAiInstructionBoundary(line: string): boolean {
+	if (!line) return false;
+	if (/^(?:#{1,6}\s*)/.test(line)) return true;
+	if (/^(?:[-*•・]\s*)?(?:\*\*)?(?:Doy確認|Doyへ確認|Doyに確認|確認事項|未解決|次アクション|補足|理由|判断|レビュー|STOP)(?:\*\*)?[：:]?\s*$/i.test(line)) {
+		return true;
+	}
+	if (/^---\s*.+\s*---$/.test(line)) return true;
+	return false;
+}
+
+function extractBrowserAiStopSignal(text: string): string | null {
+	const patterns = [
+		/\bSTOP\b[。.!！]?/i,
+		/次の\s*(?:作業側(?:の)?\s*)?Codex\s*指示(?:は|が)?不要/,
+		/(?:作業側(?:の)?\s*)?Codex\s*指示(?:は|が)?不要/,
+		/次の\s*Worker\s*指示(?:は|が)?不要/,
+		/Worker(?:へ渡す)?指示(?:は|が)?不要/,
+	];
+	for (const pattern of patterns) {
+		const match = pattern.exec(text);
+		if (match?.[0]) return match[0].trim();
+	}
+	return null;
+}
+
+function extractDoyConfirmationItems(text: string): string[] {
+	const lines = text
+		.replace(/\r\n/g, "\n")
+		.replace(/\r/g, "\n")
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean);
+	const confirmationPattern =
+		/(Doy\s*(?:確認|へ確認|に確認)|確認事項|確認が必要|要確認|判断が必要|承認が必要|質問|決めてください|どちら)/i;
+	const items: string[] = [];
+	for (const line of lines) {
+		if (!confirmationPattern.test(line)) continue;
+		const normalized = line.replace(/^[-*•・\d.)\s]+/, "").trim();
+		if (normalized && !items.includes(normalized)) items.push(normalized);
+		if (items.length >= 8) break;
+	}
+	return items;
+}
+
+function getBrowserAiLatestReplyMessage(
+	status: CommanderControllerLatestReplyStatus,
+	blockers: string[],
+	warnings: string[],
+): string {
+	if (status === "READY") return "Browser AI latest reply is ready";
+	if (status === "WAITING") {
+		return warnings[0] ?? "Waiting for Browser AI latest reply";
+	}
+	if (status === "BLOCKED") {
+		return blockers[0]
+			? `Browser AI latest reply read blocked: ${blockers[0]}`
+			: "Browser AI latest reply read blocked";
+	}
+	return "Browser AI latest reply read failed";
 }
 
 function getAutoLoopPreflightNextAction(

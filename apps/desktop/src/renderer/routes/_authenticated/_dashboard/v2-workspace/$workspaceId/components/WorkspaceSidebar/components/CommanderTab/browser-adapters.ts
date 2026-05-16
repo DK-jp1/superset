@@ -144,6 +144,106 @@ export function buildAssistantSnapshotScript(
 	return ASSISTANT_SNAPSHOT_SCRIPTS[provider];
 }
 
+const LATEST_REPLY_STATE_HELPER = `
+function normalizeText(value) {
+  return String(value || '').replace(/\\s+/g, ' ').trim();
+}
+function normalizeMultilineText(value) {
+  return String(value || '')
+    .replace(/\\r\\n/g, '\\n')
+    .replace(/\\r/g, '\\n')
+    .replace(/[\\t ]+\\n/g, '\\n')
+    .replace(/\\n{3,}/g, '\\n\\n')
+    .trim();
+}
+function fingerprintText(value) {
+  var text = normalizeText(value);
+  var hash = 0;
+  for (var i = 0; i < text.length; i++) {
+    hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+  }
+  return text.length + ':' + Math.abs(hash).toString(36) + ':' + text.slice(0, 80);
+}
+function isVisible(el) {
+  if (!el) return false;
+  var rect = el.getBoundingClientRect();
+  var style = window.getComputedStyle(el);
+  return rect.width > 0 && rect.height > 0 &&
+    style.visibility !== 'hidden' &&
+    style.display !== 'none' &&
+    !el.closest('[hidden], [aria-hidden="true"]');
+}
+function isResponseInProgress() {
+  var busySelectors = [
+    '[aria-busy="true"]',
+    '[data-is-streaming="true"]',
+    '[data-streaming="true"]',
+    '.result-streaming',
+    '.streaming'
+  ];
+  for (var i = 0; i < busySelectors.length; i++) {
+    var busy = document.querySelector(busySelectors[i]);
+    if (busy && isVisible(busy)) return true;
+  }
+  var stopSelectors = [
+    '[data-testid="stop-button"]',
+    '[data-testid="composer-stop-button"]',
+    'button[aria-label="Stop generating"]',
+    'button[aria-label="Stop"]',
+    'button[aria-label="Cancel"]'
+  ];
+  for (var j = 0; j < stopSelectors.length; j++) {
+    var stop = document.querySelector(stopSelectors[j]);
+    if (stop && isVisible(stop) && !stop.disabled) return true;
+  }
+  var buttons = Array.prototype.slice.call(document.querySelectorAll('button[aria-label]'));
+  for (var k = 0; k < buttons.length; k++) {
+    var label = String(buttons[k].getAttribute('aria-label') || '');
+    if (/stop|cancel|停止|中止|生成を停止/i.test(label) && isVisible(buttons[k]) && !buttons[k].disabled) {
+      return true;
+    }
+  }
+  return false;
+}
+function toLatestReplyState(nodes) {
+  var list = Array.prototype.slice.call(nodes || []).filter(Boolean);
+  var latestNode = list[list.length - 1] || null;
+  var latestText = latestNode
+    ? normalizeMultilineText(latestNode.innerText || latestNode.textContent || '')
+    : '';
+  return {
+    assistantCount: list.length,
+    latestText: latestText,
+    latestFingerprint: fingerprintText(latestText),
+    isResponding: isResponseInProgress()
+  };
+}`;
+
+const LATEST_REPLY_STATE_SCRIPTS: Record<BrowserProvider, string> = {
+	chatgpt: `(function() {
+  ${LATEST_REPLY_STATE_HELPER}
+  var msgs = document.querySelectorAll('[data-message-author-role="assistant"]');
+  if (!msgs.length) {
+    msgs = document.querySelectorAll('.agent-turn');
+  }
+  return toLatestReplyState(msgs);
+})()`,
+	claude: `(function() {
+  ${LATEST_REPLY_STATE_HELPER}
+  return toLatestReplyState(document.querySelectorAll('div.font-claude-response'));
+})()`,
+	gemini: `(function() {
+  ${LATEST_REPLY_STATE_HELPER}
+  return toLatestReplyState(document.querySelectorAll('message-content'));
+})()`,
+};
+
+export function buildLatestReplyStateScript(
+	provider: BrowserProvider,
+): string {
+	return LATEST_REPLY_STATE_SCRIPTS[provider];
+}
+
 const SUBMIT_SELECTORS: Record<BrowserProvider, string[]> = {
 	chatgpt: [
 		'button[data-testid="send-button"]',
