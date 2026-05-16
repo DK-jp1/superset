@@ -289,6 +289,11 @@ interface CommanderControllerBoundWorkerLatestResponseResult
 	lastInstructionSentAt: string | null;
 	lastInstructionLength: number;
 	analysisWarnings: string[];
+	uiNoiseRemoved: boolean;
+	ignoredUiNoiseLines: string[];
+	extractedResponseCandidates: string[];
+	selectedResponseReason: string;
+	waitingReason: string | null;
 	blockers: string[];
 	warnings: string[];
 	message: string;
@@ -1358,6 +1363,11 @@ export function CommanderTab({
 				promptEchoRemoved,
 				usedLastSendMarker,
 				analysisWarnings,
+				uiNoiseRemoved,
+				ignoredUiNoiseLines,
+				extractedResponseCandidates,
+				selectedResponseReason,
+				waitingReason,
 			} = extractedResponse;
 			const latestResponseText = analyzedResponseText;
 			const analysis = analyzeBoundWorkerOutput(latestResponseText);
@@ -1388,6 +1398,11 @@ export function CommanderTab({
 					lastInstructionSentAt: lastInstructionMarker?.sentAt ?? null,
 					lastInstructionLength: lastInstructionMarker?.instructionLength ?? 0,
 					analysisWarnings,
+					uiNoiseRemoved,
+					ignoredUiNoiseLines,
+					extractedResponseCandidates,
+					selectedResponseReason,
+					waitingReason,
 					blockers,
 					warnings,
 					message: getBoundWorkerLatestResponseMessage("WAITING", blockers, warnings),
@@ -1420,6 +1435,11 @@ export function CommanderTab({
 					lastInstructionSentAt: lastInstructionMarker?.sentAt ?? null,
 					lastInstructionLength: lastInstructionMarker?.instructionLength ?? 0,
 					analysisWarnings,
+					uiNoiseRemoved,
+					ignoredUiNoiseLines,
+					extractedResponseCandidates,
+					selectedResponseReason,
+					waitingReason,
 					blockers,
 					warnings,
 					message: "Bound worker still appears to be running",
@@ -1460,6 +1480,11 @@ export function CommanderTab({
 				lastInstructionSentAt: lastInstructionMarker?.sentAt ?? null,
 				lastInstructionLength: lastInstructionMarker?.instructionLength ?? 0,
 				analysisWarnings,
+				uiNoiseRemoved,
+				ignoredUiNoiseLines,
+				extractedResponseCandidates,
+				selectedResponseReason,
+				waitingReason,
 				blockers,
 				warnings,
 				message: getBoundWorkerLatestResponseMessage("READY", blockers, warnings),
@@ -2161,6 +2186,11 @@ function getEmptyBoundWorkerOutputFields(
 	| "lastInstructionSentAt"
 	| "lastInstructionLength"
 	| "analysisWarnings"
+	| "uiNoiseRemoved"
+	| "ignoredUiNoiseLines"
+	| "extractedResponseCandidates"
+	| "selectedResponseReason"
+	| "waitingReason"
 > {
 	return {
 		rawOutputText: "",
@@ -2176,6 +2206,11 @@ function getEmptyBoundWorkerOutputFields(
 		lastInstructionSentAt: lastInstructionMarker?.sentAt ?? null,
 		lastInstructionLength: lastInstructionMarker?.instructionLength ?? 0,
 		analysisWarnings: [],
+		uiNoiseRemoved: false,
+		ignoredUiNoiseLines: [],
+		extractedResponseCandidates: [],
+		selectedResponseReason: "none",
+		waitingReason: null,
 	};
 }
 
@@ -2217,6 +2252,11 @@ function extractBoundWorkerResponseForAnalysis(params: {
 	promptEchoRemoved: boolean;
 	usedLastSendMarker: boolean;
 	analysisWarnings: string[];
+	uiNoiseRemoved: boolean;
+	ignoredUiNoiseLines: string[];
+	extractedResponseCandidates: string[];
+	selectedResponseReason: string;
+	waitingReason: string | null;
 } {
 	const { outputText, screenText, viewportText, paneId, lastInstructionMarker } =
 		params;
@@ -2231,7 +2271,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 			deltaText,
 			lastInstructionMarker.instruction,
 		);
-		const focused = focusBoundWorkerResponseText(stripped.text);
+		const focused = extractBoundWorkerResponseCandidates(stripped.text);
 		if (stripped.promptEchoRemoved) {
 			analysisWarnings.push("prompt echo removed from worker output analysis");
 		}
@@ -2250,6 +2290,15 @@ function extractBoundWorkerResponseForAnalysis(params: {
 			promptEchoRemoved: stripped.promptEchoRemoved,
 			usedLastSendMarker,
 			analysisWarnings,
+			uiNoiseRemoved: focused.uiNoiseRemoved,
+			ignoredUiNoiseLines: focused.ignoredUiNoiseLines,
+			extractedResponseCandidates: focused.extractedResponseCandidates,
+			selectedResponseReason: focused.responseFocused
+				? "response-candidate"
+				: "delta-fallback",
+			waitingReason: focused.text.trim()
+				? null
+				: "no response candidate found after prompt echo removal",
 		};
 	}
 	const candidates = [
@@ -2258,63 +2307,163 @@ function extractBoundWorkerResponseForAnalysis(params: {
 		outputText,
 	].map((value) => limitWorkerOutputText(value.trim()));
 	const fallbackText = candidates.find((value) => value.length > 0) ?? "";
+	const focused = extractBoundWorkerResponseCandidates(fallbackText);
 	if (!lastInstructionMarker) {
 		analysisWarnings.push("last worker instruction marker unavailable; using visible output fallback");
 	}
+	if (focused.uiNoiseRemoved) {
+		analysisWarnings.push("worker UI noise removed from visible output fallback");
+	}
 	return {
 		deltaText: "",
-		analyzedResponseText: fallbackText,
+		analyzedResponseText: limitWorkerOutputText(focused.text.trim()),
 		promptEchoRemoved: false,
 		usedLastSendMarker,
 		analysisWarnings,
+		uiNoiseRemoved: focused.uiNoiseRemoved,
+		ignoredUiNoiseLines: focused.ignoredUiNoiseLines,
+		extractedResponseCandidates: focused.extractedResponseCandidates,
+		selectedResponseReason: focused.responseFocused
+			? "visible-output-response-candidate"
+			: "visible-output-fallback",
+		waitingReason: focused.text.trim()
+			? null
+			: "no response candidate found in visible output",
 	};
 }
 
-function focusBoundWorkerResponseText(text: string): {
+function extractBoundWorkerResponseCandidates(text: string): {
 	text: string;
 	responseFocused: boolean;
 	uiNoiseRemoved: boolean;
+	ignoredUiNoiseLines: string[];
+	extractedResponseCandidates: string[];
 } {
 	const trimmed = text.trim();
 	if (!trimmed) {
-		return { text: "", responseFocused: false, uiNoiseRemoved: false };
+		return {
+			text: "",
+			responseFocused: false,
+			uiNoiseRemoved: false,
+			ignoredUiNoiseLines: [],
+			extractedResponseCandidates: [],
+		};
 	}
-	const responseStartPatterns = [
-		/<<<DOYDECK_WORKER_RESPONSE_START>>>/i,
-		/受信確認/,
-		/確認しました/,
-		/了解しました/,
-		/やったこと/,
-		/完了報告/,
-		/DOYDECK_BOUND_WORKER_SEND_TEST_OK/,
-		/\backnowledged\b/i,
-		/\breceived\b/i,
-	];
-	const responseStart = responseStartPatterns
-		.map((pattern) => {
-			const match = pattern.exec(trimmed);
-			return match?.index ?? -1;
-		})
-		.filter((index) => index >= 0)
-		.sort((a, b) => a - b)[0] ?? -1;
-	let focused = responseStart >= 0 ? trimmed.slice(responseStart) : trimmed;
-	const beforeNoiseTrim = focused;
-	const trailingNoisePatterns = [
-		/›\s*Write tests for @filename/i,
-		/gpt-\d(?:\.\d+)?\s+\w+\s+·\s+~?\/[^\n]+/i,
-		/•\s*Working\([^)]*\)/i,
-	];
-	for (const pattern of trailingNoisePatterns) {
-		const match = pattern.exec(focused);
-		if (match?.index && match.index > 0) {
-			focused = focused.slice(0, match.index).trim();
+	const lines = trimmed.split("\n");
+	const ignoredUiNoiseLines: string[] = [];
+	const usableLines: string[] = [];
+	for (const line of lines) {
+		if (isBoundWorkerUiNoiseLine(line)) {
+			const normalizedLine = line.replace(/\s+/g, " ").trim();
+			if (normalizedLine) ignoredUiNoiseLines.push(normalizedLine);
+			continue;
 		}
+		const cleanedLine = stripInlineBoundWorkerUiNoise(line);
+		if (cleanedLine.trim() !== line.trim()) {
+			const normalizedLine = line.replace(/\s+/g, " ").trim();
+			if (normalizedLine) ignoredUiNoiseLines.push(normalizedLine);
+		}
+		if (cleanedLine.trim()) usableLines.push(cleanedLine);
 	}
+	const responseCandidates = usableLines
+		.map((line, index) => ({
+			line: line.trim(),
+			index,
+			score: scoreBoundWorkerResponseCandidate(line),
+		}))
+		.filter((candidate) => candidate.line && candidate.score > 0)
+		.sort((a, b) => b.score - a.score || b.index - a.index);
+	const bestCandidate = responseCandidates[0] ?? null;
+	const focusedLines = bestCandidate
+		? usableLines.slice(bestCandidate.index).filter((line) => line.trim())
+		: usableLines.filter((line) => line.trim());
+	const focused = focusedLines.join("\n").trim();
+	const extractedResponseCandidates = responseCandidates
+		.map((candidate) => candidate.line)
+		.slice(0, 8);
 	return {
 		text: focused,
-		responseFocused: responseStart >= 0,
-		uiNoiseRemoved: focused !== beforeNoiseTrim,
+		responseFocused: Boolean(bestCandidate),
+		uiNoiseRemoved:
+			ignoredUiNoiseLines.length > 0 || focusedLines.length !== lines.length,
+		ignoredUiNoiseLines: truncateIgnoredUiNoiseLines(ignoredUiNoiseLines),
+		extractedResponseCandidates,
 	};
+}
+
+function stripInlineBoundWorkerUiNoise(line: string): string {
+	return line
+		.replace(/[›>]\s*Write tests for @filename.*$/i, "")
+		.replace(/gpt-\d(?:\.\d+)?\s+\w+\s+·\s+~?\/.*$/i, "")
+		.replace(/[•·]?\s*Working\([^)]*(?:interrupt|interupt)[^)]*\).*$/i, "")
+		.replace(
+			/[•·]?\d*(?:Working|Workin|Worki|Work|Wor|Wo)(?:[•·]?\d*(?:Working|Workin|Worki|Work|Wor|Wo|W|orking|rking|king|ing|ng|g))*.*$/i,
+			"",
+		)
+		.trimEnd();
+}
+
+function isBoundWorkerUiNoiseLine(line: string): boolean {
+	const normalized = line.replace(/\s+/g, " ").trim();
+	if (!normalized) return true;
+	const withoutBox = normalized.replace(/[┃│╭╮╰╯─┌┐└┘]/g, " ").trim();
+	if (!withoutBox) return true;
+	return [
+		/^•?\s*Working(?:\([^)]*\))?$/i,
+		/^•?\s*Working\(/i,
+		/\besc to interrupt\b/i,
+		/^\(?\s*esc\s+to\s+interrupt\s*\)?$/i,
+		/^›\s*/,
+		/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏◐◓◑◒⏳]\s*(?:Working|Thinking|Running)?/i,
+		/^OpenAI Codex\b/i,
+		/^model:\s*gpt-/i,
+		/^permissions:\s*YOLO mode/i,
+		/^\/(?:help|status|new)\b/i,
+		/^gpt-\d(?:\.\d+)?\s+\w+\s+·\s+~?\/[^\n]+/i,
+		/^›\s*Write tests for @filename/i,
+	].some((pattern) => pattern.test(withoutBox));
+}
+
+function scoreBoundWorkerResponseCandidate(line: string): number {
+	const normalized = line.replace(/\s+/g, " ").trim();
+	if (!normalized || isBoundWorkerUiNoiseLine(normalized)) return 0;
+	if (/返信してください|返答してください|reply\s+with/i.test(normalized)) return 0;
+	const scoredPatterns: Array<[RegExp, number]> = [
+		[/受け取りました/, 120],
+		[/受信しました/, 115],
+		[/現在待機中です/, 110],
+		[/待機中です/, 105],
+		[/受信確認/, 100],
+		[/確認しました/, 90],
+		[/了解しました/, 90],
+		[/DOYDECK_BOUND_WORKER_SEND_TEST_OK/, 90],
+		[/<<<DOYDECK_WORKER_RESPONSE_START>>>/i, 85],
+		[/コマンド実行なし/, 75],
+		[/ツール使用なし/, 75],
+		[/ファイル変更なし/, 75],
+		[/Git操作なし/i, 75],
+		[/\backnowledged\b/i, 70],
+		[/\breceived\b/i, 70],
+		[/\bready\b/i, 60],
+		[/\bidle\b/i, 60],
+		[/\bwaiting\b/i, 55],
+		[/\bdone\b/i, 55],
+		[/次の指示/, 55],
+		[/追加指示/, 55],
+	];
+	return scoredPatterns.reduce(
+		(best, [pattern, score]) =>
+			pattern.test(normalized) ? Math.max(best, score) : best,
+		0,
+	);
+}
+
+function truncateIgnoredUiNoiseLines(lines: string[], maxLines = 12): string[] {
+	if (lines.length <= maxLines) return lines;
+	return [
+		...lines.slice(0, maxLines),
+		`... ${lines.length - maxLines} more UI noise lines`,
+	];
 }
 
 function stripBoundWorkerPromptEcho(
@@ -2326,29 +2475,40 @@ function stripBoundWorkerPromptEcho(
 	let promptEchoRemoved = false;
 	const keptLines: string[] = [];
 	let inPromptEcho = false;
+	let seenWorkerUiNoiseAfterEcho = false;
 
 	for (const line of text.split("\n")) {
+		if (isBoundWorkerUiNoiseLine(line)) {
+			seenWorkerUiNoiseAfterEcho = true;
+		}
 		const comparableLine = normalizeWorkerInstructionForComparison(
-			line.replace(/^[›>]\s*/, ""),
+			line.replace(/^\s*[›>]\s*/, ""),
 		);
 		const compactLine = compactWorkerInstructionForComparison(
-			line.replace(/^[›>]\s*/, ""),
+			line.replace(/^\s*[›>]\s*/, ""),
 		);
 		const lineLooksLikeEcho =
 			comparableLine.length >= 8 &&
 			(normalizedInstruction.includes(comparableLine) ||
 				comparableLine.includes(normalizedInstruction.slice(0, 80)) ||
 				(compactLine.length >= 8 && compactInstruction.includes(compactLine)) ||
+				(compactInstruction.length >= 8 &&
+					compactLine.includes(
+						compactInstruction.slice(0, Math.min(80, compactInstruction.length)),
+					)) ||
 				(compactLine.length >= 80 &&
 					compactLine.includes(compactInstruction.slice(0, 80))));
+		const lineLooksLikeWorkerResponse =
+			seenWorkerUiNoiseAfterEcho || /^[•・]\s*/.test(line.trim());
 
-		if (lineLooksLikeEcho) {
+		if (lineLooksLikeEcho && !lineLooksLikeWorkerResponse) {
 			promptEchoRemoved = true;
 			inPromptEcho = true;
 			continue;
 		}
 		if (
 			inPromptEcho &&
+			!lineLooksLikeWorkerResponse &&
 			((comparableLine.length >= 2 &&
 				normalizedInstruction.includes(comparableLine)) ||
 				(compactLine.length >= 2 && compactInstruction.includes(compactLine)))
