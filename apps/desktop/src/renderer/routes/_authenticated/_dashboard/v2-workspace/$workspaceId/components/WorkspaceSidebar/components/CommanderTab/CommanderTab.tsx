@@ -25,6 +25,7 @@ import {
 import { useCommanderWebview } from "./useCommanderWebview";
 import {
 	buildComposerReadinessScript,
+	buildInjectionWithSubmitScript,
 	detectProvider,
 	getProviderLabel,
 } from "./browser-adapters";
@@ -34,6 +35,7 @@ import {
 	sendSelectionToBrowserAI,
 } from "./commander-bridge";
 import {
+	buildSendHandoffLedgerPrompt,
 	generateWorkerPrompt,
 	generateReviewPrompt,
 	type HandoffGitSummary,
@@ -135,6 +137,29 @@ interface CommanderControllerAutoLoopPreflightResult
 	handoffMissingFields: string[];
 }
 
+type CommanderControllerSendHandoffStatus = "SENT" | "BLOCKED" | "FAILED";
+
+interface CommanderControllerSendHandoffResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerSendHandoffStatus;
+	activeTabId: string | null;
+	browserAiProvider: string;
+	browserAiReady: boolean;
+	browserAiSlotOk: boolean;
+	handoffLedgerLength: number;
+	promptLength: number;
+	blockers: string[];
+	warnings: string[];
+	message: string;
+	sentAt: string | null;
+	injectionResult: string | null;
+	browserAiComposer: CommanderControllerBrowserAiReadiness;
+	browserAiUrl: string;
+	browserAiSlotKey: string | null;
+	expectedBrowserAiSlotKey: string | null;
+	handoffMissingFields: string[];
+}
+
 interface CommanderControllerCommands {
 	version: "0.1";
 	workspaceId: string;
@@ -147,6 +172,9 @@ interface CommanderControllerCommands {
 	getHandoffLedger: () => CommanderControllerHandoffResult;
 	getAutoLoopPreflight: () => Promise<CommanderControllerAutoLoopPreflightResult>;
 	runAutoLoopPreflight: () => Promise<CommanderControllerAutoLoopPreflightResult>;
+	sendHandoffToBrowserAI: (
+		input?: unknown,
+	) => Promise<CommanderControllerSendHandoffResult>;
 }
 
 type CommanderControllerWindow = Window &
@@ -563,6 +591,145 @@ export function CommanderTab({
 			workspaceId,
 		]);
 
+	const sendHandoffToBrowserAiController =
+		useCallback(async (
+			_input?: unknown,
+		): Promise<CommanderControllerSendHandoffResult> => {
+			const blockers: string[] = [];
+			const warnings: string[] = [];
+			const activeTabIdSnapshot = activeTabId;
+			const runtime = webview.getRuntimeSnapshot();
+			const liveUrl = webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
+			const provider = detectProvider(liveUrl);
+			const expectedBrowserAiSlotKey = buildCommanderBrowserSlotKey({
+				workspaceId,
+				activeTabId: activeTabIdSnapshot,
+			});
+			const browserAiSlotOk =
+				Boolean(activeTabIdSnapshot) &&
+				runtime.browserSlotKey === expectedBrowserAiSlotKey &&
+				runtime.activeTabId === activeTabIdSnapshot;
+			const composerReadiness = await readBrowserAiComposerReadiness({
+				provider,
+				injectIntoPage: webview.injectIntoPage,
+			});
+			const handoffResult = buildHandoffLedgerController();
+			const ledger = handoffResult.ledger ?? "";
+			const handoffMissingFields = handoffResult.missingFields ?? [];
+			const handoffLedgerLength = ledger.length;
+			const handoffLedgerAvailable =
+				Boolean(handoffResult.ok && ledger.trim()) &&
+				handoffMissingFields.length === 0;
+			const browserAiReady =
+				Boolean(provider) &&
+				runtime.status === "available" &&
+				runtime.bridgeAvailable &&
+				composerReadiness.ready;
+
+			if (!activeTabIdSnapshot) blockers.push("active tab not found");
+			if (!provider) blockers.push("browser ai provider not ready");
+			if (runtime.status !== "available") {
+				blockers.push("browser ai runtime unavailable");
+			}
+			if (!runtime.bridgeAvailable) {
+				blockers.push("browser ai bridge unavailable");
+			}
+			if (provider && !composerReadiness.ready) {
+				blockers.push(`browser ai composer not ready: ${composerReadiness.reason}`);
+			}
+			if (!browserAiSlotOk) blockers.push("browser ai slot mismatch");
+			if (!handoffLedgerAvailable) {
+				blockers.push(
+					handoffMissingFields.length
+						? `handoff ledger missing fields: ${handoffMissingFields.join(", ")}`
+						: "handoff ledger unavailable",
+				);
+			}
+			if (!composerReadiness.submitButtonFound && composerReadiness.ready) {
+				warnings.push(
+					"browser ai submit button was not visible before injection; submit will be verified after prompt insertion",
+				);
+			}
+			if (runtime.visualStatus === "NEEDS_FIX") {
+				warnings.push(`browser ai visual status needs fix: ${runtime.visualReason}`);
+			}
+
+			const prompt = ledger.trim() ? buildSendHandoffLedgerPrompt(ledger) : "";
+			const baseResult = {
+				...getCommanderControllerContext(),
+				activeTabId: activeTabIdSnapshot,
+				browserAiProvider: runtime.providerLabel || getProviderLabel(provider),
+				browserAiReady,
+				browserAiSlotOk,
+				handoffLedgerLength,
+				promptLength: prompt.length,
+				blockers,
+				warnings,
+				sentAt: null,
+				injectionResult: null,
+				browserAiComposer: composerReadiness,
+				browserAiUrl: liveUrl,
+				browserAiSlotKey: runtime.browserSlotKey,
+				expectedBrowserAiSlotKey,
+				handoffMissingFields,
+			};
+
+			if (blockers.length > 0 || !provider) {
+				return {
+					ok: false,
+					...baseResult,
+					status: "BLOCKED",
+					message: getSendHandoffBlockedMessage(blockers),
+				};
+			}
+
+			try {
+				const result = await webview.injectIntoPage(
+					buildInjectionWithSubmitScript(prompt, provider),
+				);
+				const injectionResult = typeof result === "string" ? result : "unknown";
+				if (injectionResult === "submitted") {
+					return {
+						ok: true,
+						...baseResult,
+						status: "SENT",
+						message: `${getProviderLabel(provider)}にHandoff Ledgerを送信しました`,
+						sentAt: new Date().toISOString(),
+						injectionResult,
+					};
+				}
+				return {
+					ok: false,
+					...baseResult,
+					status: "FAILED",
+					message:
+						injectionResult === "injected"
+							? "Handoff Ledger was injected but not submitted"
+							: `Handoff Ledger submit failed: ${injectionResult}`,
+					injectionResult,
+				};
+			} catch (error) {
+				return {
+					ok: false,
+					...baseResult,
+					status: "FAILED",
+					message:
+						error instanceof Error
+							? `Handoff Ledger submit failed: ${error.message}`
+							: "Handoff Ledger submit failed",
+				};
+			}
+		}, [
+			activeTabId,
+			buildHandoffLedgerController,
+			getCommanderControllerContext,
+			webview.currentUrl,
+			webview.getLiveUrl,
+			webview.getRuntimeSnapshot,
+			webview.injectIntoPage,
+			workspaceId,
+		]);
+
 	useEffect(() => {
 		console.log(
 			"[S3.11] registerCommanderBridge with onAutoCaptureTrigger =",
@@ -603,6 +770,7 @@ export function CommanderTab({
 			getHandoffLedger: buildHandoffLedgerController,
 			getAutoLoopPreflight: getAutoLoopPreflightController,
 			runAutoLoopPreflight: getAutoLoopPreflightController,
+			sendHandoffToBrowserAI: sendHandoffToBrowserAiController,
 		};
 		target.__doydeckCommanderController = commands;
 		return () => {
@@ -617,6 +785,7 @@ export function CommanderTab({
 		setCommanderSessionController,
 		buildHandoffLedgerController,
 		getAutoLoopPreflightController,
+		sendHandoffToBrowserAiController,
 	]);
 
 	const currentProvider = detectProvider(webview.currentUrl);
@@ -1024,4 +1193,25 @@ function getAutoLoopPreflightNextAction(
 		return `Review warning before starting Auto Loop: ${firstWarning}`;
 	}
 	return "Auto Loop preflight passed. Start Auto Loop only if Doy has approved the Worker action.";
+}
+
+function getSendHandoffBlockedMessage(blockers: string[]): string {
+	const firstBlocker = blockers[0];
+	if (!firstBlocker) return "Handoff Ledger send blocked";
+	if (firstBlocker.includes("browser ai provider")) {
+		return "Select ChatGPT or Claude before sending the Handoff Ledger.";
+	}
+	if (firstBlocker.includes("composer")) {
+		return "Wait for the Browser AI composer before sending the Handoff Ledger.";
+	}
+	if (firstBlocker.includes("slot")) {
+		return "Confirm the active tab and Browser AI slot before sending the Handoff Ledger.";
+	}
+	if (firstBlocker.includes("handoff ledger")) {
+		return "Complete the Commander Session fields before sending the Handoff Ledger.";
+	}
+	if (firstBlocker.includes("active tab")) {
+		return "Select a DoyDeck task tab before sending the Handoff Ledger.";
+	}
+	return `Handoff Ledger send blocked: ${firstBlocker}`;
 }
