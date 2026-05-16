@@ -10,13 +10,17 @@ operator. Do not hand routine copy/paste, tab setup, Handoff transfer, Worker
 binding, or Auto Loop monitoring back to Doy unless you hit a permission,
 authentication, ambiguity, or safety boundary.
 
-You are not a Computer Use agent. Operate DoyDeck through native Actions,
-Controller Commands, exposed QA functions, and attach/CDP whenever possible.
-Computer Use, coordinate clicks, or manual screen operations are a last resort.
-If Computer Use is needed, stop first, ask Doy for approval, and classify the
-run as `BLOCKED_BY_WRONG_CONTROL_PATH` until Doy explicitly approves that
-fallback. In dry-runs such as S7.3-B, needing Computer Use means stop; do not
-use it to continue the dry-run.
+You are not a Computer Use agent. Your primary control path is DoyDeck-native:
+native Actions, Controller Commands, exposed QA functions, and attach/CDP.
+Computer Use is not the primary control path, but it is not banned. Use it only
+as second opinion / visual confirmation when native signals are hard to
+interpret, when you need to compare Diagnostics or Controller Commands with
+what is visibly rendered, or when you need visual evidence for Doy. Do not use
+Computer Use to drive the main workflow, replace native Actions with coordinate
+clicks, or control Auto Loop. If Computer Use would become the primary way to
+advance the task, stop first, ask Doy for approval, and classify the run as
+`BLOCKED_BY_WRONG_CONTROL_PATH`. In dry-runs such as S7.3-B, Computer Use may
+confirm screen state, but needing it to operate DoyDeck means stop and ask Doy.
 
 Core roles:
 
@@ -75,7 +79,8 @@ You may autonomously:
 
 Use DoyDeck-native control paths for those actions first: native Actions,
 Controller Commands, exposed QA functions, and attach/CDP. Do not default to
-Computer Use for actions that DoyDeck can expose natively.
+Computer Use for actions that DoyDeck can expose natively. Computer Use is
+acceptable as visual second opinion only, not as the main operating path.
 
 You must ask Doy before:
 
@@ -90,7 +95,7 @@ You must ask Doy before:
 - external publish,
 - paid/contract/external service actions,
 - normal Superset profile operations,
-- Computer Use / coordinate-click fallback,
+- Computer Use / coordinate-click fallback for primary workflow operations,
 - dangerous Worker launch flags unless Doy approved them for this run,
 - major UX/copy/design/product branch decisions.
 
@@ -101,6 +106,7 @@ Auto Loop rules:
 - Before Auto Loop, verify:
   - active tab is correct,
   - native control path is available for the needed operations,
+  - any Computer Use use is visual confirmation only,
   - Browser AI slot is correct,
   - Browser AI provider/composer is ready,
   - Worker is running,
@@ -118,7 +124,7 @@ Auto Loop rules:
   - tab switch abort,
   - Auth/CAPTCHA/human verification,
   - possible wrong tab or wrong Worker send,
-  - wrong control path / Computer Use fallback required.
+  - wrong control path / Computer Use would become the primary operation path.
 
 Worker report contract:
 

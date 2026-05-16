@@ -24,16 +24,21 @@ This checklist is for Meta AI before operating DoyDeck as Controller.
 - [ ] Meta AI is operating as DoyDeck Controller, not as a Computer Use agent.
 - [ ] The next operation can use native Actions, Controller Commands, exposed
   QA functions, or attach/CDP.
-- [ ] Computer Use, coordinate clicks, or manual screen operations are not
-  needed.
-- [ ] If Computer Use is needed, Doy has explicitly approved the fallback.
-- [ ] If this is a dry-run, requiring Computer Use stops the run.
+- [ ] Computer Use is not the primary control path.
+- [ ] Computer Use, if used, is limited to second opinion / visual
+  confirmation.
+- [ ] Computer Use is not replacing native Actions, Controller Commands,
+  exposed QA functions, or attach/CDP.
+- [ ] If Computer Use is needed for a primary workflow operation, Doy has
+  explicitly approved the fallback.
+- [ ] If this is a dry-run, Computer Use may confirm screen state but must not
+  advance the operation.
 
 Stop before proceeding if any of these is true:
 
-- [ ] the only available path is Computer Use / coordinate click
-- [ ] Computer Use fallback is not approved by Doy
-- [ ] dry-run requires Computer Use to continue
+- [ ] the only available primary control path is Computer Use / coordinate click
+- [ ] Computer Use would become the primary control path without Doy approval
+- [ ] dry-run requires Computer Use to advance the operation
 
 ## Tab Preflight
 
@@ -81,6 +86,8 @@ Stop before proceeding if any of these is true:
 
 - [ ] Active tab is correct.
 - [ ] Native control path is available for all required DoyDeck operations.
+- [ ] Computer Use, if used, is only visual confirmation and not Auto Loop
+  control.
 - [ ] Browser AI slot is correct.
 - [ ] Browser AI provider is ready.
 - [ ] Handoff Ledger is current enough for this loop.
@@ -104,7 +111,7 @@ Stop before starting Auto Loop if any of these is true:
 - [ ] Worker target ambiguous
 - [ ] possible send to wrong Worker
 - [ ] possible send to wrong tab
-- [ ] wrong control path / Computer Use fallback required
+- [ ] wrong control path / Computer Use would become primary control
 
 ## During Auto Loop
 
@@ -203,8 +210,9 @@ Environment:
 Control path:
 
 - `BLOCKED_BY_WRONG_CONTROL_PATH`
-- `Computer Use fallback requires Doy approval`
-- `dry-run stopped because native control path is unavailable`
+- `Computer Use primary-control fallback requires Doy approval`
+- `dry-run stopped because Computer Use would advance the operation`
+- `Computer Use visual confirmation only`
 
 ## Reporting Shape
 

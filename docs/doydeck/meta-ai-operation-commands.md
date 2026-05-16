@@ -14,11 +14,11 @@ The default is:
 - Doyにコピペや画面操作を戻すのは最後の手段。
 - Meta AIがDoyDeckへattachし、画面を読み、タブを作り、Handoffを作り、Browser AIへ送り、Workerをbindし、Auto Loopを監視する。
 - Meta AIはComputer Use agentではなく、DoyDeck Controllerとして動く。
-- DoyDeck操作は、native Actions、Controller Commands、exposed QA functions、attach経由の操作を優先する。
-- Computer Use、座標クリック、画面上の手操作は最後の手段。
-- Computer Useへfallbackする必要がある場合は、実行前にDoy確認を取る。
-- Computer Useへfallbackした場合は `BLOCKED_BY_WRONG_CONTROL_PATH` として記録する。
-- S7.3-Bのようなdry-runでは、Computer Useが必要になった時点で停止する。
+- DoyDeck操作のprimary control pathは、native Actions、Controller Commands、exposed QA functions、attach / CDP。
+- Computer Useはprimary control pathではなく、native signalだけでは判断しづらいUI状態のsecond opinion / visual confirmationとして扱う。
+- Computer Useで主要操作を進める必要がある場合は、実行前にDoy確認を取る。
+- Computer Useがprimary control pathになった場合は `BLOCKED_BY_WRONG_CONTROL_PATH` として記録する。
+- S7.3-Bのようなdry-runでは、Computer Useで画面状態確認だけ行うのはよいが、Computer Useで操作を進める必要が出た時点で停止する。
 - Browser AIが要件整理、レビュー、最終Worker指示生成を行う。
 - 作業側CC / Codexは実装、調査、検証を行う。
 - 今の作業者はCodex。
@@ -53,7 +53,7 @@ commands.
 | 操作名 | 目的 | 実行条件 | Meta AIが行うこと | Doy確認 | 失敗時の扱い |
 | --- | --- | --- | --- | --- | --- |
 | Doyから雑相談を受け取る | 作業材料を受け取る | Doyがメモ、違和感、要望を投げた | 全文を読み、前提、制約、判断待ちを抽出する | 不要 | 意味が分かれそうなら質問をまとめる |
-| native control pathを確認する | 誤った操作経路を防ぐ | DoyDeckを操作する前 | Actions / Controller Commands / exposed QA functions / attachで操作できるか確認する | Computer Useが必要なら必須 | Computer Useが必要なら`BLOCKED_BY_WRONG_CONTROL_PATH`で停止 |
+| native control pathを確認する | 誤った操作経路を防ぐ | DoyDeckを操作する前 | Actions / Controller Commands / exposed QA functions / attachで操作できるか確認する。Computer Useはvisual confirmationに限定する | Computer Useで主要操作を進める必要があるなら必須 | Computer Useがprimary control pathになるなら`BLOCKED_BY_WRONG_CONTROL_PATH`で停止 |
 | タスク候補に分解する | 混ざった相談を実行単位にする | 複数テーマが含まれる | タスク候補、優先度、依存関係を出す | 仕様分岐が大きければ必要 | 優先度が曖昧ならDoyへ確認 |
 | 1タスク1タブで作成する | コンテキスト混線を防ぐ | タスク単位が決まった | DoyDeck上でタブ作成/選択、短いタブ名を付ける | 不要 | タブ作成不可ならBLOCKED |
 | タブを選択する | 操作対象を固定する | 作業対象タブがある | active tabを該当タブへ切替、Diagnosticsで確認 | 不要 | active tab mismatchなら停止 |
@@ -145,7 +145,7 @@ Meta AIは以下を勝手に進めない。
 
 - 作業側CC / Codexの新規起動。
 - dangerous / bypass / skip permissions系コマンド。
-- Computer Use、座標クリック、画面上の手操作へのfallback。
+- Computer Use、座標クリック、画面上の手操作で主要操作を進めるfallback。
 - commit / push。
 - destructive操作。
 - DB / `local.db` / `app-state.json` 関連。
@@ -161,24 +161,41 @@ Read-only調査、screen observation、Diagnostics確認、Handoff生成、Brows
 AI送信、既存Workerへの安全な送信、QA report確認は、上記に触れない範囲でMeta
 AIが進めてよい。
 
-## 4.1 Native control path rule
+## 4.1 Native control path and Computer Use rule
 
 Meta AIは、DoyDeckを画面上の座標クリックで動かすComputer Use agentではない。
-DoyDeck Controllerとして、以下の順序で操作する。
+DoyDeck Controllerとして、主要操作は以下の順序で行う。
 
 1. DoyDeck-native Actions。
 2. Controller Commands。
 3. exposed QA functions。
 4. CDP / attach経由の観測と操作。
-5. それでも不可能な場合だけ、Doy確認後にComputer Use。
+5. それでも主要操作が不可能な場合だけ、Doy確認後にComputer Use。
 
-Computer Use、座標クリック、手動UI操作へfallbackする場合は、実行前にDoyへ確認する。
-承認前に実行しない。fallbackが必要になった時点で、そのrunは
+Computer Useは完全禁止ではない。以下の用途に限れば、native signalを補強する
+second opinionとして使ってよい。
+
+- native signalだけではUI状態が判断しづらい場合の確認。
+- 画面上の見え方のsecond opinion。
+- Diagnostics / Controller Commandsの結果とUI表示が一致しているかの確認。
+- Doyへ状況説明するための視覚的確認。
+
+避けること:
+
+- Computer Use主体でDoyDeck操作を進める。
+- 座標クリックで主要操作を行う。
+- native Actionsがあるのに画面クリックで代替する。
+- Doy確認なしに危険操作へ進む。
+- Computer UseをAuto Loopの主制御経路にする。
+
+Computer Useを使っただけではBLOCKEDにしない。visual confirmationに留まる場合は
+OKとして扱う。Computer Useがprimary control pathになった場合、またはComputer
+Useで主要操作を進める必要が出た場合は、実行前にDoyへ確認し、そのrunを
 `BLOCKED_BY_WRONG_CONTROL_PATH` として記録する。
 
-S7.3-Bのようなdry-runでは、Computer Useが必要になった時点で停止する。
-dry-runは「native経路だけでどこまで進めるか」を確認するためのものなので、
-Computer Useで無理に先へ進めない。
+S7.3-Bのようなdry-runでは、native operationで進める。Computer Useは画面状態確認の
+second opinionとしては使用可。ただし、Computer Useで操作を進める必要が出た場合は
+停止し、Doy確認を取る。
 
 ## 5. Worker起動コマンド候補
 
@@ -243,6 +260,7 @@ Auto Loop開始前に、Meta AIは以下を確認する。
 - [ ] active tabが正しい。
 - [ ] 1タスク1タブになっている。
 - [ ] native Actions / Controller Commands / exposed QA functions / attachで必要操作を実行できる。
+- [ ] Computer Useを使う場合もvisual confirmationに留まり、primary control pathになっていない。
 - [ ] Browser AI providerがChatGPTまたはClaude。
 - [ ] Browser AI composerがready。
 - [ ] Browser AI slotがactive tabに対応している。
@@ -267,7 +285,8 @@ Auto Loop開始前に、Meta AIは以下を確認する。
 - Browser slot mismatch。
 - Worker target ambiguous。
 - terminal is shell, not Worker。
-- Computer Use fallbackが必要だがDoy未承認。
+- Computer Useで主要操作を進める必要があるがDoy未承認。
+- Computer UseがAuto Loopの主制御経路になりそう。
 - dangerous操作がWorker指示に含まれるがDoy未承認。
 
 ## 8. 実運用シナリオ
@@ -371,7 +390,7 @@ S7.1 runbook作成では以下をしない。
 - public-site / LP / スライド / 画像生成。
 - Doy確認なしのcommit / push。
 - Doy確認なしのdestructive操作。
-- Doy確認なしのComputer Use / 座標クリック / 画面操作。
+- Doy確認なしにComputer Use / 座標クリック / 画面操作で主要操作を進めること。
 
 ## 10. 関連docs
 
