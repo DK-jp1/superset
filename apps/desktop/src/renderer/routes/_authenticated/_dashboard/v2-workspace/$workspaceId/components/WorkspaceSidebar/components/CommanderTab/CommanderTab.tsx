@@ -13,6 +13,7 @@ import {
 } from "renderer/stores/doydeck-worker-bindings";
 import { useTabsStore } from "renderer/stores/tabs/store";
 import {
+	getOutputLogOffset,
 	getOutputLogSince,
 	getTerminalOutputSnapshot,
 } from "renderer/screens/main/components/WorkspaceView/ContentView/TabsContent/Terminal/v1-terminal-cache";
@@ -243,6 +244,17 @@ interface CommanderControllerSendInstructionResult
 	preflightWarnings: string[];
 }
 
+interface CommanderControllerLastWorkerInstructionMarker {
+	paneId: string;
+	terminalId: string | null;
+	sentAt: string;
+	instruction: string;
+	instructionHash: string;
+	instructionPreview: string;
+	instructionLength: number;
+	outputOffsetBeforeSend: number;
+}
+
 type CommanderControllerBoundWorkerOutputStatus =
 	| "READY"
 	| "WAITING"
@@ -257,9 +269,12 @@ interface CommanderControllerBoundWorkerLatestResponseResult
 	terminalId: string | null;
 	workerType: string;
 	workerIdentityOk: boolean;
+	rawOutputText: string;
 	outputText: string;
 	screenText: string;
 	viewportText: string;
+	deltaText: string;
+	analyzedResponseText: string;
 	latestResponseText: string;
 	latestResponseLength: number;
 	isRunning: boolean;
@@ -269,6 +284,11 @@ interface CommanderControllerBoundWorkerLatestResponseResult
 	hasGitOperationSignal: boolean;
 	receivedInstructionAck: boolean;
 	summary: string;
+	promptEchoRemoved: boolean;
+	usedLastSendMarker: boolean;
+	lastInstructionSentAt: string | null;
+	lastInstructionLength: number;
+	analysisWarnings: string[];
 	blockers: string[];
 	warnings: string[];
 	message: string;
@@ -331,6 +351,8 @@ export function CommanderTab({
 		requireBoundWorkerForAutoLoop,
 		setRequireBoundWorkerForAutoLoop,
 	] = useState(true);
+	const lastWorkerInstructionMarkerRef =
+		useRef<CommanderControllerLastWorkerInstructionMarker | null>(null);
 
 	const workerPrompt = useMemo(
 		() => generateWorkerPrompt(state),
@@ -1174,6 +1196,7 @@ export function CommanderTab({
 			}
 
 			try {
+				const outputOffsetBeforeSend = getOutputLogOffset(targetPaneId);
 				const ok = await sendToTerminal(targetPaneId, instruction, {
 					submit: true,
 				});
@@ -1185,12 +1208,23 @@ export function CommanderTab({
 						message: "terminal submit failed",
 					};
 				}
+				const sentAt = new Date().toISOString();
+				lastWorkerInstructionMarkerRef.current = {
+					paneId: targetPaneId,
+					terminalId: preflight.terminalId,
+					sentAt,
+					instruction,
+					instructionHash: hashControllerText(instruction),
+					instructionPreview: instruction.slice(0, 240),
+					instructionLength: instruction.length,
+					outputOffsetBeforeSend,
+				};
 				return {
 					ok: true,
 					...baseResult,
 					status: "SENT",
 					message: `Instruction sent to ${workerType} worker`,
-					sentAt: new Date().toISOString(),
+					sentAt,
 				};
 			} catch (error) {
 				return {
@@ -1240,17 +1274,19 @@ export function CommanderTab({
 				preflightBlockers: preflight.blockers,
 				preflightWarnings: preflight.warnings,
 			};
+			const lastInstructionMarker =
+				targetPaneId && lastWorkerInstructionMarkerRef.current?.paneId === targetPaneId
+					? lastWorkerInstructionMarkerRef.current
+					: null;
+			const emptyOutputFields =
+				getEmptyBoundWorkerOutputFields(lastInstructionMarker);
 
 			if (blockers.length > 0) {
 				return {
 					ok: false,
 					...baseResult,
 					status: "BLOCKED",
-					outputText: "",
-					screenText: "",
-					viewportText: "",
-					latestResponseText: "",
-					latestResponseLength: 0,
+					...emptyOutputFields,
 					isRunning: false,
 					hasError: false,
 					hasToolUse: false,
@@ -1269,11 +1305,7 @@ export function CommanderTab({
 					ok: false,
 					...baseResult,
 					status: "FAILED",
-					outputText: "",
-					screenText: "",
-					viewportText: "",
-					latestResponseText: "",
-					latestResponseLength: 0,
+					...emptyOutputFields,
 					isRunning: false,
 					hasError: false,
 					hasToolUse: false,
@@ -1294,11 +1326,7 @@ export function CommanderTab({
 					ok: false,
 					...baseResult,
 					status: "FAILED",
-					outputText: "",
-					screenText: "",
-					viewportText: "",
-					latestResponseText: "",
-					latestResponseLength: 0,
+					...emptyOutputFields,
 					isRunning: false,
 					hasError: false,
 					hasToolUse: false,
@@ -1313,14 +1341,25 @@ export function CommanderTab({
 				};
 			}
 
+			const rawOutputText = normalizeWorkerOutputText(snapshot.text);
 			const outputText = normalizeWorkerOutputText(snapshot.outputText);
 			const screenText = normalizeWorkerOutputText(snapshot.screenText);
 			const viewportText = normalizeWorkerOutputText(snapshot.viewportText);
-			const latestResponseText = getLatestBoundWorkerResponseText({
+			const extractedResponse = extractBoundWorkerResponseForAnalysis({
 				outputText,
 				screenText,
 				viewportText,
+				paneId: targetPaneId,
+				lastInstructionMarker,
 			});
+			const {
+				deltaText,
+				analyzedResponseText,
+				promptEchoRemoved,
+				usedLastSendMarker,
+				analysisWarnings,
+			} = extractedResponse;
+			const latestResponseText = analyzedResponseText;
 			const analysis = analyzeBoundWorkerOutput(latestResponseText);
 
 			if (!latestResponseText.trim()) {
@@ -1329,9 +1368,12 @@ export function CommanderTab({
 					ok: false,
 					...baseResult,
 					status: "WAITING",
+					rawOutputText,
 					outputText,
 					screenText,
 					viewportText,
+					deltaText,
+					analyzedResponseText: "",
 					latestResponseText: "",
 					latestResponseLength: 0,
 					isRunning: false,
@@ -1341,6 +1383,11 @@ export function CommanderTab({
 					hasGitOperationSignal: false,
 					receivedInstructionAck: false,
 					summary: "No bound worker output has been captured yet.",
+					promptEchoRemoved,
+					usedLastSendMarker,
+					lastInstructionSentAt: lastInstructionMarker?.sentAt ?? null,
+					lastInstructionLength: lastInstructionMarker?.instructionLength ?? 0,
+					analysisWarnings,
 					blockers,
 					warnings,
 					message: getBoundWorkerLatestResponseMessage("WAITING", blockers, warnings),
@@ -1353,9 +1400,12 @@ export function CommanderTab({
 					ok: false,
 					...baseResult,
 					status: "WAITING",
+					rawOutputText,
 					outputText,
 					screenText,
 					viewportText,
+					deltaText,
+					analyzedResponseText,
 					latestResponseText,
 					latestResponseLength: latestResponseText.length,
 					isRunning: analysis.isRunning,
@@ -1365,6 +1415,11 @@ export function CommanderTab({
 					hasGitOperationSignal: analysis.hasGitOperationSignal,
 					receivedInstructionAck: analysis.receivedInstructionAck,
 					summary: getBoundWorkerLatestResponseSummary(analysis, latestResponseText),
+					promptEchoRemoved,
+					usedLastSendMarker,
+					lastInstructionSentAt: lastInstructionMarker?.sentAt ?? null,
+					lastInstructionLength: lastInstructionMarker?.instructionLength ?? 0,
+					analysisWarnings,
 					blockers,
 					warnings,
 					message: "Bound worker still appears to be running",
@@ -1385,9 +1440,12 @@ export function CommanderTab({
 				ok: true,
 				...baseResult,
 				status: "READY",
+				rawOutputText,
 				outputText,
 				screenText,
 				viewportText,
+				deltaText,
+				analyzedResponseText,
 				latestResponseText,
 				latestResponseLength: latestResponseText.length,
 				isRunning: analysis.isRunning,
@@ -1397,6 +1455,11 @@ export function CommanderTab({
 				hasGitOperationSignal: analysis.hasGitOperationSignal,
 				receivedInstructionAck: analysis.receivedInstructionAck,
 				summary: getBoundWorkerLatestResponseSummary(analysis, latestResponseText),
+				promptEchoRemoved,
+				usedLastSendMarker,
+				lastInstructionSentAt: lastInstructionMarker?.sentAt ?? null,
+				lastInstructionLength: lastInstructionMarker?.instructionLength ?? 0,
+				analysisWarnings,
 				blockers,
 				warnings,
 				message: getBoundWorkerLatestResponseMessage("READY", blockers, warnings),
@@ -2081,6 +2144,41 @@ interface BoundWorkerOutputAnalysis {
 	isIdleOrReady: boolean;
 }
 
+function getEmptyBoundWorkerOutputFields(
+	lastInstructionMarker: CommanderControllerLastWorkerInstructionMarker | null,
+): Pick<
+	CommanderControllerBoundWorkerLatestResponseResult,
+	| "rawOutputText"
+	| "outputText"
+	| "screenText"
+	| "viewportText"
+	| "deltaText"
+	| "analyzedResponseText"
+	| "latestResponseText"
+	| "latestResponseLength"
+	| "promptEchoRemoved"
+	| "usedLastSendMarker"
+	| "lastInstructionSentAt"
+	| "lastInstructionLength"
+	| "analysisWarnings"
+> {
+	return {
+		rawOutputText: "",
+		outputText: "",
+		screenText: "",
+		viewportText: "",
+		deltaText: "",
+		analyzedResponseText: "",
+		latestResponseText: "",
+		latestResponseLength: 0,
+		promptEchoRemoved: false,
+		usedLastSendMarker: Boolean(lastInstructionMarker),
+		lastInstructionSentAt: lastInstructionMarker?.sentAt ?? null,
+		lastInstructionLength: lastInstructionMarker?.instructionLength ?? 0,
+		analysisWarnings: [],
+	};
+}
+
 function normalizeWorkerOutputText(text: string): string {
 	return text
 		.replace(/\x1B\][^\x07]*(?:\x07|\x1B\\)/g, "")
@@ -2093,22 +2191,192 @@ function normalizeWorkerOutputText(text: string): string {
 		.trim();
 }
 
+function hashControllerText(text: string): string {
+	const normalized = text.replace(/\s+/g, " ").trim();
+	let hash = 0;
+	for (let i = 0; i < normalized.length; i += 1) {
+		hash = (Math.imul(31, hash) + normalized.charCodeAt(i)) | 0;
+	}
+	return `${normalized.length}:${Math.abs(hash).toString(36)}:${normalized.slice(0, 80)}`;
+}
+
 function limitWorkerOutputText(text: string, maxLength = 50_000): string {
 	if (text.length <= maxLength) return text;
 	return text.slice(text.length - maxLength);
 }
 
-function getLatestBoundWorkerResponseText(texts: {
+function extractBoundWorkerResponseForAnalysis(params: {
 	outputText: string;
 	screenText: string;
 	viewportText: string;
-}): string {
+	paneId: string;
+	lastInstructionMarker: CommanderControllerLastWorkerInstructionMarker | null;
+}): {
+	deltaText: string;
+	analyzedResponseText: string;
+	promptEchoRemoved: boolean;
+	usedLastSendMarker: boolean;
+	analysisWarnings: string[];
+} {
+	const { outputText, screenText, viewportText, paneId, lastInstructionMarker } =
+		params;
+	const usedLastSendMarker =
+		Boolean(lastInstructionMarker) && lastInstructionMarker?.paneId === paneId;
+	const analysisWarnings: string[] = [];
+	if (usedLastSendMarker && lastInstructionMarker) {
+		const deltaText = normalizeWorkerOutputText(
+			getOutputLogSince(paneId, lastInstructionMarker.outputOffsetBeforeSend),
+		);
+		const stripped = stripBoundWorkerPromptEcho(
+			deltaText,
+			lastInstructionMarker.instruction,
+		);
+		const focused = focusBoundWorkerResponseText(stripped.text);
+		if (stripped.promptEchoRemoved) {
+			analysisWarnings.push("prompt echo removed from worker output analysis");
+		}
+		if (focused.responseFocused) {
+			analysisWarnings.push("worker response focused from output delta");
+		}
+		if (focused.uiNoiseRemoved) {
+			analysisWarnings.push("worker UI noise removed from response analysis");
+		}
+		if (!focused.text.trim()) {
+			analysisWarnings.push("worker output delta contains no response after prompt echo removal");
+		}
+		return {
+			deltaText,
+			analyzedResponseText: limitWorkerOutputText(focused.text.trim()),
+			promptEchoRemoved: stripped.promptEchoRemoved,
+			usedLastSendMarker,
+			analysisWarnings,
+		};
+	}
 	const candidates = [
-		texts.viewportText,
-		texts.screenText,
-		texts.outputText,
+		viewportText,
+		screenText,
+		outputText,
 	].map((value) => limitWorkerOutputText(value.trim()));
-	return candidates.find((value) => value.length > 0) ?? "";
+	const fallbackText = candidates.find((value) => value.length > 0) ?? "";
+	if (!lastInstructionMarker) {
+		analysisWarnings.push("last worker instruction marker unavailable; using visible output fallback");
+	}
+	return {
+		deltaText: "",
+		analyzedResponseText: fallbackText,
+		promptEchoRemoved: false,
+		usedLastSendMarker,
+		analysisWarnings,
+	};
+}
+
+function focusBoundWorkerResponseText(text: string): {
+	text: string;
+	responseFocused: boolean;
+	uiNoiseRemoved: boolean;
+} {
+	const trimmed = text.trim();
+	if (!trimmed) {
+		return { text: "", responseFocused: false, uiNoiseRemoved: false };
+	}
+	const responseStartPatterns = [
+		/<<<DOYDECK_WORKER_RESPONSE_START>>>/i,
+		/受信確認/,
+		/確認しました/,
+		/了解しました/,
+		/やったこと/,
+		/完了報告/,
+		/DOYDECK_BOUND_WORKER_SEND_TEST_OK/,
+		/\backnowledged\b/i,
+		/\breceived\b/i,
+	];
+	const responseStart = responseStartPatterns
+		.map((pattern) => {
+			const match = pattern.exec(trimmed);
+			return match?.index ?? -1;
+		})
+		.filter((index) => index >= 0)
+		.sort((a, b) => a - b)[0] ?? -1;
+	let focused = responseStart >= 0 ? trimmed.slice(responseStart) : trimmed;
+	const beforeNoiseTrim = focused;
+	const trailingNoisePatterns = [
+		/›\s*Write tests for @filename/i,
+		/gpt-\d(?:\.\d+)?\s+\w+\s+·\s+~?\/[^\n]+/i,
+		/•\s*Working\([^)]*\)/i,
+	];
+	for (const pattern of trailingNoisePatterns) {
+		const match = pattern.exec(focused);
+		if (match?.index && match.index > 0) {
+			focused = focused.slice(0, match.index).trim();
+		}
+	}
+	return {
+		text: focused,
+		responseFocused: responseStart >= 0,
+		uiNoiseRemoved: focused !== beforeNoiseTrim,
+	};
+}
+
+function stripBoundWorkerPromptEcho(
+	text: string,
+	instruction: string,
+): { text: string; promptEchoRemoved: boolean } {
+	const normalizedInstruction = normalizeWorkerInstructionForComparison(instruction);
+	const compactInstruction = compactWorkerInstructionForComparison(instruction);
+	let promptEchoRemoved = false;
+	const keptLines: string[] = [];
+	let inPromptEcho = false;
+
+	for (const line of text.split("\n")) {
+		const comparableLine = normalizeWorkerInstructionForComparison(
+			line.replace(/^[›>]\s*/, ""),
+		);
+		const compactLine = compactWorkerInstructionForComparison(
+			line.replace(/^[›>]\s*/, ""),
+		);
+		const lineLooksLikeEcho =
+			comparableLine.length >= 8 &&
+			(normalizedInstruction.includes(comparableLine) ||
+				comparableLine.includes(normalizedInstruction.slice(0, 80)) ||
+				(compactLine.length >= 8 && compactInstruction.includes(compactLine)) ||
+				(compactLine.length >= 80 &&
+					compactLine.includes(compactInstruction.slice(0, 80))));
+
+		if (lineLooksLikeEcho) {
+			promptEchoRemoved = true;
+			inPromptEcho = true;
+			continue;
+		}
+		if (
+			inPromptEcho &&
+			((comparableLine.length >= 2 &&
+				normalizedInstruction.includes(comparableLine)) ||
+				(compactLine.length >= 2 && compactInstruction.includes(compactLine)))
+		) {
+			promptEchoRemoved = true;
+			continue;
+		}
+		if (line.trim()) inPromptEcho = false;
+		keptLines.push(line);
+	}
+
+	return {
+		text: keptLines.join("\n").trim(),
+		promptEchoRemoved,
+	};
+}
+
+function normalizeWorkerInstructionForComparison(text: string): string {
+	return normalizeWorkerOutputText(text)
+		.replace(/[┃│╭╮╰╯─]/g, " ")
+		.replace(/[›>]\s*/g, " ")
+		.replace(/\s+/g, " ")
+		.trim()
+		.toLowerCase();
+}
+
+function compactWorkerInstructionForComparison(text: string): string {
+	return normalizeWorkerInstructionForComparison(text).replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
 function analyzeBoundWorkerOutput(text: string): BoundWorkerOutputAnalysis {
