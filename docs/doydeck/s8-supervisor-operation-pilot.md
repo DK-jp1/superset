@@ -32,7 +32,7 @@ Goals:
 - Doyのコピペ仲介を減らす。
 - Browser AIと作業側Codex/CCの通常ループを安全条件付きで回す。
 - Doyは最終判断、危険操作、仕様判断、UX判断だけを見る。
-- Meta AIは既存Controller chainを監視、操作、分類、記録する。
+- Meta AIは既存Controller chainを監視、状態確認、分類、介入判断、記録する。
 - 低リスクタスクで、1タスク1タブの運用が混線しないことを確認する。
 
 Important non-goal:
@@ -76,8 +76,8 @@ Auto Loopを手動再現する通常運用ではない。
 10. `buildHandoffLedger()`
    - 記録済みoutcomeと現在live状態を分けてHandoff Ledgerへ反映する。
 
-S8のMeta AIは、この流れを操作するControllerであり、作業側Codex/CCの代わりに
-実装作業を行うわけではない。
+S8のMeta AIは、この流れを監視し、必要時に介入判断するSupervisorであり、
+作業側Codex/CCの代わりに実装作業を行うわけではない。
 
 ### Smoke検証と実運用Supervisorの違い
 
@@ -93,7 +93,8 @@ Smoke検証:
 
 - Meta AIはAuto Loop本体を再実装しない。
 - Meta AIはsend/read系accessorをAuto Loop代替として毎回手動実行しない。
-- 既存Auto Loop / Controller chainのlive状態、結果、stop reasonを監視する。
+- 既存Auto Loop / Controller chainのlive状態、結果、stop reasonを監視、確認し、
+  必要時の介入判断につなげる。
 - preflight確認、状態確認、返答分類、Doy確認境界の検出、Handoff記録を担当する。
 - 2ターン以上に進む場合も、必ず`maxTurns`とstop conditionを持つ。
 
@@ -389,8 +390,8 @@ Priority G: 作業側CC smoke
 
 S8は、新しいAuto Loopを作る段階ではない。
 
-S7で通ったDoyDeck-nativeなcontroller chainを、Meta AIが安全に監視、操作、停止、
-記録するための運用pilotである。
+S7で通ったDoyDeck-nativeなcontroller chainを、Meta AIが安全に監視、確認、
+介入判断、記録するための運用pilotである。
 
 最初の成功は小さくてよい。Doyがコピペしない、低リスクな1タスク1タブで1往復が
 通る、危険操作で止まる、Handoff Ledgerに結果が残る。この4点がS8 v0.1の核になる。

@@ -11,7 +11,7 @@ Scope boundary:
 - DoyDeck本体開発は、外側環境 / 普通のSuperset / 作業側Codex・CCで進める。
 - DoyDeck safe-devは、Controller chain / Meta AI連携の検証と実運用pilotに使う。
 - Meta AIはAuto Loopを作り直さず、既存Auto Loop / Controller chainの状態、結果、
-  stop reasonを監視、分類、記録する。
+  stop reasonを監視、確認し、介入判断と記録を行う。
 
 ## 1. S8の目的
 
@@ -21,7 +21,8 @@ S8の目的は、Doyが毎回コピペでBrowser AIと作業側Codex/CCの間を
 Core goals:
 
 - Doyの手動コピペ仲介を減らす。
-- 既存Auto Loop / Controller chainを再実装せず、Meta AIが監視、判断、記録する。
+- 既存Auto Loop / Controller chainを再実装せず、Meta AIが監視、確認、介入判断、
+  記録を行う。
 - Browser AIと作業側Codex/CCの低リスク作業をpilot運用できるようにする。
 - Doyは危険操作、仕様判断、UX判断、最終判断に集中する。
 - Meta AIはpreflight、状態確認、返答分類、Doy確認境界検出、Handoff記録を担当する。
@@ -101,7 +102,7 @@ Clarified:
 
 - 手動controller chain smokeは部品検証 / pilot検証。
 - 実運用Supervisorは既存Auto Loop / Controller chainの状態、結果、stop reasonを
-  監視する。
+  監視、確認し、必要時の介入判断につなげる。
 - 2ターン以上でもmaxTurnsとstop conditionを必ず持つ。
 
 ### S8.3-C: Codex instruction extraction boundary fix
@@ -193,7 +194,7 @@ Important:
 - このflowはDoyDeck-nativeなcontroller chainとして確認済み。
 - S8 smokeではAuto Loop本体は開始していない。
 - 実運用では、Meta AIはAuto Loopを再実装せず、既存Auto Loop / Controller chainの
-  状態、結果、stop reasonを監視する。
+  状態、結果、stop reasonを監視、確認し、介入判断する。
 
 ## 4. 主要な到達点
 
@@ -326,7 +327,7 @@ Browser AI -> 作業側Codex -> Browser AI -> STOP記録までの低リスク1�
 ことを確認した。
 
 まだ完全自律ではない。Meta AIはAuto Loopを再実装せず、既存Auto Loop /
-Controller chainを監視、分類、記録するpilot段階にいる。
+Controller chainを監視、確認し、介入判断と記録を行うpilot段階にいる。
 
 ただし、ready復旧、Handoff送信、Codex指示抽出、bound Codex送信、Codex返答取得、
 Browser AI返送、STOP分類、Handoff記録までがDoyDeck-nativeに揃い始めたため、
