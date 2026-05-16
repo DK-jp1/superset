@@ -9,8 +9,8 @@ Status: S7.25 checkpoint後の整理。対象branch:
 ## 1. 一言でいうと
 
 DoyDeckは、Superset風の作業環境にBrowser AI、作業側Codex/CC、Meta AI、
-Handoff Ledger、Controller chainを足して、AI作業を1タスク1タブで進めるための
-作業コックピット。
+Handoff Ledger、Controller chainを足して、AI作業の状態管理、受け渡し、検証、
+記録を1タスク1タブで進めるための作業OS。
 
 通常Supersetが「プロジェクト、ファイル、ターミナル、ブラウザを人間が操作する
 作業環境」だとすると、DoyDeckは「Browser AIで壁打ちし、作業側Workerへ渡し、
@@ -43,6 +43,12 @@ DoyDeckは、通常Supersetの作業面を土台に、AI作業の循環を明示
 - Auto Loopは盲目的な自動化ではなく、Meta AIが監視する作業ループにする。
 - Computer Useはprimary操作経路ではなく、visual second opinionに限定する。
 - Doyのコピペ仲介を減らし、状態確認/送受信/結果分類をDoyDeck-nativeにする。
+
+「エージェントチームを組めばよい」だけでは、指示、実行結果、レビュー、停止判断、
+再開に必要な状態がチャットやターミナルに分散しやすい。DoyDeckの価値はAIの人数を
+増やすことではなく、Browser AI、作業側Codex、作業側CC、Meta AI、Doyの役割を
+同じ作業面に載せ、Handoff Ledger、Controller chain、preflight、worker identity
+guardで安全に受け渡し、検証、記録できる状態にすること。
 
 ## 3. UI / 作業体験の差分
 
@@ -211,6 +217,12 @@ DoyDeckでは、この流れを1タスク1タブのController chainにする。
 人間が毎回コピペするのではなく、Meta AIがDoyDeck Controllerとしてこの循環を
 進める。ただし、Doy判断が必要な境界では止まる。
 
+この役割分離は、バイアス分離でもある。Browser AIは要件整理とレビュー、作業側
+Codex/CCは実装や調査、Meta AIは状態確認、preflight、分類、介入判断、記録、Doyは
+最終判断を担当する。1つのAIが自分の指示と実行結果をそのまま自己承認するのではなく、
+相談、実行、レビュー、停止判断を分けることで、思い込みや流れ作業のまま進むリスクを
+下げる。
+
 ## 5. S7で追加されたController Chain
 
 S7で、`window.__doydeckCommanderController` がMeta AI向けの高レベル操作面になった。
@@ -356,8 +368,8 @@ Browser AIへHandoff送信
 ### 10秒説明
 
 DoyDeckは、Superset風の作業環境にBrowser AI、作業側Codex/CC、Meta AI、
-Handoff Ledger、Controller chainを足して、AI作業を1タスク1タブで進める
-作業コックピットです。
+Handoff Ledger、Controller chainを足して、AI作業の状態管理、受け渡し、検証、
+記録を1タスク1タブで進める作業OSです。
 
 ### 30秒説明
 
@@ -371,16 +383,17 @@ STOPや次指示を判断します。最後にHandoff Ledgerへ状態を残す�
 
 DoyDeckは、通常Supersetのプロジェクト/ファイル/ターミナル/ブラウザ作業面を
 土台に、AI作業用の役割分離と制御経路を追加したものです。Doyは最終判断者、
-Meta AIはDoyDeck Controller、Browser AIは要件レビューと最終Worker指示生成、
-作業側Codex/CCは実装や調査を担当します。
+Meta AIは状態確認と介入判断を行うController、Browser AIは要件レビューと
+最終Worker指示生成、作業側Codex/CCは実装や調査を担当します。
 
 Meta AIはDoyDeck-nativeなController Commandsで、HandoffをBrowser AIへ送り、
 Browser AI返答を読み、bound Codexへ指示を送り、Codex返答をBrowser AIへ返し、
 Browser AIのレビューからSTOP、次Codex指示、Doy確認事項を分類します。結果は
 Handoff Ledgerへ記録されます。
 
-つまりDoyDeckは、AIに作業を頼む前後の「相談、指示、実行、レビュー、記録」を
-一画面の作業ループにするためのDoy向け作業OSです。
+つまりDoyDeckは、AIに作業を頼む前後の「相談、指示、実行、レビュー、検証、記録」を
+一画面の作業ループにするためのDoy向け作業OSです。単なるエージェントチームではなく、
+AI作業を安全に進めるための状態管理と受け渡しの環境です。
 
 ## 10. 今後の優先候補
 
@@ -410,9 +423,9 @@ Handoff Ledgerへ記録されます。
 1. DoyDeckは1タスク1タブでAI作業文脈を分離する。
 2. Browser AIを要件レビュー/最終Worker指示生成役として組み込む。
 3. 作業側Codex/CCをrecognized workerとしてbindする。
-4. Meta AIがDoyDeck Controllerとして操作する。
+4. Meta AIがDoyDeck Controllerとして状態確認と介入判断を行う。
 5. Handoff Ledgerで目的、現在地、決定、QA、Outcomeを残す。
-6. Browser AIとWorkerの1往復review chainをcontroller化した。
+6. Browser AIとWorkerの1往復review chainをcontroller化し、Doyの手動コピペを減らす。
 7. Worker identity guardでshell/unknownへの誤送信を防ぐ。
 8. Preflight / blockers / warningsで失敗理由を分類する。
 9. Computer Useを主操作ではなくvisual second opinionに限定する。
