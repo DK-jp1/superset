@@ -243,6 +243,41 @@ interface CommanderControllerSendInstructionResult
 	preflightWarnings: string[];
 }
 
+type CommanderControllerBoundWorkerOutputStatus =
+	| "READY"
+	| "WAITING"
+	| "BLOCKED"
+	| "FAILED";
+
+interface CommanderControllerBoundWorkerLatestResponseResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerBoundWorkerOutputStatus;
+	activeTabId: string | null;
+	paneId: string | null;
+	terminalId: string | null;
+	workerType: string;
+	workerIdentityOk: boolean;
+	outputText: string;
+	screenText: string;
+	viewportText: string;
+	latestResponseText: string;
+	latestResponseLength: number;
+	isRunning: boolean;
+	hasError: boolean;
+	hasToolUse: boolean;
+	hasFileChangeSignal: boolean;
+	hasGitOperationSignal: boolean;
+	receivedInstructionAck: boolean;
+	summary: string;
+	blockers: string[];
+	warnings: string[];
+	message: string;
+	readAt: string | null;
+	preflightStatus: CommanderControllerPreflightStatus;
+	preflightBlockers: string[];
+	preflightWarnings: string[];
+}
+
 interface CommanderControllerCommands {
 	version: "0.1";
 	workspaceId: string;
@@ -263,6 +298,8 @@ interface CommanderControllerCommands {
 	sendInstructionToBoundWorker: (
 		input: CommanderControllerSendInstructionInput,
 	) => Promise<CommanderControllerSendInstructionResult>;
+	readBoundWorkerLatestResponse: () => Promise<CommanderControllerBoundWorkerLatestResponseResult>;
+	getBoundWorkerLatestOutput: () => Promise<CommanderControllerBoundWorkerLatestResponseResult>;
 }
 
 type CommanderControllerWindow = Window &
@@ -1168,6 +1205,205 @@ export function CommanderTab({
 			}
 		}, [activeTabId, getAutoLoopPreflightController, getCommanderControllerContext]);
 
+	const readBoundWorkerLatestResponseController =
+		useCallback(async (): Promise<CommanderControllerBoundWorkerLatestResponseResult> => {
+			const blockers: string[] = [];
+			const warnings: string[] = [];
+			const preflight = await getAutoLoopPreflightController();
+			const targetPaneId = preflight.workerPaneId;
+			const workerType = preflight.workerType;
+			const workerTypeAllowed = workerType === "codex" || workerType === "claude";
+
+			if (!preflight.activeTabId) blockers.push("active tab not found");
+			if (preflight.workerBindingStatus === "stale") {
+				blockers.push("bound worker stale");
+			} else if (!preflight.workerBound) {
+				blockers.push("worker binding required");
+			}
+			if (!preflight.workerIdentityOk) {
+				blockers.push(...preflight.workerIdentityBlockers);
+			}
+			if (!workerTypeAllowed) {
+				blockers.push(`worker type is not allowed: ${workerType || "unknown"}`);
+			}
+			if (!targetPaneId) blockers.push("bound worker paneId not found");
+			warnings.push(...preflight.warnings.map((warning) => `preflight: ${warning}`));
+
+			const baseResult = {
+				...getCommanderControllerContext(),
+				activeTabId: preflight.activeTabId,
+				paneId: targetPaneId,
+				terminalId: preflight.terminalId,
+				workerType,
+				workerIdentityOk: preflight.workerIdentityOk,
+				preflightStatus: preflight.status,
+				preflightBlockers: preflight.blockers,
+				preflightWarnings: preflight.warnings,
+			};
+
+			if (blockers.length > 0) {
+				return {
+					ok: false,
+					...baseResult,
+					status: "BLOCKED",
+					outputText: "",
+					screenText: "",
+					viewportText: "",
+					latestResponseText: "",
+					latestResponseLength: 0,
+					isRunning: false,
+					hasError: false,
+					hasToolUse: false,
+					hasFileChangeSignal: false,
+					hasGitOperationSignal: false,
+					receivedInstructionAck: false,
+					summary: "Bound worker output read blocked.",
+					blockers,
+					warnings,
+					message: getBoundWorkerLatestResponseMessage("BLOCKED", blockers, warnings),
+					readAt: null,
+				};
+			}
+			if (!targetPaneId) {
+				return {
+					ok: false,
+					...baseResult,
+					status: "FAILED",
+					outputText: "",
+					screenText: "",
+					viewportText: "",
+					latestResponseText: "",
+					latestResponseLength: 0,
+					isRunning: false,
+					hasError: false,
+					hasToolUse: false,
+					hasFileChangeSignal: false,
+					hasGitOperationSignal: false,
+					receivedInstructionAck: false,
+					summary: "Bound worker paneId was unavailable after safety checks.",
+					blockers,
+					warnings,
+					message: "bound worker paneId not found after safety checks",
+					readAt: new Date().toISOString(),
+				};
+			}
+
+			const snapshot = getTerminalOutputSnapshot(targetPaneId);
+			if (!snapshot) {
+				return {
+					ok: false,
+					...baseResult,
+					status: "FAILED",
+					outputText: "",
+					screenText: "",
+					viewportText: "",
+					latestResponseText: "",
+					latestResponseLength: 0,
+					isRunning: false,
+					hasError: false,
+					hasToolUse: false,
+					hasFileChangeSignal: false,
+					hasGitOperationSignal: false,
+					receivedInstructionAck: false,
+					summary: "Bound worker terminal output snapshot is unavailable.",
+					blockers,
+					warnings,
+					message: "bound worker terminal output snapshot unavailable",
+					readAt: new Date().toISOString(),
+				};
+			}
+
+			const outputText = normalizeWorkerOutputText(snapshot.outputText);
+			const screenText = normalizeWorkerOutputText(snapshot.screenText);
+			const viewportText = normalizeWorkerOutputText(snapshot.viewportText);
+			const latestResponseText = getLatestBoundWorkerResponseText({
+				outputText,
+				screenText,
+				viewportText,
+			});
+			const analysis = analyzeBoundWorkerOutput(latestResponseText);
+
+			if (!latestResponseText.trim()) {
+				warnings.push("bound worker output not found");
+				return {
+					ok: false,
+					...baseResult,
+					status: "WAITING",
+					outputText,
+					screenText,
+					viewportText,
+					latestResponseText: "",
+					latestResponseLength: 0,
+					isRunning: false,
+					hasError: false,
+					hasToolUse: false,
+					hasFileChangeSignal: false,
+					hasGitOperationSignal: false,
+					receivedInstructionAck: false,
+					summary: "No bound worker output has been captured yet.",
+					blockers,
+					warnings,
+					message: getBoundWorkerLatestResponseMessage("WAITING", blockers, warnings),
+					readAt: new Date().toISOString(),
+				};
+			}
+
+			if (analysis.isRunning) {
+				return {
+					ok: false,
+					...baseResult,
+					status: "WAITING",
+					outputText,
+					screenText,
+					viewportText,
+					latestResponseText,
+					latestResponseLength: latestResponseText.length,
+					isRunning: analysis.isRunning,
+					hasError: analysis.hasError,
+					hasToolUse: analysis.hasToolUse,
+					hasFileChangeSignal: analysis.hasFileChangeSignal,
+					hasGitOperationSignal: analysis.hasGitOperationSignal,
+					receivedInstructionAck: analysis.receivedInstructionAck,
+					summary: getBoundWorkerLatestResponseSummary(analysis, latestResponseText),
+					blockers,
+					warnings,
+					message: "Bound worker still appears to be running",
+					readAt: new Date().toISOString(),
+				};
+			}
+
+			if (analysis.hasError) warnings.push("bound worker output contains error signal");
+			if (analysis.hasToolUse) warnings.push("bound worker output contains tool-use signal");
+			if (analysis.hasFileChangeSignal) {
+				warnings.push("bound worker output contains file-change signal");
+			}
+			if (analysis.hasGitOperationSignal) {
+				warnings.push("bound worker output contains git-operation signal");
+			}
+
+			return {
+				ok: true,
+				...baseResult,
+				status: "READY",
+				outputText,
+				screenText,
+				viewportText,
+				latestResponseText,
+				latestResponseLength: latestResponseText.length,
+				isRunning: analysis.isRunning,
+				hasError: analysis.hasError,
+				hasToolUse: analysis.hasToolUse,
+				hasFileChangeSignal: analysis.hasFileChangeSignal,
+				hasGitOperationSignal: analysis.hasGitOperationSignal,
+				receivedInstructionAck: analysis.receivedInstructionAck,
+				summary: getBoundWorkerLatestResponseSummary(analysis, latestResponseText),
+				blockers,
+				warnings,
+				message: getBoundWorkerLatestResponseMessage("READY", blockers, warnings),
+				readAt: new Date().toISOString(),
+			};
+		}, [getAutoLoopPreflightController, getCommanderControllerContext]);
+
 	useEffect(() => {
 		console.log(
 			"[S3.11] registerCommanderBridge with onAutoCaptureTrigger =",
@@ -1212,6 +1448,8 @@ export function CommanderTab({
 			readBrowserAiLatestReply: readBrowserAiLatestReplyController,
 			getBrowserAiLatestReply: readBrowserAiLatestReplyController,
 			sendInstructionToBoundWorker: sendInstructionToBoundWorkerController,
+			readBoundWorkerLatestResponse: readBoundWorkerLatestResponseController,
+			getBoundWorkerLatestOutput: readBoundWorkerLatestResponseController,
 		};
 		target.__doydeckCommanderController = commands;
 		return () => {
@@ -1229,6 +1467,7 @@ export function CommanderTab({
 		sendHandoffToBrowserAiController,
 		readBrowserAiLatestReplyController,
 		sendInstructionToBoundWorkerController,
+		readBoundWorkerLatestResponseController,
 	]);
 
 	const currentProvider = detectProvider(webview.currentUrl);
@@ -1830,6 +2069,216 @@ function getSendInstructionBlockedMessage(blockers: string[]): string {
 		return `Instruction send blocked: ${firstBlocker}`;
 	}
 	return `Instruction send blocked: ${firstBlocker}`;
+}
+
+interface BoundWorkerOutputAnalysis {
+	isRunning: boolean;
+	hasError: boolean;
+	hasToolUse: boolean;
+	hasFileChangeSignal: boolean;
+	hasGitOperationSignal: boolean;
+	receivedInstructionAck: boolean;
+	isIdleOrReady: boolean;
+}
+
+function normalizeWorkerOutputText(text: string): string {
+	return text
+		.replace(/\x1B\][^\x07]*(?:\x07|\x1B\\)/g, "")
+		.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "")
+		.replace(/\x1B[@-Z\\-_]/g, "")
+		.replace(/\r\n/g, "\n")
+		.replace(/\r/g, "\n")
+		.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+		.replace(/[ \t]+\n/g, "\n")
+		.trim();
+}
+
+function limitWorkerOutputText(text: string, maxLength = 50_000): string {
+	if (text.length <= maxLength) return text;
+	return text.slice(text.length - maxLength);
+}
+
+function getLatestBoundWorkerResponseText(texts: {
+	outputText: string;
+	screenText: string;
+	viewportText: string;
+}): string {
+	const candidates = [
+		texts.viewportText,
+		texts.screenText,
+		texts.outputText,
+	].map((value) => limitWorkerOutputText(value.trim()));
+	return candidates.find((value) => value.length > 0) ?? "";
+}
+
+function analyzeBoundWorkerOutput(text: string): BoundWorkerOutputAnalysis {
+	const normalized = text.trim();
+	const isIdleOrReady = hasAnyWorkerOutputSignal(normalized, [
+		/\bready\b/i,
+		/\bidle\b/i,
+		/\bwaiting\b/i,
+		/\bawaiting\b/i,
+		/待機中/,
+		/入力待ち/,
+		/次の指示/,
+		/追加指示/,
+		/受信確認/,
+		/コマンド実行なし/,
+		/ツール使用なし/,
+		/ファイル変更なし/,
+		/Git操作なし/i,
+	]);
+	const receivedInstructionAck = hasAnyWorkerOutputSignal(normalized, [
+		/受信確認/,
+		/受け取りました/,
+		/確認しました/,
+		/了解しました/,
+		/\backnowledged\b/i,
+		/\breceived\b/i,
+		/DOYDECK_BOUND_WORKER_SEND_TEST_OK/,
+	]);
+	const isRunning =
+		!isIdleOrReady &&
+		hasAnyWorkerOutputSignal(normalized, [
+			/\brunning\b/i,
+			/\bworking\b/i,
+			/\bthinking\b/i,
+			/\banalyzing\b/i,
+			/\bexecuting\b/i,
+			/実行中/,
+			/処理中/,
+			/作業中/,
+			/考えています/,
+		]);
+	const hasError = hasAnyWorkerOutputSignal(
+		normalized,
+		[
+			/\berror\b/i,
+			/\bfailed\b/i,
+			/\bfatal\b/i,
+			/\bexception\b/i,
+			/\btraceback\b/i,
+			/エラー/,
+			/失敗/,
+		],
+		[/エラーなし/, /\bno errors?\b/i],
+	);
+	const hasToolUse = hasAnyWorkerOutputSignal(
+		normalized,
+		[
+			/\btool use\b/i,
+			/\bexec_command\b/,
+			/\bapply_patch\b/,
+			/\bwrite_stdin\b/,
+			/\bfunctions\./,
+			/\bmcp__/,
+			/ツール使用/,
+			/コマンド実行/,
+		],
+		[
+			/ツール使用なし/,
+			/コマンド実行なし/,
+			/\bno tool use\b/i,
+			/\bdo not use tools?\b/i,
+			/\bno commands?\b/i,
+		],
+	);
+	const hasFileChangeSignal = hasAnyWorkerOutputSignal(
+		normalized,
+		[
+			/\bfile changed\b/i,
+			/\bfiles changed\b/i,
+			/\bmodified\b/i,
+			/\bdiff\b/i,
+			/\bpatch\b/i,
+			/\bapply_patch\b/,
+			/ファイル変更/,
+			/変更しました/,
+			/修正しました/,
+		],
+		[
+			/ファイル変更なし/,
+			/\bno file changes?\b/i,
+			/\bdo not change files?\b/i,
+		],
+	);
+	const hasGitOperationSignal = hasAnyWorkerOutputSignal(
+		normalized,
+		[
+			/\bgit\b/i,
+			/\bcommit\b/i,
+			/\bpush\b/i,
+			/Git操作/i,
+			/コミット/,
+			/プッシュ/,
+		],
+		[/Git操作なし/i, /\bno git operations?\b/i, /\bdo not use git\b/i],
+	);
+	return {
+		isRunning,
+		hasError,
+		hasToolUse,
+		hasFileChangeSignal,
+		hasGitOperationSignal,
+		receivedInstructionAck,
+		isIdleOrReady,
+	};
+}
+
+function hasAnyWorkerOutputSignal(
+	text: string,
+	patterns: RegExp[],
+	negativePatterns: RegExp[] = [],
+): boolean {
+	if (!text) return false;
+	return text
+		.split("\n")
+		.some(
+			(line) =>
+				!negativePatterns.some((pattern) => pattern.test(line)) &&
+				patterns.some((pattern) => pattern.test(line)),
+		);
+}
+
+function getBoundWorkerLatestResponseSummary(
+	analysis: BoundWorkerOutputAnalysis,
+	text: string,
+): string {
+	const flags = [
+		analysis.receivedInstructionAck ? "acknowledged" : "ack not detected",
+		analysis.isRunning
+			? "running"
+			: analysis.isIdleOrReady
+				? "idle/ready"
+				: "state unknown",
+		analysis.hasError ? "error signal" : "no error signal",
+		analysis.hasToolUse ? "tool-use signal" : "no tool-use signal",
+		analysis.hasFileChangeSignal
+			? "file-change signal"
+			: "no file-change signal",
+		analysis.hasGitOperationSignal
+			? "git-operation signal"
+			: "no git-operation signal",
+	];
+	const preview = text.replace(/\s+/g, " ").trim().slice(0, 180);
+	return `${flags.join("; ")}. Preview: ${preview}`;
+}
+
+function getBoundWorkerLatestResponseMessage(
+	status: CommanderControllerBoundWorkerOutputStatus,
+	blockers: string[],
+	warnings: string[],
+): string {
+	if (status === "READY") return "Bound worker latest response is ready";
+	if (status === "WAITING") {
+		return warnings[0] ?? "Waiting for bound worker output";
+	}
+	if (status === "BLOCKED") {
+		return blockers[0]
+			? `Bound worker latest response read blocked: ${blockers[0]}`
+			: "Bound worker latest response read blocked";
+	}
+	return "Bound worker latest response read failed";
 }
 
 function getAutoLoopPreflightNextAction(
