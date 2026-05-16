@@ -10,6 +10,14 @@ Handoff Ledger. Meta AI monitors state, moves information through the controller
 chain, classifies outcomes, stops at permission boundaries, and records what
 happened.
 
+S8.1/S8.2のようにController accessorsを順番に呼び出すsmokeは、部品検証と
+pilot検証のための手順である。実運用でMeta AIが毎回send/read系accessorを手動で
+順番実行し、Auto Loopの代替エンジンとして振る舞うことは目的ではない。
+
+実運用Supervisorの主な役割は、既存Auto Loop / Controller chainの状態、結果、
+stop reasonを監視し、preflight確認、返答分類、Doy確認境界の検出、Handoff記録を
+行うこと。
+
 ## 1. S8の目的
 
 S8の目的は、Doyが毎回コピペ仲介しなくても、Browser AIと作業側Codex/CCの
@@ -26,12 +34,22 @@ Goals:
 Important non-goal:
 
 - Meta AIはAuto Loopを再実装しない。
+- Meta AIはsend/read系Controller accessorを毎回手動で順番実行して、
+  Auto Loopの代替にしない。
 - DoyDeck本体開発はDoyDeck自身を母艦にしない。
 - DoyDeck safe-devはController chainやMeta AI連携の検証、実運用pilotに使う。
 
 ## 2. S8でやること
 
-S8では、S7で追加された既存accessorを使って、以下のcontroller chainを運用する。
+S8では、S7で追加された既存accessorを使って、以下のcontroller chainを検証し、
+実運用時の監視点を定義する。
+
+S8.1/S8.2のdry-run / smokeでは、部品確認のためにaccessorを明示的に順番実行する。
+これは「DoyDeck-native chainが通るか」を見るための検証であり、Meta AIが
+Auto Loopを手動再現する通常運用ではない。
+
+実運用Supervisorでは、既存Auto Loop / Controller chainを主経路にし、Meta AIは
+その周辺で状態確認、分類、停止判断、Handoff記録を行う。
 
 1. `getAutoLoopPreflight()`
    - active tab、Browser AI、Worker binding、worker identity、安全blockerを確認する。
@@ -57,11 +75,30 @@ S8では、S7で追加された既存accessorを使って、以下のcontroller 
 S8のMeta AIは、この流れを操作するControllerであり、作業側Codex/CCの代わりに
 実装作業を行うわけではない。
 
+### Smoke検証と実運用Supervisorの違い
+
+Smoke検証:
+
+- Controller accessorが期待通り動くかを確認する。
+- Handoff送信、Browser AI返答取得、Worker送信、Worker返答取得、返送、記録を
+  明示的に1つずつ実行する。
+- S8.1/S8.2のような検証では、Auto Loopがoff/idleのままでもよい。
+- 目的は部品の疎通、分類、blocker/warning、Handoff記録の確認。
+
+実運用Supervisor:
+
+- Meta AIはAuto Loop本体を再実装しない。
+- Meta AIはsend/read系accessorをAuto Loop代替として毎回手動実行しない。
+- 既存Auto Loop / Controller chainのlive状態、結果、stop reasonを監視する。
+- preflight確認、状態確認、返答分類、Doy確認境界の検出、Handoff記録を担当する。
+- 2ターン以上に進む場合も、必ず`maxTurns`とstop conditionを持つ。
+
 ## 3. S8でやらないこと
 
 S8では以下をやらない。
 
 - Auto Loop本体の再実装。
+- send/read系Controller accessorの逐次実行をAuto Loop代替として常用すること。
 - DoyDeck本体をDoyDeck内だけで開発すること。
 - commit / push自動化。
 - destructive操作。
@@ -265,6 +302,10 @@ Default:
 `maxTurns`は主安全装置ではなく、pilotの範囲を限定する運用上のガードレール。
 主安全装置はpreflight、worker identity、Doy確認境界、blockers/warningsである。
 
+2ターン以上のpilotに進む場合も、Meta AIは無制限自律に入らない。各ターンで
+preflight、active tab、Browser AI slot、worker identity、stop conditionを確認し、
+`maxTurns`到達、Doy確認、BLOCKED、FAILED、STOPのいずれかで必ず停止する。
+
 ## 10. v0.1の成功条件
 
 S8 v0.1は、以下を満たせば成功とする。
@@ -308,16 +349,20 @@ Priority A: S8.1 Supervisor pilot dry-run
 
 - 実送信を最小化し、controller chainの手順と停止条件をdry-runする。
 - Doy確認境界、maxTurns、recorded outcomeの形を確認する。
+- これは部品検証であり、Auto Loopを手動再現する実運用ではない。
 
 Priority B: S8.2 Supervisor pilot smoke with no-op task
 
 - safe no-op taskで1ターンだけBrowser AI ⇄ Codexを回す。
 - DoyのコピペなしでHandoff記録まで通ることを見る。
+- send/read accessorを順番に呼ぶのはsmokeのため。通常運用では既存Auto Loop /
+  Controller chainの状態とstop reasonを監視する。
 
 Priority C: S8.3 maxTurns:2 smoke
 
 - Browser AIが次Codex指示を返すケースで2ターン目へ進めるか確認する。
 - tab / Browser AI slot / Worker bindingが混線しないか見る。
+- `maxTurns:2`と明確なstop conditionを必須にする。
 
 Priority D: S8.4 Doy confirmation gate refinement
 
