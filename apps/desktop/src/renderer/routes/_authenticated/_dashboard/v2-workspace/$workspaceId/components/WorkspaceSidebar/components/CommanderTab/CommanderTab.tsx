@@ -467,6 +467,11 @@ interface CommanderControllerBoundWorkerLatestResponseResult
 	receivedInstructionAckByMarker: boolean;
 	ackMarkerDetected: string | null;
 	ackDetectionReason: string;
+	completionDetected: boolean;
+	completionSignalReason: string | null;
+	runningSignalReason: string | null;
+	outputLooksComplete: boolean;
+	outputLooksStillRunning: boolean;
 	summary: string;
 	promptEchoRemoved: boolean;
 	usedLastSendMarker: boolean;
@@ -2256,6 +2261,11 @@ export function CommanderTab({
 					receivedInstructionAckByMarker: false,
 					ackMarkerDetected: null,
 					ackDetectionReason: "no bound worker output found",
+					completionDetected: false,
+					completionSignalReason: null,
+					runningSignalReason: null,
+					outputLooksComplete: false,
+					outputLooksStillRunning: false,
 					summary: "No bound worker output has been captured yet.",
 					promptEchoRemoved,
 					usedLastSendMarker,
@@ -2296,6 +2306,11 @@ export function CommanderTab({
 					receivedInstructionAckByMarker: analysis.receivedInstructionAckByMarker,
 					ackMarkerDetected: analysis.ackMarkerDetected,
 					ackDetectionReason: analysis.ackDetectionReason,
+					completionDetected: analysis.completionDetected,
+					completionSignalReason: analysis.completionSignalReason,
+					runningSignalReason: analysis.runningSignalReason,
+					outputLooksComplete: analysis.outputLooksComplete,
+					outputLooksStillRunning: analysis.outputLooksStillRunning,
 					summary: getBoundWorkerLatestResponseSummary(analysis, latestResponseText),
 					promptEchoRemoved,
 					usedLastSendMarker,
@@ -2344,6 +2359,11 @@ export function CommanderTab({
 				receivedInstructionAckByMarker: analysis.receivedInstructionAckByMarker,
 				ackMarkerDetected: analysis.ackMarkerDetected,
 				ackDetectionReason: analysis.ackDetectionReason,
+				completionDetected: analysis.completionDetected,
+				completionSignalReason: analysis.completionSignalReason,
+				runningSignalReason: analysis.runningSignalReason,
+				outputLooksComplete: analysis.outputLooksComplete,
+				outputLooksStillRunning: analysis.outputLooksStillRunning,
 				summary: getBoundWorkerLatestResponseSummary(analysis, latestResponseText),
 				promptEchoRemoved,
 				usedLastSendMarker,
@@ -4300,6 +4320,11 @@ interface BoundWorkerOutputAnalysis {
 	receivedInstructionAckByMarker: boolean;
 	ackMarkerDetected: string | null;
 	ackDetectionReason: string;
+	completionDetected: boolean;
+	completionSignalReason: string | null;
+	runningSignalReason: string | null;
+	outputLooksComplete: boolean;
+	outputLooksStillRunning: boolean;
 	isIdleOrReady: boolean;
 }
 
@@ -4320,10 +4345,15 @@ function getEmptyBoundWorkerOutputFields(
 	| "lastInstructionSentAt"
 	| "lastInstructionLength"
 	| "analysisWarnings"
+	| "completionDetected"
+	| "completionSignalReason"
 	| "uiNoiseRemoved"
 	| "ignoredUiNoiseLines"
 	| "extractedResponseCandidates"
+	| "runningSignalReason"
 	| "selectedResponseReason"
+	| "outputLooksComplete"
+	| "outputLooksStillRunning"
 	| "waitingReason"
 > {
 	return {
@@ -4340,10 +4370,15 @@ function getEmptyBoundWorkerOutputFields(
 		lastInstructionSentAt: lastInstructionMarker?.sentAt ?? null,
 		lastInstructionLength: lastInstructionMarker?.instructionLength ?? 0,
 		analysisWarnings: [],
+		completionDetected: false,
+		completionSignalReason: null,
 		uiNoiseRemoved: false,
 		ignoredUiNoiseLines: [],
 		extractedResponseCandidates: [],
+		runningSignalReason: null,
 		selectedResponseReason: "none",
+		outputLooksComplete: false,
+		outputLooksStillRunning: false,
 		waitingReason: null,
 	};
 }
@@ -4683,7 +4718,11 @@ function analyzeBoundWorkerOutput(
 	},
 ): BoundWorkerOutputAnalysis {
 	const normalized = text.trim();
-	const isIdleOrReady = hasAnyWorkerOutputSignal(normalized, [
+	const completionSignal = detectBoundWorkerCompletionSignal(normalized);
+	const outputLooksComplete = completionSignal.completionDetected;
+	const runningSignal = detectBoundWorkerRunningSignal(normalized);
+	const outputLooksStillRunning = runningSignal.outputLooksStillRunning;
+	const isIdleOrReady = outputLooksComplete || hasAnyWorkerOutputSignal(normalized, [
 		/\bready\b/i,
 		/\bidle\b/i,
 		/\bwaiting\b/i,
@@ -4714,19 +4753,7 @@ function analyzeBoundWorkerOutput(
 	});
 	const receivedInstructionAck =
 		receivedInstructionAckByText || ackMarker.receivedInstructionAckByMarker;
-	const isRunning =
-		!isIdleOrReady &&
-		hasAnyWorkerOutputSignal(normalized, [
-			/\brunning\b/i,
-			/\bworking\b/i,
-			/\bthinking\b/i,
-			/\banalyzing\b/i,
-			/\bexecuting\b/i,
-			/実行中/,
-			/処理中/,
-			/作業中/,
-			/考えています/,
-		]);
+	const isRunning = outputLooksStillRunning && !outputLooksComplete;
 	const hasError = hasAnyWorkerOutputSignal(
 		normalized,
 		[
@@ -4805,6 +4832,11 @@ function analyzeBoundWorkerOutput(
 			: receivedInstructionAckByText
 				? "natural language ack detected"
 				: "ack not detected",
+		completionDetected: completionSignal.completionDetected,
+		completionSignalReason: completionSignal.completionSignalReason,
+		runningSignalReason: runningSignal.runningSignalReason,
+		outputLooksComplete,
+		outputLooksStillRunning,
 		isIdleOrReady,
 	};
 }
@@ -4822,6 +4854,76 @@ function hasAnyWorkerOutputSignal(
 				!negativePatterns.some((pattern) => pattern.test(line)) &&
 				patterns.some((pattern) => pattern.test(line)),
 		);
+}
+
+function detectBoundWorkerCompletionSignal(text: string): {
+	completionDetected: boolean;
+	completionSignalReason: string | null;
+} {
+	const completionPatterns: Array<[RegExp, string]> = [
+		[/<<<DOYDECK_WORKER_RESPONSE_START>>>/i, "response envelope start detected"],
+		[/^#{1,4}\s*完了報告(?:\s|$)/m, "completion report heading detected"],
+		[/^###?\s*実施内容(?:\s|$|[:：])/m, "completion section detected: 実施内容"],
+		[/^###?\s*変更ファイル(?:\s|$|[:：])/m, "completion section detected: 変更ファイル"],
+		[/^###?\s*確認結果(?:\s|$|[:：])/m, "completion section detected: 確認結果"],
+		[/^###?\s*git diff --check\s*(?:結果)?\s*[:：]?\s*(?:PASS|成功|通過)?\b/im, "git diff --check result detected"],
+		[/^###?\s*typecheck\s*(?:結果)?\s*[:：]?\s*(?:PASS|成功|通過|未実施)?\b/im, "typecheck result section detected"],
+		[/^###?\s*git status --short\b/im, "git status section detected"],
+		[/^###?\s*未解決(?:\s*\/\s*次にやるなら)?(?:\s|$|[:：])/m, "unresolved/next section detected"],
+		[/\bWorked for\b.+/i, "Codex worked-for summary detected"],
+		[/(?:作業|変更|修正|確認)(?:が)?完了しました/, "Japanese completion sentence detected"],
+	];
+	for (const [pattern, reason] of completionPatterns) {
+		if (pattern.test(text)) {
+			return {
+				completionDetected: true,
+				completionSignalReason: reason,
+			};
+		}
+	}
+	return {
+		completionDetected: false,
+		completionSignalReason: null,
+	};
+}
+
+function detectBoundWorkerRunningSignal(text: string): {
+	outputLooksStillRunning: boolean;
+	runningSignalReason: string | null;
+} {
+	const runningPatterns: Array<[RegExp, string]> = [
+		[/\bworking\b/i, "working signal detected"],
+		[/\brunning\b/i, "running signal detected"],
+		[/\bthinking\b/i, "thinking signal detected"],
+		[/\banalyzing\b/i, "analyzing signal detected"],
+		[/\bexecuting\b/i, "executing signal detected"],
+		[/実行中/, "Japanese running signal detected: 実行中"],
+		[/処理中/, "Japanese running signal detected: 処理中"],
+		[/作業中/, "Japanese running signal detected: 作業中"],
+		[/考えています/, "Japanese running signal detected: 考えています"],
+	];
+	for (const line of text.split("\n")) {
+		if (!line.trim()) continue;
+		if (
+			/実行中ではない|処理中ではない|作業中ではない|runningなし|workingなし/i.test(
+				line,
+			)
+		) {
+			continue;
+		}
+		for (const [pattern, reason] of runningPatterns) {
+			if (pattern.test(line)) {
+				return {
+					outputLooksStillRunning: true,
+					runningSignalReason: reason,
+				};
+			}
+		}
+	}
+	return {
+		outputLooksStillRunning: false,
+		runningSignalReason: null,
+	};
 }
 
 function detectWorkerAckMarker({
@@ -4898,6 +5000,7 @@ function getBoundWorkerLatestResponseSummary(
 	text: string,
 ): string {
 	const flags = [
+		analysis.completionDetected ? "completion detected" : "completion not detected",
 		analysis.receivedInstructionAck ? "acknowledged" : "ack not detected",
 		analysis.isRunning
 			? "running"
