@@ -303,6 +303,41 @@ interface CommanderControllerBoundWorkerLatestResponseResult
 	preflightWarnings: string[];
 }
 
+type CommanderControllerSendWorkerResponseStatus =
+	| "SENT"
+	| "BLOCKED"
+	| "FAILED";
+
+interface CommanderControllerSendWorkerResponseResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerSendWorkerResponseStatus;
+	activeTabId: string | null;
+	browserAiProvider: string;
+	browserAiReady: boolean;
+	browserAiSlotOk: boolean;
+	workerType: string;
+	workerIdentityOk: boolean;
+	responseLength: number;
+	promptLength: number;
+	blockers: string[];
+	warnings: string[];
+	message: string;
+	sentAt: string | null;
+	injectionResult: string | null;
+	browserAiComposer: CommanderControllerBrowserAiReadiness;
+	browserAiUrl: string;
+	browserAiSlotKey: string | null;
+	expectedBrowserAiSlotKey: string | null;
+	workerResponseStatus: CommanderControllerBoundWorkerOutputStatus;
+	workerResponseSummary: string;
+	workerResponseFlags: {
+		hasError: boolean;
+		hasToolUse: boolean;
+		hasFileChangeSignal: boolean;
+		hasGitOperationSignal: boolean;
+	};
+}
+
 interface CommanderControllerCommands {
 	version: "0.1";
 	workspaceId: string;
@@ -325,6 +360,12 @@ interface CommanderControllerCommands {
 	) => Promise<CommanderControllerSendInstructionResult>;
 	readBoundWorkerLatestResponse: () => Promise<CommanderControllerBoundWorkerLatestResponseResult>;
 	getBoundWorkerLatestOutput: () => Promise<CommanderControllerBoundWorkerLatestResponseResult>;
+	sendBoundWorkerResponseToBrowserAI: (
+		input?: unknown,
+	) => Promise<CommanderControllerSendWorkerResponseResult>;
+	sendWorkerResponseToBrowserAI: (
+		input?: unknown,
+	) => Promise<CommanderControllerSendWorkerResponseResult>;
 }
 
 type CommanderControllerWindow = Window &
@@ -1492,6 +1533,171 @@ export function CommanderTab({
 			};
 		}, [getAutoLoopPreflightController, getCommanderControllerContext]);
 
+	const sendBoundWorkerResponseToBrowserAiController =
+		useCallback(async (
+			_input?: unknown,
+		): Promise<CommanderControllerSendWorkerResponseResult> => {
+			const blockers: string[] = [];
+			const warnings: string[] = [];
+			const activeTabIdSnapshot = activeTabId;
+			const runtime = webview.getRuntimeSnapshot();
+			const liveUrl = webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
+			const provider = detectProvider(liveUrl);
+			const expectedBrowserAiSlotKey = buildCommanderBrowserSlotKey({
+				workspaceId,
+				activeTabId: activeTabIdSnapshot,
+			});
+			const browserAiSlotOk =
+				Boolean(activeTabIdSnapshot) &&
+				runtime.browserSlotKey === expectedBrowserAiSlotKey &&
+				runtime.activeTabId === activeTabIdSnapshot;
+			const composerReadiness = await readBrowserAiComposerReadiness({
+				provider,
+				injectIntoPage: webview.injectIntoPage,
+			});
+			const browserAiReady =
+				Boolean(provider) &&
+				runtime.status === "available" &&
+				runtime.bridgeAvailable &&
+				composerReadiness.ready;
+			const workerResponse = await readBoundWorkerLatestResponseController();
+			const responseText = (
+				workerResponse.analyzedResponseText || workerResponse.latestResponseText
+			).trim();
+
+			if (!activeTabIdSnapshot) blockers.push("active tab not found");
+			if (!provider) blockers.push("browser ai provider not ready");
+			if (runtime.status !== "available") {
+				blockers.push("browser ai runtime unavailable");
+			}
+			if (!runtime.bridgeAvailable) {
+				blockers.push("browser ai bridge unavailable");
+			}
+			if (provider && !composerReadiness.ready) {
+				blockers.push(`browser ai composer not ready: ${composerReadiness.reason}`);
+			}
+			if (!browserAiSlotOk) blockers.push("browser ai slot mismatch");
+			if (workerResponse.status !== "READY") {
+				blockers.push(`bound worker response not ready: ${workerResponse.status}`);
+			}
+			if (!workerResponse.workerIdentityOk) {
+				blockers.push("bound worker identity could not be verified");
+			}
+			if (!workerResponse.paneId) {
+				blockers.push("bound worker paneId not found");
+			}
+			if (!responseText) {
+				blockers.push("bound worker response text is empty");
+			}
+			if (!composerReadiness.submitButtonFound && composerReadiness.ready) {
+				warnings.push(
+					"browser ai submit button was not visible before injection; submit will be verified after prompt insertion",
+				);
+			}
+			if (runtime.visualStatus === "NEEDS_FIX") {
+				warnings.push(`browser ai visual status needs fix: ${runtime.visualReason}`);
+			}
+			warnings.push(
+				...workerResponse.warnings.map((warning) => `worker response: ${warning}`),
+			);
+
+			const prompt = responseText
+				? buildSendBoundWorkerResponseToBrowserAiPrompt({
+						activeTabId: workerResponse.activeTabId ?? activeTabIdSnapshot,
+						workerType: workerResponse.workerType,
+						workerIdentityOk: workerResponse.workerIdentityOk,
+						summary: workerResponse.summary,
+						analyzedResponseText: responseText,
+						hasError: workerResponse.hasError,
+						hasToolUse: workerResponse.hasToolUse,
+						hasFileChangeSignal: workerResponse.hasFileChangeSignal,
+						hasGitOperationSignal: workerResponse.hasGitOperationSignal,
+					})
+				: "";
+			const baseResult = {
+				...getCommanderControllerContext(),
+				activeTabId: activeTabIdSnapshot,
+				browserAiProvider: runtime.providerLabel || getProviderLabel(provider),
+				browserAiReady,
+				browserAiSlotOk,
+				workerType: workerResponse.workerType,
+				workerIdentityOk: workerResponse.workerIdentityOk,
+				responseLength: responseText.length,
+				promptLength: prompt.length,
+				blockers,
+				warnings,
+				sentAt: null,
+				injectionResult: null,
+				browserAiComposer: composerReadiness,
+				browserAiUrl: liveUrl,
+				browserAiSlotKey: runtime.browserSlotKey,
+				expectedBrowserAiSlotKey,
+				workerResponseStatus: workerResponse.status,
+				workerResponseSummary: workerResponse.summary,
+				workerResponseFlags: {
+					hasError: workerResponse.hasError,
+					hasToolUse: workerResponse.hasToolUse,
+					hasFileChangeSignal: workerResponse.hasFileChangeSignal,
+					hasGitOperationSignal: workerResponse.hasGitOperationSignal,
+				},
+			};
+
+			if (blockers.length > 0 || !provider) {
+				return {
+					ok: false,
+					...baseResult,
+					status: "BLOCKED",
+					message: getSendWorkerResponseBlockedMessage(blockers),
+				};
+			}
+
+			try {
+				const result = await webview.injectIntoPage(
+					buildInjectionWithSubmitScript(prompt, provider),
+				);
+				const injectionResult = typeof result === "string" ? result : "unknown";
+				if (injectionResult === "submitted") {
+					return {
+						ok: true,
+						...baseResult,
+						status: "SENT",
+						message: `${getProviderLabel(provider)}にWorker Responseを送信しました`,
+						sentAt: new Date().toISOString(),
+						injectionResult,
+					};
+				}
+				return {
+					ok: false,
+					...baseResult,
+					status: "FAILED",
+					message:
+						injectionResult === "injected"
+							? "Worker Response was injected but not submitted"
+							: `Worker Response submit failed: ${injectionResult}`,
+					injectionResult,
+				};
+			} catch (error) {
+				return {
+					ok: false,
+					...baseResult,
+					status: "FAILED",
+					message:
+						error instanceof Error
+							? `Worker Response submit failed: ${error.message}`
+							: "Worker Response submit failed",
+				};
+			}
+		}, [
+			activeTabId,
+			getCommanderControllerContext,
+			readBoundWorkerLatestResponseController,
+			webview.currentUrl,
+			webview.getLiveUrl,
+			webview.getRuntimeSnapshot,
+			webview.injectIntoPage,
+			workspaceId,
+		]);
+
 	useEffect(() => {
 		console.log(
 			"[S3.11] registerCommanderBridge with onAutoCaptureTrigger =",
@@ -1538,6 +1744,9 @@ export function CommanderTab({
 			sendInstructionToBoundWorker: sendInstructionToBoundWorkerController,
 			readBoundWorkerLatestResponse: readBoundWorkerLatestResponseController,
 			getBoundWorkerLatestOutput: readBoundWorkerLatestResponseController,
+			sendBoundWorkerResponseToBrowserAI:
+				sendBoundWorkerResponseToBrowserAiController,
+			sendWorkerResponseToBrowserAI: sendBoundWorkerResponseToBrowserAiController,
 		};
 		target.__doydeckCommanderController = commands;
 		return () => {
@@ -1556,6 +1765,7 @@ export function CommanderTab({
 		readBrowserAiLatestReplyController,
 		sendInstructionToBoundWorkerController,
 		readBoundWorkerLatestResponseController,
+		sendBoundWorkerResponseToBrowserAiController,
 	]);
 
 	const currentProvider = detectProvider(webview.currentUrl);
@@ -2707,6 +2917,80 @@ function getBoundWorkerLatestResponseMessage(
 			: "Bound worker latest response read blocked";
 	}
 	return "Bound worker latest response read failed";
+}
+
+function buildSendBoundWorkerResponseToBrowserAiPrompt({
+	activeTabId,
+	workerType,
+	workerIdentityOk,
+	summary,
+	analyzedResponseText,
+	hasError,
+	hasToolUse,
+	hasFileChangeSignal,
+	hasGitOperationSignal,
+}: {
+	activeTabId: string | null;
+	workerType: string;
+	workerIdentityOk: boolean;
+	summary: string;
+	analyzedResponseText: string;
+	hasError: boolean;
+	hasToolUse: boolean;
+	hasFileChangeSignal: boolean;
+	hasGitOperationSignal: boolean;
+}): string {
+	const workerLabel =
+		workerType === "claude"
+			? "作業側Claude Code"
+			: workerType === "codex"
+				? "作業側Codex"
+				: "作業側Worker";
+	return [
+		`以下は${workerLabel}の返答です。`,
+		"結果をレビューし、次の作業指示が必要か、Doy確認が必要か、STOPでよいかを判断してください。",
+		"",
+		"次に作業側Codexへ渡す指示が必要な場合は、必ず「Codexへ渡す指示:」または「作業側のCodexへ渡す指示:」から始めてください。追加作業不要なら「STOP」または「次のCodex指示は不要」と明記してください。",
+		"",
+		"--- Worker Context ---",
+		`activeTabId: ${activeTabId ?? "unknown"}`,
+		`workerType: ${workerType || "unknown"}`,
+		`workerIdentityOk: ${workerIdentityOk ? "yes" : "no"}`,
+		`response summary: ${summary || "not recorded"}`,
+		"",
+		"--- Worker Signals ---",
+		`hasError: ${hasError ? "yes" : "no"}`,
+		`hasToolUse: ${hasToolUse ? "yes" : "no"}`,
+		`hasFileChangeSignal: ${hasFileChangeSignal ? "yes" : "no"}`,
+		`hasGitOperationSignal: ${hasGitOperationSignal ? "yes" : "no"}`,
+		"",
+		"--- Worker Response ---",
+		analyzedResponseText.trim(),
+	].join("\n");
+}
+
+function getSendWorkerResponseBlockedMessage(blockers: string[]): string {
+	const firstBlocker = blockers[0];
+	if (!firstBlocker) return "Worker Response send blocked";
+	if (firstBlocker.includes("browser ai provider")) {
+		return "Select ChatGPT or Claude before sending the Worker Response.";
+	}
+	if (firstBlocker.includes("composer")) {
+		return "Wait for the Browser AI composer before sending the Worker Response.";
+	}
+	if (firstBlocker.includes("slot")) {
+		return "Confirm the active tab and Browser AI slot before sending the Worker Response.";
+	}
+	if (firstBlocker.includes("bound worker response")) {
+		return "Read a READY bound worker response before sending it to Browser AI.";
+	}
+	if (firstBlocker.includes("worker identity")) {
+		return "Bind a recognized Codex or Claude Code worker before sending the response.";
+	}
+	if (firstBlocker.includes("active tab")) {
+		return "Select a DoyDeck task tab before sending the Worker Response.";
+	}
+	return `Worker Response send blocked: ${firstBlocker}`;
 }
 
 function getAutoLoopPreflightNextAction(
