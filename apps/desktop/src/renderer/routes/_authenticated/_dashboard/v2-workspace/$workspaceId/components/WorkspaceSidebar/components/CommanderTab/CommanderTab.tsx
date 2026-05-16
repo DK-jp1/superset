@@ -111,12 +111,30 @@ interface CommanderControllerBrowserAiReadiness {
 	checked: boolean;
 	ready: boolean;
 	reason: string;
+	composerReady: boolean;
+	composerInjectionReady: boolean;
+	submitTargetReady: boolean;
+	composerSelectorStatus: string;
+	submitSelectorStatus: string;
+	injectionTargetStatus: string;
+	injectionBlockers: string[];
 	composerFound: boolean;
 	composerVisible: boolean;
 	composerEditable: boolean;
 	submitButtonFound: boolean;
 	submitButtonEnabled: boolean;
 }
+
+type CommanderControllerBrowserAiComposerDiagnostics = Pick<
+	CommanderControllerBrowserAiReadiness,
+	| "composerReady"
+	| "composerInjectionReady"
+	| "submitTargetReady"
+	| "composerSelectorStatus"
+	| "submitSelectorStatus"
+	| "injectionTargetStatus"
+	| "injectionBlockers"
+>;
 
 interface CommanderControllerAutoLoopPreflightResult
 	extends CommanderControllerCommandResult {
@@ -136,6 +154,13 @@ interface CommanderControllerAutoLoopPreflightResult
 	warnings: string[];
 	nextRequiredAction: string;
 	browserAiComposer: CommanderControllerBrowserAiReadiness;
+	composerReady: boolean;
+	composerInjectionReady: boolean;
+	submitTargetReady: boolean;
+	composerSelectorStatus: string;
+	submitSelectorStatus: string;
+	injectionTargetStatus: string;
+	injectionBlockers: string[];
 	browserAiUrl: string;
 	browserAiSlotKey: string | null;
 	expectedBrowserAiSlotKey: string | null;
@@ -168,6 +193,13 @@ interface CommanderControllerSendHandoffResult
 	sentAt: string | null;
 	injectionResult: string | null;
 	browserAiComposer: CommanderControllerBrowserAiReadiness;
+	composerReady: boolean;
+	composerInjectionReady: boolean;
+	submitTargetReady: boolean;
+	composerSelectorStatus: string;
+	submitSelectorStatus: string;
+	injectionTargetStatus: string;
+	injectionBlockers: string[];
 	browserAiUrl: string;
 	browserAiSlotKey: string | null;
 	expectedBrowserAiSlotKey: string | null;
@@ -325,6 +357,13 @@ interface CommanderControllerSendWorkerResponseResult
 	sentAt: string | null;
 	injectionResult: string | null;
 	browserAiComposer: CommanderControllerBrowserAiReadiness;
+	composerReady: boolean;
+	composerInjectionReady: boolean;
+	submitTargetReady: boolean;
+	composerSelectorStatus: string;
+	submitSelectorStatus: string;
+	injectionTargetStatus: string;
+	injectionBlockers: string[];
 	browserAiUrl: string;
 	browserAiSlotKey: string | null;
 	expectedBrowserAiSlotKey: string | null;
@@ -361,6 +400,13 @@ interface CommanderControllerBrowserAiSubmissionState {
 	sentAt: string | null;
 	recordedAt: string;
 	injectionResult: string | null;
+	composerReady: boolean;
+	composerInjectionReady: boolean;
+	submitTargetReady: boolean;
+	composerSelectorStatus: string;
+	submitSelectorStatus: string;
+	injectionTargetStatus: string;
+	injectionBlockers: string[];
 	status: CommanderControllerBrowserAiSubmissionRecordStatus;
 	message: string;
 	warnings: string[];
@@ -670,6 +716,13 @@ export function CommanderTab({
 					sentAt: null,
 					recordedAt: "",
 					injectionResult: null,
+					composerReady: false,
+					composerInjectionReady: false,
+					submitTargetReady: false,
+					composerSelectorStatus: "not_checked",
+					submitSelectorStatus: "not_checked",
+					injectionTargetStatus: "not_checked",
+					injectionBlockers: [],
 					message: "No Browser AI submission has been recorded",
 					warnings: [],
 					blockers: [],
@@ -872,11 +925,13 @@ export function CommanderTab({
 				provider,
 				injectIntoPage: webview.injectIntoPage,
 			});
+			const composerDiagnostics =
+				getBrowserAiComposerDiagnosticFields(composerReadiness);
 			const browserAiReady =
 				Boolean(provider) &&
 				runtime.status === "available" &&
 				runtime.bridgeAvailable &&
-				composerReadiness.ready;
+				composerReadiness.composerInjectionReady;
 			const workerBound = workerBinding.bindingStatus === "bound";
 			const workerIdentity = evaluateDoyDeckWorkerIdentity(
 				workerBinding.workerType,
@@ -907,8 +962,9 @@ export function CommanderTab({
 			if (!runtime.bridgeAvailable) {
 				blockers.push("browser ai bridge unavailable");
 			}
-			if (provider && !composerReadiness.ready) {
-				blockers.push(`browser ai composer not ready: ${composerReadiness.reason}`);
+			const composerBlocker = getBrowserAiComposerBlocker(composerReadiness);
+			if (provider && composerBlocker) {
+				blockers.push(composerBlocker);
 			}
 			if (!browserAiSlotOk) blockers.push("browser ai slot mismatch");
 			if (workerBinding.bindingStatus === "stale") {
@@ -942,6 +998,8 @@ export function CommanderTab({
 			if (runtime.status === "available" && runtime.webContentsId === null) {
 				warnings.push("browser ai webContentsId is unavailable");
 			}
+			const submitWarning = getBrowserAiSubmitWarning(composerReadiness);
+			if (submitWarning) warnings.push(submitWarning);
 			if (transfer.autoLoopPhase !== "idle" && transfer.autoLoopPhase !== "stopped") {
 				warnings.push(`auto loop is already in phase: ${transfer.autoLoopPhase}`);
 			}
@@ -973,6 +1031,7 @@ export function CommanderTab({
 				warnings,
 				nextRequiredAction: getAutoLoopPreflightNextAction(blockers, warnings),
 				browserAiComposer: composerReadiness,
+				...composerDiagnostics,
 				browserAiUrl: liveUrl,
 				browserAiSlotKey: runtime.browserSlotKey,
 				expectedBrowserAiSlotKey,
@@ -1026,6 +1085,8 @@ export function CommanderTab({
 				provider,
 				injectIntoPage: webview.injectIntoPage,
 			});
+			const composerDiagnostics =
+				getBrowserAiComposerDiagnosticFields(composerReadiness);
 			const handoffResult = buildHandoffLedgerController();
 			const ledger = handoffResult.ledger ?? "";
 			const handoffMissingFields = handoffResult.missingFields ?? [];
@@ -1037,7 +1098,7 @@ export function CommanderTab({
 				Boolean(provider) &&
 				runtime.status === "available" &&
 				runtime.bridgeAvailable &&
-				composerReadiness.ready;
+				composerReadiness.composerInjectionReady;
 
 			if (!activeTabIdSnapshot) blockers.push("active tab not found");
 			if (!provider) blockers.push("browser ai provider not ready");
@@ -1047,8 +1108,9 @@ export function CommanderTab({
 			if (!runtime.bridgeAvailable) {
 				blockers.push("browser ai bridge unavailable");
 			}
-			if (provider && !composerReadiness.ready) {
-				blockers.push(`browser ai composer not ready: ${composerReadiness.reason}`);
+			const composerBlocker = getBrowserAiComposerBlocker(composerReadiness);
+			if (provider && composerBlocker) {
+				blockers.push(composerBlocker);
 			}
 			if (!browserAiSlotOk) blockers.push("browser ai slot mismatch");
 			if (!handoffLedgerAvailable) {
@@ -1058,11 +1120,8 @@ export function CommanderTab({
 						: "handoff ledger unavailable",
 				);
 			}
-			if (!composerReadiness.submitButtonFound && composerReadiness.ready) {
-				warnings.push(
-					"browser ai submit button was not visible before injection; submit will be verified after prompt insertion",
-				);
-			}
+			const submitWarning = getBrowserAiSubmitWarning(composerReadiness);
+			if (submitWarning) warnings.push(submitWarning);
 			if (runtime.visualStatus === "NEEDS_FIX") {
 				warnings.push(`browser ai visual status needs fix: ${runtime.visualReason}`);
 			}
@@ -1091,6 +1150,7 @@ export function CommanderTab({
 				sentAt: null,
 				injectionResult: null,
 				browserAiComposer: composerReadiness,
+				...composerDiagnostics,
 				browserAiUrl: liveUrl,
 				browserAiSlotKey: runtime.browserSlotKey,
 				expectedBrowserAiSlotKey,
@@ -1105,6 +1165,7 @@ export function CommanderTab({
 					browserAiProvider: baseResult.browserAiProvider,
 					browserAiReady,
 					browserAiSlotOk,
+					...composerDiagnostics,
 					promptLength: prompt.length,
 					payloadLength: handoffLedgerLength,
 					sentAt: null,
@@ -1140,6 +1201,7 @@ export function CommanderTab({
 						browserAiProvider: baseResult.browserAiProvider,
 						browserAiReady,
 						browserAiSlotOk,
+						...composerDiagnostics,
 						promptLength: prompt.length,
 						payloadLength: handoffLedgerLength,
 						sentAt,
@@ -1172,6 +1234,7 @@ export function CommanderTab({
 					browserAiProvider: baseResult.browserAiProvider,
 					browserAiReady,
 					browserAiSlotOk,
+					...composerDiagnostics,
 					promptLength: prompt.length,
 					payloadLength: handoffLedgerLength,
 					sentAt: null,
@@ -1203,6 +1266,7 @@ export function CommanderTab({
 					browserAiProvider: baseResult.browserAiProvider,
 					browserAiReady,
 					browserAiSlotOk,
+					...composerDiagnostics,
 					promptLength: prompt.length,
 					payloadLength: handoffLedgerLength,
 					sentAt: null,
@@ -1259,7 +1323,7 @@ export function CommanderTab({
 				Boolean(provider) &&
 				runtime.status === "available" &&
 				runtime.bridgeAvailable &&
-				composerReadiness.ready;
+				composerReadiness.composerInjectionReady;
 
 			if (!activeTabIdSnapshot) blockers.push("active tab not found");
 			if (!provider) blockers.push("browser ai provider not ready");
@@ -1395,8 +1459,9 @@ export function CommanderTab({
 				};
 			}
 
-			if (provider && !composerReadiness.ready) {
-				blockers.push(`browser ai composer not ready: ${composerReadiness.reason}`);
+			const composerBlocker = getBrowserAiComposerBlocker(composerReadiness);
+			if (provider && composerBlocker) {
+				blockers.push(composerBlocker);
 			}
 
 			if (blockers.length > 0) {
@@ -1924,11 +1989,13 @@ export function CommanderTab({
 				provider,
 				injectIntoPage: webview.injectIntoPage,
 			});
+			const composerDiagnostics =
+				getBrowserAiComposerDiagnosticFields(composerReadiness);
 			const browserAiReady =
 				Boolean(provider) &&
 				runtime.status === "available" &&
 				runtime.bridgeAvailable &&
-				composerReadiness.ready;
+				composerReadiness.composerInjectionReady;
 			const workerResponse = await readBoundWorkerLatestResponseController();
 			const responseText = (
 				workerResponse.analyzedResponseText || workerResponse.latestResponseText
@@ -1942,8 +2009,9 @@ export function CommanderTab({
 			if (!runtime.bridgeAvailable) {
 				blockers.push("browser ai bridge unavailable");
 			}
-			if (provider && !composerReadiness.ready) {
-				blockers.push(`browser ai composer not ready: ${composerReadiness.reason}`);
+			const composerBlocker = getBrowserAiComposerBlocker(composerReadiness);
+			if (provider && composerBlocker) {
+				blockers.push(composerBlocker);
 			}
 			if (!browserAiSlotOk) blockers.push("browser ai slot mismatch");
 			if (workerResponse.status !== "READY") {
@@ -1958,11 +2026,8 @@ export function CommanderTab({
 			if (!responseText) {
 				blockers.push("bound worker response text is empty");
 			}
-			if (!composerReadiness.submitButtonFound && composerReadiness.ready) {
-				warnings.push(
-					"browser ai submit button was not visible before injection; submit will be verified after prompt insertion",
-				);
-			}
+			const submitWarning = getBrowserAiSubmitWarning(composerReadiness);
+			if (submitWarning) warnings.push(submitWarning);
 			if (runtime.visualStatus === "NEEDS_FIX") {
 				warnings.push(`browser ai visual status needs fix: ${runtime.visualReason}`);
 			}
@@ -2008,6 +2073,7 @@ export function CommanderTab({
 				sentAt: null,
 				injectionResult: null,
 				browserAiComposer: composerReadiness,
+				...composerDiagnostics,
 				browserAiUrl: liveUrl,
 				browserAiSlotKey: runtime.browserSlotKey,
 				expectedBrowserAiSlotKey,
@@ -2029,6 +2095,7 @@ export function CommanderTab({
 					browserAiProvider: baseResult.browserAiProvider,
 					browserAiReady,
 					browserAiSlotOk,
+					...composerDiagnostics,
 					promptLength: prompt.length,
 					payloadLength: responseText.length,
 					sentAt: null,
@@ -2064,6 +2131,7 @@ export function CommanderTab({
 						browserAiProvider: baseResult.browserAiProvider,
 						browserAiReady,
 						browserAiSlotOk,
+						...composerDiagnostics,
 						promptLength: prompt.length,
 						payloadLength: responseText.length,
 						sentAt,
@@ -2096,6 +2164,7 @@ export function CommanderTab({
 					browserAiProvider: baseResult.browserAiProvider,
 					browserAiReady,
 					browserAiSlotOk,
+					...composerDiagnostics,
 					promptLength: prompt.length,
 					payloadLength: responseText.length,
 					sentAt: null,
@@ -2127,6 +2196,7 @@ export function CommanderTab({
 					browserAiProvider: baseResult.browserAiProvider,
 					browserAiReady,
 					browserAiSlotOk,
+					...composerDiagnostics,
 					promptLength: prompt.length,
 					payloadLength: responseText.length,
 					sentAt: null,
@@ -2541,73 +2611,182 @@ async function readBrowserAiComposerReadiness({
 	injectIntoPage: (script: string) => Promise<unknown>;
 }): Promise<CommanderControllerBrowserAiReadiness> {
 	if (!provider) {
-		return {
+		return createBrowserAiComposerReadiness({
 			checked: false,
-			ready: false,
 			reason: "browser provider unsupported",
-			composerFound: false,
-			composerVisible: false,
-			composerEditable: false,
-			submitButtonFound: false,
-			submitButtonEnabled: false,
-		};
+			composerSelectorStatus: "unsupported_provider",
+			submitSelectorStatus: "unsupported_provider",
+			injectionTargetStatus: "unsupported_provider",
+			injectionBlockers: ["browser provider unsupported"],
+		});
 	}
 	try {
 		return normalizeBrowserAiComposerReadiness(
 			await injectIntoPage(buildComposerReadinessScript(provider)),
 		);
 	} catch (error) {
-		return {
+		return createBrowserAiComposerReadiness({
 			checked: true,
-			ready: false,
 			reason:
 				error instanceof Error
 					? `composer readiness check failed: ${error.message}`
 					: "composer readiness check failed",
-			composerFound: false,
-			composerVisible: false,
-			composerEditable: false,
-			submitButtonFound: false,
-			submitButtonEnabled: false,
-		};
+			composerSelectorStatus: "readiness_check_failed",
+			submitSelectorStatus: "readiness_check_failed",
+			injectionTargetStatus: "readiness_check_failed",
+			injectionBlockers: ["composer readiness check failed"],
+		});
 	}
+}
+
+function createBrowserAiComposerReadiness(
+	overrides: Partial<CommanderControllerBrowserAiReadiness> = {},
+): CommanderControllerBrowserAiReadiness {
+	const composerReady = overrides.composerReady === true;
+	const composerInjectionReady =
+		overrides.composerInjectionReady === true || composerReady;
+	const submitTargetReady = overrides.submitTargetReady === true;
+	const injectionBlockers = Array.isArray(overrides.injectionBlockers)
+		? overrides.injectionBlockers.filter((blocker): blocker is string => {
+				return typeof blocker === "string" && blocker.trim().length > 0;
+			})
+		: [];
+	return {
+		checked: overrides.checked === true,
+		ready: composerInjectionReady,
+		reason:
+			typeof overrides.reason === "string"
+				? overrides.reason
+				: composerInjectionReady
+					? "composer injection target ready"
+					: "composer injection target not ready",
+		composerReady,
+		composerInjectionReady,
+		submitTargetReady,
+		composerSelectorStatus:
+			typeof overrides.composerSelectorStatus === "string"
+				? overrides.composerSelectorStatus
+				: composerInjectionReady
+					? "ready"
+					: "unknown",
+		submitSelectorStatus:
+			typeof overrides.submitSelectorStatus === "string"
+				? overrides.submitSelectorStatus
+				: submitTargetReady
+					? "ready"
+					: "unknown",
+		injectionTargetStatus:
+			typeof overrides.injectionTargetStatus === "string"
+				? overrides.injectionTargetStatus
+				: composerInjectionReady
+					? "ready"
+					: "unknown",
+		injectionBlockers,
+		composerFound: overrides.composerFound === true,
+		composerVisible: overrides.composerVisible === true,
+		composerEditable: overrides.composerEditable === true,
+		submitButtonFound: overrides.submitButtonFound === true,
+		submitButtonEnabled: overrides.submitButtonEnabled === true,
+	};
 }
 
 function normalizeBrowserAiComposerReadiness(
 	value: unknown,
 ): CommanderControllerBrowserAiReadiness {
 	if (!value || typeof value !== "object") {
-		return {
+		return createBrowserAiComposerReadiness({
 			checked: true,
-			ready: false,
 			reason: "composer readiness result invalid",
-			composerFound: false,
-			composerVisible: false,
-			composerEditable: false,
-			submitButtonFound: false,
-			submitButtonEnabled: false,
-		};
+			composerSelectorStatus: "invalid_result",
+			submitSelectorStatus: "invalid_result",
+			injectionTargetStatus: "invalid_result",
+			injectionBlockers: ["composer readiness result invalid"],
+		});
 	}
 	const candidate = value as Partial<CommanderControllerBrowserAiReadiness>;
 	const composerFound = candidate.composerFound === true;
 	const composerVisible = candidate.composerVisible === true;
 	const composerEditable = candidate.composerEditable === true;
-	const ready = composerFound && composerVisible && composerEditable;
-	return {
+	const composerReady =
+		candidate.composerReady === true ||
+		(composerFound && composerVisible && composerEditable);
+	const composerInjectionReady =
+		candidate.composerInjectionReady === true || composerReady;
+	const submitTargetReady =
+		candidate.submitTargetReady === true ||
+		(candidate.submitButtonFound === true && candidate.submitButtonEnabled === true);
+	const injectionBlockers = Array.isArray(candidate.injectionBlockers)
+		? candidate.injectionBlockers.filter((blocker): blocker is string => {
+				return typeof blocker === "string" && blocker.trim().length > 0;
+			})
+		: composerInjectionReady
+			? []
+			: ["composer injection target not ready"];
+	return createBrowserAiComposerReadiness({
 		checked: true,
-		ready,
 		reason:
 			typeof candidate.reason === "string"
 				? candidate.reason
-				: ready
-					? "composer ready"
-					: "composer not ready",
+				: composerInjectionReady
+					? "composer injection target ready"
+					: "composer injection target not ready",
+		composerReady,
+		composerInjectionReady,
+		submitTargetReady,
+		composerSelectorStatus:
+			typeof candidate.composerSelectorStatus === "string"
+				? candidate.composerSelectorStatus
+				: composerInjectionReady
+					? "ready"
+					: "unknown",
+		submitSelectorStatus:
+			typeof candidate.submitSelectorStatus === "string"
+				? candidate.submitSelectorStatus
+				: submitTargetReady
+					? "ready"
+					: "not_ready",
+		injectionTargetStatus:
+			typeof candidate.injectionTargetStatus === "string"
+				? candidate.injectionTargetStatus
+				: composerInjectionReady
+					? "ready"
+					: "unknown",
+		injectionBlockers,
 		composerFound,
 		composerVisible,
 		composerEditable,
 		submitButtonFound: candidate.submitButtonFound === true,
 		submitButtonEnabled: candidate.submitButtonEnabled === true,
+	});
+}
+
+function getBrowserAiComposerDiagnosticFields(
+	readiness: CommanderControllerBrowserAiReadiness,
+): CommanderControllerBrowserAiComposerDiagnostics {
+	return {
+		composerReady: readiness.composerReady,
+		composerInjectionReady: readiness.composerInjectionReady,
+		submitTargetReady: readiness.submitTargetReady,
+		composerSelectorStatus: readiness.composerSelectorStatus,
+		submitSelectorStatus: readiness.submitSelectorStatus,
+		injectionTargetStatus: readiness.injectionTargetStatus,
+		injectionBlockers: readiness.injectionBlockers,
 	};
+}
+
+function getBrowserAiComposerBlocker(
+	readiness: CommanderControllerBrowserAiReadiness,
+): string | null {
+	if (readiness.composerInjectionReady) return null;
+	const firstBlocker = readiness.injectionBlockers[0] || readiness.reason;
+	return `browser ai composer not ready: ${firstBlocker}`;
+}
+
+function getBrowserAiSubmitWarning(
+	readiness: CommanderControllerBrowserAiReadiness,
+): string | null {
+	if (!readiness.composerInjectionReady || readiness.submitTargetReady) return null;
+	return `browser ai submit target not ready before injection: ${readiness.submitSelectorStatus}`;
 }
 
 function normalizeBrowserAiLatestReplyState(

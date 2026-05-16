@@ -38,33 +38,15 @@ export function getProviderLabel(provider: BrowserProvider | null): string {
 
 export function buildInjectionScript(text: string): string {
 	const escaped = JSON.stringify(text);
+	const composerSelectors = JSON.stringify([
+		...new Set(Object.values(COMPOSER_SELECTORS).flat()),
+	]);
 	return `(function() {
-  var selectors = [
-    '#prompt-textarea',
-    '.ProseMirror[contenteditable="true"]',
-    'rich-textarea .ql-editor',
-    'div.ql-editor[contenteditable="true"]',
-    'div[contenteditable="true"]'
-  ];
-  var el = null;
-  for (var i = 0; i < selectors.length; i++) {
-    el = document.querySelector(selectors[i]);
-    if (el) break;
-  }
+  ${COMPOSER_TARGET_HELPER}
+  var composerTarget = findComposerTarget(${composerSelectors});
+  var el = composerTarget.element;
   if (!el) return false;
-  el.focus();
-  document.execCommand('selectAll', false, null);
-  document.execCommand('delete', false, null);
-  var ok = document.execCommand('insertText', false, ${escaped});
-  if (!ok) {
-    el.textContent = ${escaped};
-    el.dispatchEvent(new InputEvent('input', {
-      inputType: 'insertText',
-      data: ${escaped},
-      bubbles: true,
-      composed: true
-    }));
-  }
+  setComposerText(el, ${escaped});
   return true;
 })()`;
 }
@@ -263,68 +245,246 @@ const SUBMIT_SELECTORS: Record<BrowserProvider, string[]> = {
 	],
 };
 
+const COMPOSER_SELECTORS: Record<BrowserProvider, string[]> = {
+	chatgpt: [
+		'#prompt-textarea',
+		'[data-testid="composer-text-input"]',
+		'[contenteditable="true"][data-lexical-editor="true"]',
+		'[role="textbox"][contenteditable="true"]',
+		'.ProseMirror[contenteditable="true"]',
+		'rich-textarea .ql-editor',
+		'div.ql-editor[contenteditable="true"]',
+		'textarea[placeholder*="Ask"]',
+		'textarea[aria-label*="Ask"]',
+		'textarea[placeholder*="Message"]',
+		'textarea[aria-label*="Message"]',
+	],
+	claude: [
+		'div[contenteditable="true"][aria-label*="Write"]',
+		'div[contenteditable="true"][aria-label*="message"]',
+		'[role="textbox"][contenteditable="true"]',
+		'.ProseMirror[contenteditable="true"]',
+		'fieldset div[contenteditable="true"]',
+		'textarea[placeholder*="message"]',
+		'textarea[aria-label*="message"]',
+	],
+	gemini: [
+		'rich-textarea .ql-editor',
+		'div.ql-editor[contenteditable="true"]',
+		'div[contenteditable="true"][aria-label*="Enter"]',
+		'[role="textbox"][contenteditable="true"]',
+		'textarea[aria-label*="message"]',
+	],
+};
+
+const COMPOSER_TARGET_HELPER = `
+function isVisible(el) {
+  if (!el) return false;
+  var rect = el.getBoundingClientRect();
+  var style = window.getComputedStyle(el);
+  return rect.width > 0 && rect.height > 0 &&
+    style.visibility !== 'hidden' &&
+    style.display !== 'none' &&
+    !el.closest('[hidden], [aria-hidden="true"]');
+}
+function isEditable(el) {
+  if (!el) return false;
+  if (el.disabled) return false;
+  if (el.getAttribute('aria-disabled') === 'true') return false;
+  if (el.getAttribute('contenteditable') === 'false') return false;
+  if (el.matches && el.matches('textarea,input')) return true;
+  return Boolean(el.isContentEditable);
+}
+function describeElement(el) {
+  if (!el) return '';
+  var bits = [String(el.tagName || '').toLowerCase()];
+  var id = el.getAttribute('id');
+  var testId = el.getAttribute('data-testid');
+  var aria = el.getAttribute('aria-label');
+  var placeholder = el.getAttribute('placeholder');
+  var className = typeof el.className === 'string' ? el.className : '';
+  if (id) bits.push('#' + id);
+  if (testId) bits.push('[data-testid="' + testId + '"]');
+  if (aria) bits.push('[aria-label="' + aria + '"]');
+  if (placeholder) bits.push('[placeholder="' + placeholder + '"]');
+  if (className) bits.push('.' + className.replace(/\\s+/g, '.'));
+  return bits.join('');
+}
+function likelyComposerTarget(el) {
+  if (!el || !isVisible(el) || !isEditable(el)) return false;
+  var haystack = [
+    el.getAttribute('id'),
+    el.getAttribute('data-testid'),
+    el.getAttribute('aria-label'),
+    el.getAttribute('placeholder'),
+    el.getAttribute('role'),
+    typeof el.className === 'string' ? el.className : ''
+  ].join(' ');
+  if (/search|title|rename|filter|filename|filepath|path/i.test(haystack)) return false;
+  return /prompt|composer|message|send|ask|chat|textbox|prosemirror|ql-editor|rich-textarea/i.test(haystack);
+}
+function findComposerTarget(selectors) {
+  var checked = [];
+  for (var i = 0; i < selectors.length; i++) {
+    var selector = selectors[i];
+    var nodes = Array.prototype.slice.call(document.querySelectorAll(selector));
+    for (var n = 0; n < nodes.length; n++) {
+      var node = nodes[n];
+      checked.push(selector + ':' + describeElement(node));
+      if (isVisible(node) && isEditable(node)) {
+        return {
+          element: node,
+          selector: selector,
+          checked: checked,
+          status: 'ready',
+          description: describeElement(node)
+        };
+      }
+    }
+  }
+  var fallbackNodes = Array.prototype.slice.call(
+    document.querySelectorAll('[contenteditable="true"], textarea, input[type="text"]')
+  );
+  for (var j = 0; j < fallbackNodes.length; j++) {
+    var fallback = fallbackNodes[j];
+    checked.push('fallback:' + describeElement(fallback));
+    if (likelyComposerTarget(fallback)) {
+      return {
+        element: fallback,
+        selector: 'fallback-likely-composer',
+        checked: checked,
+        status: 'ready',
+        description: describeElement(fallback)
+      };
+    }
+  }
+  return {
+    element: null,
+    selector: null,
+    checked: checked,
+    status: checked.length ? 'not_editable_or_hidden' : 'not_found',
+    description: ''
+  };
+}
+function findSubmitTarget(selectors) {
+  var checked = [];
+  var disabledCandidate = null;
+  for (var i = 0; i < selectors.length; i++) {
+    var selector = selectors[i];
+    var nodes = Array.prototype.slice.call(document.querySelectorAll(selector));
+    for (var n = 0; n < nodes.length; n++) {
+      var node = nodes[n];
+      checked.push(selector + ':' + describeElement(node));
+      if (!isVisible(node)) continue;
+      var disabled = Boolean(node.disabled || node.getAttribute('aria-disabled') === 'true');
+      if (!disabled) {
+        return {
+          element: node,
+          selector: selector,
+          checked: checked,
+          status: 'ready',
+          description: describeElement(node)
+        };
+      }
+      disabledCandidate = disabledCandidate || {
+        element: node,
+        selector: selector,
+        checked: checked,
+        status: 'disabled',
+        description: describeElement(node)
+      };
+    }
+  }
+  if (disabledCandidate) return disabledCandidate;
+  return {
+    element: null,
+    selector: null,
+    checked: checked,
+    status: checked.length ? 'hidden_or_disabled' : 'not_found',
+    description: ''
+  };
+}
+function setComposerText(el, text) {
+  el.focus();
+  if (el.matches && el.matches('textarea,input')) {
+    var descriptor = Object.getOwnPropertyDescriptor(el.constructor.prototype, 'value');
+    if (descriptor && descriptor.set) {
+      descriptor.set.call(el, text);
+    } else {
+      el.value = text;
+    }
+    el.dispatchEvent(new InputEvent('input', {
+      inputType: 'insertText',
+      data: text,
+      bubbles: true,
+      composed: true
+    }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  }
+  document.execCommand('selectAll', false, null);
+  document.execCommand('delete', false, null);
+  var ok = document.execCommand('insertText', false, text);
+  if (!ok) {
+    el.textContent = text;
+    el.dispatchEvent(new InputEvent('input', {
+      inputType: 'insertText',
+      data: text,
+      bubbles: true,
+      composed: true
+    }));
+  }
+  return true;
+}`;
+
 export function buildComposerReadinessScript(
 	provider: BrowserProvider,
 ): string {
+	const composerSelectors = JSON.stringify(COMPOSER_SELECTORS[provider]);
 	const submitSelectors = JSON.stringify(SUBMIT_SELECTORS[provider]);
 	return `(function() {
-  var selectors = [
-    '#prompt-textarea',
-    '.ProseMirror[contenteditable="true"]',
-    'rich-textarea .ql-editor',
-    'div.ql-editor[contenteditable="true"]',
-    'div[contenteditable="true"]',
-    'textarea',
-    'input[type="text"]'
-  ];
-  function isVisible(el) {
-    if (!el) return false;
-    var rect = el.getBoundingClientRect();
-    var style = window.getComputedStyle(el);
-    return rect.width > 0 && rect.height > 0 &&
-      style.visibility !== 'hidden' &&
-      style.display !== 'none' &&
-      !el.closest('[hidden], [aria-hidden="true"]');
-  }
-  function isEditable(el) {
-    if (!el) return false;
-    if (el.disabled) return false;
-    if (el.getAttribute('aria-disabled') === 'true') return false;
-    if (el.getAttribute('contenteditable') === 'false') return false;
-    return Boolean(el.isContentEditable || el.matches('textarea,input'));
-  }
-  var composer = null;
-  for (var i = 0; i < selectors.length; i++) {
-    var candidate = document.querySelector(selectors[i]);
-    if (candidate && isVisible(candidate)) {
-      composer = candidate;
-      break;
-    }
-  }
-  var submitButton = null;
-  var submitSelectors = ${submitSelectors};
-  for (var j = 0; j < submitSelectors.length; j++) {
-    submitButton = document.querySelector(submitSelectors[j]);
-    if (submitButton && isVisible(submitButton)) break;
-  }
+  ${COMPOSER_TARGET_HELPER}
+  var composerTarget = findComposerTarget(${composerSelectors});
+  var submitTarget = findSubmitTarget(${submitSelectors});
+  var composer = composerTarget.element;
+  var submitButton = submitTarget.element;
   var composerFound = Boolean(composer);
   var composerVisible = Boolean(composer && isVisible(composer));
   var composerEditable = Boolean(composer && isEditable(composer));
+  var composerReady = Boolean(composerFound && composerVisible && composerEditable);
+  var submitTargetReady = Boolean(submitButton && submitTarget.status === 'ready');
+  var injectionBlockers = [];
+  if (!composerReady) {
+    injectionBlockers.push(
+      composerTarget.status === 'not_found'
+        ? 'composer injection target not found'
+        : 'composer injection target not editable or visible'
+    );
+  }
   return {
     provider: ${JSON.stringify(provider)},
     composerFound: composerFound,
     composerVisible: composerVisible,
     composerEditable: composerEditable,
     submitButtonFound: Boolean(submitButton),
-    submitButtonEnabled: Boolean(submitButton && !submitButton.disabled && submitButton.getAttribute('aria-disabled') !== 'true'),
-    ready: Boolean(composerFound && composerVisible && composerEditable),
+    submitButtonEnabled: submitTargetReady,
+    composerReady: composerReady,
+    composerInjectionReady: composerReady,
+    submitTargetReady: submitTargetReady,
+    composerSelectorStatus: composerTarget.selector || composerTarget.status,
+    submitSelectorStatus: submitTarget.selector || submitTarget.status,
+    injectionTargetStatus: composerReady ? 'ready' : composerTarget.status,
+    injectionBlockers: injectionBlockers,
+    ready: composerReady,
     reason: !composerFound
-      ? 'composer not found'
+      ? 'composer injection target not found'
       : !composerVisible
-        ? 'composer not visible'
+        ? 'composer injection target not visible'
         : !composerEditable
-          ? 'composer not editable'
-          : 'composer ready'
+          ? 'composer injection target not editable'
+          : submitTargetReady
+            ? 'composer and submit target ready'
+            : 'composer injection target ready; submit target will be verified after insertion'
   };
 })()`;
 }
@@ -334,47 +494,33 @@ export function buildInjectionWithSubmitScript(
 	provider: BrowserProvider,
 ): string {
 	const escaped = JSON.stringify(text);
+	const composerSelectors = JSON.stringify(COMPOSER_SELECTORS[provider]);
 	const submitSelectors = JSON.stringify(SUBMIT_SELECTORS[provider]);
 	return `(function() {
-  var selectors = [
-    '#prompt-textarea',
-    '.ProseMirror[contenteditable="true"]',
-    'rich-textarea .ql-editor',
-    'div.ql-editor[contenteditable="true"]',
-    'div[contenteditable="true"]'
-  ];
-  var el = null;
-  for (var i = 0; i < selectors.length; i++) {
-    el = document.querySelector(selectors[i]);
-    if (el) break;
-  }
+  ${COMPOSER_TARGET_HELPER}
+  var composerTarget = findComposerTarget(${composerSelectors});
+  var el = composerTarget.element;
   if (!el) return "not_found";
-  el.focus();
-  document.execCommand('selectAll', false, null);
-  document.execCommand('delete', false, null);
-  var ok = document.execCommand('insertText', false, ${escaped});
-  if (!ok) {
-    el.textContent = ${escaped};
-    el.dispatchEvent(new InputEvent('input', {
-      inputType: 'insertText',
-      data: ${escaped},
-      bubbles: true,
-      composed: true
-    }));
-  }
+  setComposerText(el, ${escaped});
   return new Promise(function(resolve) {
-    setTimeout(function() {
-      var submitSelectors = ${submitSelectors};
-      for (var i = 0; i < submitSelectors.length; i++) {
-        var btn = document.querySelector(submitSelectors[i]);
-        if (btn && !btn.disabled) {
-          btn.click();
-          resolve("submitted");
-          return;
-        }
+    var attempts = 0;
+    var submitSelectors = ${submitSelectors};
+    function trySubmit() {
+      var submitTarget = findSubmitTarget(submitSelectors);
+      var btn = submitTarget.element;
+      if (btn && submitTarget.status === 'ready') {
+        btn.click();
+        resolve("submitted");
+        return;
+      }
+      attempts += 1;
+      if (attempts < 10) {
+        setTimeout(trySubmit, 250);
+        return;
       }
       resolve("injected");
-    }, 300);
+    }
+    setTimeout(trySubmit, 250);
   });
 })()`;
 }
