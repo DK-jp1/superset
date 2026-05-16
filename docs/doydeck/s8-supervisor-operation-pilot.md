@@ -18,6 +18,10 @@ pilot検証のための手順である。実運用でMeta AIが毎回send/read�
 stop reasonを監視し、preflight確認、返答分類、Doy確認境界の検出、Handoff記録を
 行うこと。
 
+DoyDeck本体開発は、外側環境 / 普通のSuperset / 作業側Codex・CCで進める。
+DoyDeck safe-devは、Controller chain / Meta AI連携の検証と実運用pilotに使う。
+safe-dev上のSupervisor pilotは、本体開発をDoyDeckだけで進める方針ではない。
+
 ## 1. S8の目的
 
 S8の目的は、Doyが毎回コピペ仲介しなくても、Browser AIと作業側Codex/CCの
@@ -36,7 +40,7 @@ Important non-goal:
 - Meta AIはAuto Loopを再実装しない。
 - Meta AIはsend/read系Controller accessorを毎回手動で順番実行して、
   Auto Loopの代替にしない。
-- DoyDeck本体開発はDoyDeck自身を母艦にしない。
+- DoyDeck本体開発はDoyDeck safe-dev / DoyDeck自身を母艦にしない。
 - DoyDeck safe-devはController chainやMeta AI連携の検証、実運用pilotに使う。
 
 ## 2. S8でやること

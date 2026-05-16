@@ -6,6 +6,13 @@ This document summarizes what S8 verified after the S7 controller chain work.
 It is a checkpoint for the Supervisor operation pilot, not a request to build a
 new Auto Loop engine.
 
+Scope boundary:
+
+- DoyDeck本体開発は、外側環境 / 普通のSuperset / 作業側Codex・CCで進める。
+- DoyDeck safe-devは、Controller chain / Meta AI連携の検証と実運用pilotに使う。
+- Meta AIはAuto Loopを作り直さず、既存Auto Loop / Controller chainの状態、結果、
+  stop reasonを監視、分類、記録する。
+
 ## 1. S8の目的
 
 S8の目的は、Doyが毎回コピペでBrowser AIと作業側Codex/CCの間を仲介しなくても、
@@ -23,7 +30,7 @@ Non-goal:
 
 - Meta AIはAuto Loop本体を再実装しない。
 - Meta AIはsend/read系accessorの逐次実行を、実運用のAuto Loop代替にしない。
-- DoyDeck本体開発をDoyDeck自身だけで進めない。
+- DoyDeck本体開発をDoyDeck safe-dev / DoyDeck自身だけで進めない。
 
 ## 2. S8でやったこと
 
