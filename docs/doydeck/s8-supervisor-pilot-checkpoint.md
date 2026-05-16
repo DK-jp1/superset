@@ -1,6 +1,6 @@
 # DoyDeck S8 Supervisor Pilot Checkpoint
 
-Status: S8.3-F checkpoint summary.
+Status: S8.5 low-risk docs pilot checkpoint summary.
 
 This document summarizes what S8 verified after the S7 controller chain work.
 It is a checkpoint for the Supervisor operation pilot, not a request to build a
@@ -171,6 +171,40 @@ Result:
 - `recordControllerChainOutcome()`でHandoffへ記録できた。
 - Auto Loopは開始していない。
 
+### S8.5: low-risk docs pilot live run
+
+S8.5では、低リスクdocsタスクを題材にSupervisor pilotを実運用した。
+
+Result:
+
+- Browser AI -> Codex -> Browser AIの主経路はかなり進んだ。
+- Browser AI docs reviewはOK。
+- docs-only Codex指示抽出はOK。
+- Doy確認分類の初回判定はOK。
+- bound Codex送信はSENT。
+- Codexはdocs-only変更を実施した。
+- `readBoundWorkerLatestResponse()`はREADYまで到達した。
+- Codex結果をBrowser AIへ返送できた。
+- Browser AI reviewはREADY。
+- review本文はsemanticには`Doy確認事項なし` + `STOP`だった。
+- Auto Loopは開始していない。
+- commit / pushは自動化していない。
+
+Fixes from S8.5:
+
+- `Doy確認事項なし`や、Doy確認不要を表す否定文の分類false positiveを修正した。
+- `STOP。次のWorker指示は不要。`のような句点付きSTOP分類を修正した。
+- Codex完了報告が`WAITING`のままになる問題を修正した。
+- low-risk docs pilotで発生したdocs-only変更は確認、commit、push済み。
+
+Safety interpretation:
+
+- Browser AI reviewでcommit / push系の判断が絡む可能性が出たため、安全ゲートで
+  BLOCKED停止した。
+- このBLOCKEDは失敗ではない。
+- Doy確認が必要な境界で止まれた、正常な安全停止として扱う。
+- S8.5は「低リスクdocsタスクでも、危険/承認境界では止まれる」ことを確認した。
+
 ## 3. S8で確認できたController flow
 
 S8では、以下のcontroller flowがpilotとして確認できた。
@@ -212,6 +246,7 @@ S8での主要な到達点:
 - Browser AI reviewのSTOP / 次指示 / Doy確認事項を分類できる。
 - Doy確認不要の否定表現を誤検出しにくくなった。
 - 条件文やルール説明のSTOP / Doy確認を実判断として拾いにくくなった。
+- Codex完了報告を`WAITING`ではなくREADYとして扱えるようになった。
 - OutcomeをHandoff Ledgerへ記録できる。
 - Handoff Ledger内でrecorded outcomeとlive stateを分けて見られる。
 
@@ -259,7 +294,7 @@ S8 checkpoint時点で、以下はまだpilot扱い。
 - Auto Loop本体は開始していない。
 - Meta AIはAuto Loopを再実装しない。
 - 2ターン強制smokeは未実施。
-- 実作業を伴う低リスクタスクはまだ限定的。
+- 実作業を伴う低リスクdocs pilotは通り始めたが、まだ題材数は限定的。
 - commit / push自動化はしない。
 - destructive / private API / token / cookie / local DB直接操作は対象外。
 - `local.db` / `app-state.json` / `~/.superset` / `~/.doydeck-superset-dev`直接操作は対象外。
@@ -289,33 +324,28 @@ S8 pilotで維持する安全ルール:
 
 ## 9. 次フェーズ候補
 
-Priority A: S8.3-G 2ターン強制no-op smoke
-
-- Browser AIに明示的に次Codex指示を返させ、2ターン目まで進むか確認する。
-- 2ターン目でもactive tab、Browser AI slot、Worker binding、last send markerが混線しないか見る。
-- `maxTurns:2`と明確なstop conditionを必須にする。
-
-Priority B: Browser-AI-only lightweight preflight
-
-- Worker不要の要件整理、壁打ち、レビューだけを軽量に確認する。
-- Browser AI provider、slot、composer、last submission、latest replyだけを見る。
-
-Priority C: 作業側CC / Claude Code smoke
+Priority A: 作業側CC / Claude Code smoke
 
 - Claude Codeをrecognized workerとしてbindし、Codexと同じcontroller chainが通るか確認する。
 - Claude Code固有のTUI noise、ACK、response extraction差分を見る。
 
-Priority D: Doy Feedback / Decision Ledger
+Priority B: Doy Feedback / Decision Ledger
 
 - Doyの承認、違和感、却下理由、最終判断をHandoffとは別粒度で残す。
 - Browser AI / Worker / Meta AIの判断とDoy判断を分ける。
 
-Priority E: Supervisor pilotを低リスクdocsタスクで実運用
+Priority C: 低リスクdocsタスクを別題材で再pilot
 
-- no-opではなく、小さいdocs整理や文言修正案でpilotする。
-- commit / pushは自動化せず、Doy確認で止める。
+- S8.5とは別の小さいdocs整理や文言修正でpilotする。
+- Doy確認なしで進めてよい範囲と、commit / push前に止まる境界を再確認する。
 
-Priority F: Auto Loop監視UI / stop reason表示強化
+Priority D: Browser-AI-only lightweight preflight
+
+- 必要になったら検討する。
+- Worker不要の要件整理、壁打ち、レビューだけを軽量に確認する。
+- Browser AI provider、slot、composer、last submission、latest replyだけを見る。
+
+Priority E: Auto Loop監視UI / stop reason表示強化
 
 - Controller chainで見えているblocker/warning/stop reasonをUIでも読みやすくする。
 - Doyが「なぜ止まったか」を即読めるようにする。
@@ -324,7 +354,8 @@ Priority F: Auto Loop監視UI / stop reason表示強化
 
 S8では、DoyDeckのSupervisor運用pilotとして、Doyのコピペ仲介なしに
 Browser AI -> 作業側Codex -> Browser AI -> STOP記録までの低リスク1ターンが通る
-ことを確認した。
+ことを確認した。S8.5では、no-opではなく低リスクdocsタスクでも主経路が進み、
+commit / pushやDoy確認境界で安全停止できることを確認した。
 
 まだ完全自律ではない。Meta AIはAuto Loopを再実装せず、既存Auto Loop /
 Controller chainを監視、確認し、介入判断と記録を行うpilot段階にいる。
