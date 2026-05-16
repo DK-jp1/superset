@@ -6,6 +6,7 @@ import { registerDoyDeckCommanderActionBridge } from "renderer/stores/doydeck-co
 import {
 	evaluateDoyDeckWorkerIdentity,
 	type DoyDeckWorkerIdentityStatus,
+	type DoyDeckWorkerType,
 	inferDoyDeckWorkerTypeFromEvidence,
 	makeDoyDeckWorkerBindingKey,
 	resolveDoyDeckWorkerBindingSnapshot,
@@ -35,6 +36,7 @@ import {
 	buildLatestReplyStateScript,
 	detectProvider,
 	getProviderLabel,
+	type BrowserProvider,
 } from "./browser-adapters";
 import {
 	registerCommanderBridge,
@@ -60,6 +62,7 @@ import {
 } from "./hooks/usePromptTransfer";
 import { CommanderBrowser } from "./CommanderBrowser";
 import { CommanderHelperBar } from "./CommanderHelperBar";
+import type { Pane, Tab } from "renderer/stores/tabs/types";
 import {
 	CapturePreview,
 	EditableTerminalPreview,
@@ -193,6 +196,67 @@ interface CommanderControllerAutoLoopPreflightResult
 	workerIdentityStatus: DoyDeckWorkerIdentityStatus;
 	workerIdentityBlockers: string[];
 	handoffMissingFields: string[];
+}
+
+type CommanderControllerSupervisorPilotReadinessStatus =
+	CommanderControllerPreflightStatus;
+type CommanderControllerSupervisorPilotProvider = "ChatGPT" | "Claude";
+
+interface CommanderControllerRecognizedWorkerCandidate {
+	paneId: string;
+	terminalId: string | null;
+	tabId: string | null;
+	workerType: DoyDeckWorkerType;
+	workerIdentityOk: boolean;
+	workerIdentityStatus: DoyDeckWorkerIdentityStatus;
+	workerIdentityBlockers: string[];
+	evidenceSummary: string;
+}
+
+interface CommanderControllerSupervisorPilotReadinessResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerSupervisorPilotReadinessStatus;
+	activeTabId: string | null;
+	browserAiProvider: string;
+	browserAiReady: boolean;
+	browserAiSlotOk: boolean;
+	composerInjectionReady: boolean;
+	composerReady: boolean;
+	submitTargetReady: boolean;
+	browserAiUrl: string;
+	browserAiComposer: CommanderControllerBrowserAiReadiness;
+	workerBound: boolean;
+	workerType: string;
+	workerIdentityOk: boolean;
+	workerPaneId: string | null;
+	terminalId: string | null;
+	autoLoopMode: AutoRelayMode;
+	autoLoopPhase: string;
+	blockers: string[];
+	warnings: string[];
+	nextRequiredAction: string;
+	recognizedWorkerCandidates: CommanderControllerRecognizedWorkerCandidate[];
+	preflightStatus: CommanderControllerPreflightStatus;
+	preflightBlockers: string[];
+	preflightWarnings: string[];
+}
+
+interface CommanderControllerSupervisorPilotPrepareInput {
+	browserProvider?: unknown;
+	bindExistingWorker?: unknown;
+	dryRun?: unknown;
+}
+
+interface CommanderControllerSupervisorPilotPrepareResult
+	extends CommanderControllerSupervisorPilotReadinessResult {
+	dryRun: boolean;
+	requestedBrowserProvider: CommanderControllerSupervisorPilotProvider;
+	navigationTargetUrl: string;
+	bindExistingWorker: boolean;
+	attemptedActions: string[];
+	performedActions: string[];
+	skippedActions: string[];
+	selectedWorkerCandidate: CommanderControllerRecognizedWorkerCandidate | null;
 }
 
 interface CommanderControllerChainSummaryResult
@@ -521,6 +585,10 @@ interface CommanderControllerCommands {
 	getHandoffLedger: () => CommanderControllerHandoffResult;
 	getAutoLoopPreflight: () => Promise<CommanderControllerAutoLoopPreflightResult>;
 	runAutoLoopPreflight: () => Promise<CommanderControllerAutoLoopPreflightResult>;
+	getSupervisorPilotReadiness: () => Promise<CommanderControllerSupervisorPilotReadinessResult>;
+	prepareSupervisorPilotReadiness: (
+		input?: CommanderControllerSupervisorPilotPrepareInput,
+	) => Promise<CommanderControllerSupervisorPilotPrepareResult>;
 	sendHandoffToBrowserAI: (
 		input?: unknown,
 	) => Promise<CommanderControllerSendHandoffResult>;
@@ -599,6 +667,7 @@ export function CommanderTab({
 	const activeTabId = useTabsStore(
 		(s) => (workspaceId ? s.activeTabIds[workspaceId] ?? null : null),
 	);
+	const tabs = useTabsStore((s) => s.tabs);
 	const panes = useTabsStore((s) => s.panes);
 	const workerBindingKey =
 		workspaceId && activeTabId
@@ -1151,6 +1220,202 @@ export function CommanderTab({
 			workerBinding,
 			workspaceId,
 		]);
+
+	const getRecognizedWorkerCandidatesController = useCallback(
+		(): CommanderControllerRecognizedWorkerCandidate[] =>
+			findSupervisorRecognizedWorkerCandidates({
+				workspaceId,
+				activeTabId,
+				tabs,
+				panes,
+			}),
+		[activeTabId, panes, tabs, workspaceId],
+	);
+
+	const buildSupervisorPilotReadinessResult = useCallback(
+		(
+			preflight: CommanderControllerAutoLoopPreflightResult,
+			candidates: CommanderControllerRecognizedWorkerCandidate[],
+			override?: Partial<CommanderControllerSupervisorPilotReadinessResult>,
+		): CommanderControllerSupervisorPilotReadinessResult => {
+			const blockers = [...preflight.blockers];
+			const warnings = [...preflight.warnings];
+			if (
+				preflight.workerBindingStatus !== "bound" &&
+				candidates.length === 0 &&
+				!blockers.includes("recognized worker terminal not found")
+			) {
+				blockers.push("recognized worker terminal not found");
+			}
+			const status: CommanderControllerSupervisorPilotReadinessStatus =
+				blockers.length > 0
+					? "BLOCKED"
+					: warnings.length > 0
+						? "READY_WITH_NOTES"
+						: "READY";
+			return {
+				ok: blockers.length === 0,
+				...getCommanderControllerContext(),
+				status,
+				activeTabId: preflight.activeTabId,
+				browserAiProvider: preflight.browserAiProvider,
+				browserAiReady: preflight.browserAiReady,
+				browserAiSlotOk: preflight.browserAiSlotOk,
+				composerInjectionReady: preflight.composerInjectionReady,
+				composerReady: preflight.composerReady,
+				submitTargetReady: preflight.submitTargetReady,
+				browserAiUrl: preflight.browserAiUrl,
+				browserAiComposer: preflight.browserAiComposer,
+				workerBound: preflight.workerBound,
+				workerType: preflight.workerType,
+				workerIdentityOk: preflight.workerIdentityOk,
+				workerPaneId: preflight.workerPaneId,
+				terminalId: preflight.terminalId,
+				autoLoopMode: preflight.autoLoopMode,
+				autoLoopPhase: preflight.autoLoopPhase,
+				blockers,
+				warnings,
+				nextRequiredAction: getSupervisorPilotReadinessNextAction(
+					blockers,
+					warnings,
+					candidates,
+				),
+				recognizedWorkerCandidates: candidates,
+				preflightStatus: preflight.status,
+				preflightBlockers: preflight.blockers,
+				preflightWarnings: preflight.warnings,
+				...override,
+			};
+		},
+		[getCommanderControllerContext],
+	);
+
+	const getSupervisorPilotReadinessController =
+		useCallback(async (): Promise<CommanderControllerSupervisorPilotReadinessResult> => {
+			const preflight = await getAutoLoopPreflightController();
+			const candidates = getRecognizedWorkerCandidatesController();
+			return buildSupervisorPilotReadinessResult(preflight, candidates);
+		}, [
+			buildSupervisorPilotReadinessResult,
+			getAutoLoopPreflightController,
+			getRecognizedWorkerCandidatesController,
+		]);
+
+	const prepareSupervisorPilotReadinessController = useCallback(
+		async (
+			input?: CommanderControllerSupervisorPilotPrepareInput,
+		): Promise<CommanderControllerSupervisorPilotPrepareResult> => {
+			const normalizedInput = normalizeSupervisorPilotPrepareInput(input);
+			const attemptedActions: string[] = [];
+			const performedActions: string[] = [];
+			const skippedActions: string[] = [];
+			let selectedWorkerCandidate: CommanderControllerRecognizedWorkerCandidate | null =
+				null;
+			const navigationTargetUrl = getSupervisorProviderUrl(
+				normalizedInput.browserProvider,
+			);
+			let preflight = await getAutoLoopPreflightController();
+			let candidates = getRecognizedWorkerCandidatesController();
+
+			if (!preflight.browserAiReady) {
+				attemptedActions.push(
+					`prepare Browser AI slot for ${normalizedInput.browserProvider}`,
+				);
+				if (normalizedInput.dryRun) {
+					skippedActions.push(
+						`dryRun: would navigate Browser AI to ${navigationTargetUrl}`,
+					);
+				} else {
+					webview.navigateTo(navigationTargetUrl);
+					performedActions.push(`navigated Browser AI to ${navigationTargetUrl}`);
+					const readinessAfterNavigation = await waitForSupervisorBrowserReadiness({
+						getRuntimeSnapshot: webview.getRuntimeSnapshot,
+						getLiveUrl: webview.getLiveUrl,
+						currentUrl: webview.currentUrl,
+						injectIntoPage: webview.injectIntoPage,
+						expectedProvider: normalizedInput.browserProvider,
+					});
+					if (!readinessAfterNavigation.ready) {
+						skippedActions.push(readinessAfterNavigation.reason);
+					}
+				}
+			}
+
+			if (!preflight.workerBound || !preflight.workerIdentityOk) {
+				attemptedActions.push("bind existing recognized worker to active tab");
+				selectedWorkerCandidate = candidates[0] ?? null;
+				if (!normalizedInput.bindExistingWorker) {
+					skippedActions.push("bindExistingWorker is false");
+				} else if (!selectedWorkerCandidate) {
+					skippedActions.push("recognized worker terminal not found");
+				} else if (normalizedInput.dryRun) {
+					skippedActions.push(
+						`dryRun: would bind ${selectedWorkerCandidate.workerType} terminal ${selectedWorkerCandidate.paneId}`,
+					);
+				} else if (!workspaceId || !activeTabId) {
+					skippedActions.push("active tab not found; worker bind skipped");
+				} else {
+					bindWorker({
+						workspaceId,
+						tabId: activeTabId,
+						workerPaneId: selectedWorkerCandidate.paneId,
+						terminalId: selectedWorkerCandidate.terminalId,
+						workerType: selectedWorkerCandidate.workerType,
+						bindingMode: "bound",
+						boundAt: Date.now(),
+					});
+					performedActions.push(
+						`bound ${selectedWorkerCandidate.workerType} terminal ${selectedWorkerCandidate.paneId} to active tab`,
+					);
+					preflight = applySupervisorWorkerCandidateToPreflight(
+						preflight,
+						selectedWorkerCandidate,
+					);
+				}
+			}
+
+			if (!normalizedInput.dryRun) {
+				await delay(0);
+				preflight = await getAutoLoopPreflightController();
+				if (
+					selectedWorkerCandidate &&
+					performedActions.some((action) => action.startsWith("bound "))
+				) {
+					preflight = applySupervisorWorkerCandidateToPreflight(
+						preflight,
+						selectedWorkerCandidate,
+					);
+				}
+				candidates = getRecognizedWorkerCandidatesController();
+			}
+
+			const readiness = buildSupervisorPilotReadinessResult(preflight, candidates);
+			return {
+				...readiness,
+				dryRun: normalizedInput.dryRun,
+				requestedBrowserProvider: normalizedInput.browserProvider,
+				navigationTargetUrl,
+				bindExistingWorker: normalizedInput.bindExistingWorker,
+				attemptedActions,
+				performedActions,
+				skippedActions,
+				selectedWorkerCandidate,
+			};
+		},
+		[
+			activeTabId,
+			bindWorker,
+			buildSupervisorPilotReadinessResult,
+			getAutoLoopPreflightController,
+			getRecognizedWorkerCandidatesController,
+			webview.currentUrl,
+			webview.getLiveUrl,
+			webview.getRuntimeSnapshot,
+			webview.injectIntoPage,
+			webview.navigateTo,
+			workspaceId,
+		],
+	);
 
 	const sendHandoffToBrowserAiController =
 		useCallback(async (
@@ -2568,6 +2833,9 @@ export function CommanderTab({
 			getHandoffLedger: buildHandoffLedgerController,
 			getAutoLoopPreflight: getAutoLoopPreflightController,
 			runAutoLoopPreflight: getAutoLoopPreflightController,
+			getSupervisorPilotReadiness: getSupervisorPilotReadinessController,
+			prepareSupervisorPilotReadiness:
+				prepareSupervisorPilotReadinessController,
 			sendHandoffToBrowserAI: sendHandoffToBrowserAiController,
 			readBrowserAiLatestReply: readBrowserAiLatestReplyController,
 			getBrowserAiLatestReply: readBrowserAiLatestReplyController,
@@ -2597,6 +2865,8 @@ export function CommanderTab({
 		setCommanderSessionController,
 		buildHandoffLedgerController,
 		getAutoLoopPreflightController,
+		getSupervisorPilotReadinessController,
+		prepareSupervisorPilotReadinessController,
 		sendHandoffToBrowserAiController,
 		readBrowserAiLatestReplyController,
 		sendInstructionToBoundWorkerController,
@@ -4448,6 +4718,252 @@ function getSendWorkerResponseBlockedMessage(blockers: string[]): string {
 		return "Select a DoyDeck task tab before sending the Worker Response.";
 	}
 	return `Worker Response send blocked: ${firstBlocker}`;
+}
+
+function findSupervisorRecognizedWorkerCandidates({
+	workspaceId,
+	activeTabId,
+	tabs,
+	panes,
+}: {
+	workspaceId: string;
+	activeTabId: string | null;
+	tabs: Tab[];
+	panes: Record<string, Pane>;
+}): CommanderControllerRecognizedWorkerCandidate[] {
+	const tabWorkspaceById = new Map(tabs.map((tab) => [tab.id, tab.workspaceId]));
+	const candidates = Object.values(panes)
+		.filter((pane) => pane.type === "terminal")
+		.filter((pane) => tabWorkspaceById.get(pane.tabId) === workspaceId)
+		.map((pane) => {
+			const terminalId = getTerminalIdFromPane(pane);
+			const outputText = getOutputLogSince(pane.id, 0);
+			const snapshot = getTerminalOutputSnapshot(pane.id);
+			const workerType = inferDoyDeckWorkerTypeFromEvidence({
+				outputText,
+				screenText: snapshot?.screenText,
+				viewportText: snapshot?.viewportText,
+				selectionText: getTerminalSelection(pane.id),
+				title: getPaneTextField(pane, "name"),
+				command: getPaneTextField(pane, "command"),
+				processName: getPaneTextField(pane, "processName"),
+			});
+			const identity = evaluateDoyDeckWorkerIdentity(workerType);
+			return {
+				paneId: pane.id,
+				terminalId,
+				tabId: pane.tabId,
+				workerType,
+				workerIdentityOk: identity.workerIdentityOk,
+				workerIdentityStatus: identity.workerIdentityStatus,
+				workerIdentityBlockers: identity.workerIdentityBlockers,
+				evidenceSummary: buildSupervisorWorkerEvidenceSummary({
+					workerType,
+					outputText,
+					screenText: snapshot?.screenText ?? "",
+					viewportText: snapshot?.viewportText ?? "",
+				}),
+			};
+		})
+		.filter((candidate) => candidate.workerIdentityOk);
+
+	return candidates.sort((a, b) => {
+		const activeTabDelta =
+			Number(b.tabId === activeTabId) - Number(a.tabId === activeTabId);
+		if (activeTabDelta !== 0) return activeTabDelta;
+		const codexDelta =
+			Number(b.workerType === "codex") - Number(a.workerType === "codex");
+		if (codexDelta !== 0) return codexDelta;
+		return a.paneId.localeCompare(b.paneId);
+	});
+}
+
+function getPaneTextField(pane: Pane, key: string): string | null {
+	const directValue = (pane as unknown as Record<string, unknown>)[key];
+	if (typeof directValue === "string" && directValue.trim()) return directValue;
+	const data = (pane as unknown as { data?: Record<string, unknown> | null }).data;
+	const dataValue = data?.[key];
+	if (typeof dataValue === "string" && dataValue.trim()) return dataValue;
+	return null;
+}
+
+function buildSupervisorWorkerEvidenceSummary({
+	workerType,
+	outputText,
+	screenText,
+	viewportText,
+}: {
+	workerType: DoyDeckWorkerType;
+	outputText: string;
+	screenText: string;
+	viewportText: string;
+}): string {
+	const evidence = `${outputText}\n${screenText}\n${viewportText}`;
+	const signals: string[] = [];
+	if (/\bOpenAI\s+Codex\b/i.test(evidence)) signals.push("OpenAI Codex");
+	if (/\bmodel:\s*gpt-/i.test(evidence)) signals.push("model:gpt");
+	if (/\bpermissions:\s*YOLO\s+mode\b/i.test(evidence)) {
+		signals.push("YOLO mode");
+	}
+	if (/\bCODEX_WORKER_READY\b/i.test(evidence)) {
+		signals.push("CODEX_WORKER_READY");
+	}
+	if (/\bClaude\s+Code\b/i.test(evidence)) signals.push("Claude Code");
+	if (/\bAnthropic\b/i.test(evidence)) signals.push("Anthropic");
+	if (/\bCLAUDE_WORKER_READY\b/i.test(evidence)) {
+		signals.push("CLAUDE_WORKER_READY");
+	}
+	return signals.length > 0
+		? `${workerType}: ${signals.join(", ")}`
+		: `${workerType}: recognized worker evidence`;
+}
+
+function normalizeSupervisorPilotPrepareInput(
+	input?: CommanderControllerSupervisorPilotPrepareInput,
+): {
+	browserProvider: CommanderControllerSupervisorPilotProvider;
+	bindExistingWorker: boolean;
+	dryRun: boolean;
+} {
+	const record = input && typeof input === "object" ? input : {};
+	return {
+		browserProvider: normalizeSupervisorPilotProvider(
+			(record as CommanderControllerSupervisorPilotPrepareInput).browserProvider,
+		),
+		bindExistingWorker:
+			(record as CommanderControllerSupervisorPilotPrepareInput)
+				.bindExistingWorker !== false,
+		dryRun:
+			(record as CommanderControllerSupervisorPilotPrepareInput).dryRun !== false,
+	};
+}
+
+function normalizeSupervisorPilotProvider(
+	value: unknown,
+): CommanderControllerSupervisorPilotProvider {
+	if (typeof value === "string" && /^claude$/i.test(value.trim())) {
+		return "Claude";
+	}
+	return "ChatGPT";
+}
+
+function supervisorPilotProviderToBrowserProvider(
+	provider: CommanderControllerSupervisorPilotProvider,
+): BrowserProvider {
+	return provider === "Claude" ? "claude" : "chatgpt";
+}
+
+function getSupervisorProviderUrl(
+	provider: CommanderControllerSupervisorPilotProvider,
+): string {
+	return provider === "Claude" ? "https://claude.ai/" : "https://chatgpt.com/";
+}
+
+async function waitForSupervisorBrowserReadiness({
+	getRuntimeSnapshot,
+	getLiveUrl,
+	currentUrl,
+	injectIntoPage,
+	expectedProvider,
+}: {
+	getRuntimeSnapshot: () => { status: string; bridgeAvailable: boolean; currentUrl: string };
+	getLiveUrl: () => string;
+	currentUrl: string;
+	injectIntoPage: (script: string) => Promise<unknown>;
+	expectedProvider: CommanderControllerSupervisorPilotProvider;
+}): Promise<{ ready: boolean; reason: string }> {
+	const expectedBrowserProvider =
+		supervisorPilotProviderToBrowserProvider(expectedProvider);
+	const deadline = Date.now() + 10000;
+	let lastReason = "Browser AI did not become ready before timeout";
+	while (Date.now() < deadline) {
+		await delay(500);
+		const runtime = getRuntimeSnapshot();
+		const liveUrl = getLiveUrl() || currentUrl || runtime.currentUrl;
+		const provider = detectProvider(liveUrl);
+		if (provider !== expectedBrowserProvider) {
+			lastReason = `Browser AI is not on ${expectedProvider}: ${liveUrl || "(blank)"}`;
+			continue;
+		}
+		const composerReadiness = await readBrowserAiComposerReadiness({
+			provider,
+			injectIntoPage,
+		});
+		if (
+			runtime.status === "available" &&
+			runtime.bridgeAvailable &&
+			composerReadiness.composerInjectionReady
+		) {
+			return { ready: true, reason: `${expectedProvider} composer is ready` };
+		}
+		lastReason = composerReadiness.reason;
+	}
+	return { ready: false, reason: lastReason };
+}
+
+function getSupervisorPilotReadinessNextAction(
+	blockers: string[],
+	warnings: string[],
+	candidates: CommanderControllerRecognizedWorkerCandidate[],
+): string {
+	if (
+		blockers.includes("browser ai provider not ready") ||
+		blockers.includes("browser ai runtime unavailable") ||
+		blockers.some((blocker) => blocker.includes("composer"))
+	) {
+		return "Prepare the Browser AI slot with ChatGPT or Claude, then rerun readiness.";
+	}
+	if (blockers.includes("worker binding required")) {
+		return candidates.length > 0
+			? "Bind an existing recognized Codex or Claude Code terminal to the active tab."
+			: "Start or select a Codex or Claude Code terminal, then bind it to the active tab.";
+	}
+	if (blockers.includes("recognized worker terminal not found")) {
+		return "Start or select a Codex or Claude Code terminal before preparing supervisor pilot readiness.";
+	}
+	return getAutoLoopPreflightNextAction(blockers, warnings);
+}
+
+function applySupervisorWorkerCandidateToPreflight(
+	preflight: CommanderControllerAutoLoopPreflightResult,
+	candidate: CommanderControllerRecognizedWorkerCandidate,
+): CommanderControllerAutoLoopPreflightResult {
+	const filteredBlockers = preflight.blockers.filter(
+		(blocker) =>
+			![
+				"worker binding required",
+				"worker identity could not be verified",
+				"bound terminal is shell, not a recognized worker",
+			].some((workerBlocker) => blocker.includes(workerBlocker)),
+	);
+	const status: CommanderControllerPreflightStatus =
+		filteredBlockers.length > 0
+			? "BLOCKED"
+			: preflight.warnings.length > 0
+				? "READY_WITH_NOTES"
+				: "READY";
+	return {
+		...preflight,
+		ok: filteredBlockers.length === 0,
+		status,
+		workerBound: true,
+		workerBindingStatus: "bound",
+		workerPaneId: candidate.paneId,
+		terminalId: candidate.terminalId,
+		workerType: candidate.workerType,
+		workerIdentityOk: true,
+		workerIdentityStatus: candidate.workerIdentityStatus,
+		workerIdentityBlockers: [],
+		blockers: filteredBlockers,
+		nextRequiredAction: getAutoLoopPreflightNextAction(
+			filteredBlockers,
+			preflight.warnings,
+		),
+	};
+}
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function getAutoLoopPreflightNextAction(
