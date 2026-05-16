@@ -338,6 +338,51 @@ interface CommanderControllerSendWorkerResponseResult
 	};
 }
 
+type CommanderControllerBrowserAiSubmissionType = "handoff" | "worker-response";
+type CommanderControllerBrowserAiSubmissionRecordStatus =
+	| "SENT"
+	| "BLOCKED"
+	| "FAILED";
+type CommanderControllerBrowserAiSubmissionResultStatus =
+	| "READY"
+	| "NONE"
+	| "BLOCKED"
+	| "FAILED";
+
+interface CommanderControllerBrowserAiSubmissionState {
+	submissionId: string;
+	activeTabId: string | null;
+	type: CommanderControllerBrowserAiSubmissionType;
+	browserAiProvider: string;
+	browserAiReady: boolean;
+	browserAiSlotOk: boolean;
+	promptLength: number;
+	payloadLength: number;
+	sentAt: string | null;
+	recordedAt: string;
+	injectionResult: string | null;
+	status: CommanderControllerBrowserAiSubmissionRecordStatus;
+	message: string;
+	warnings: string[];
+	blockers: string[];
+	detectedUserMessageAfterSubmit: boolean | null;
+	detectedAssistantReplyAfterSubmit: boolean | null;
+	latestAssistantReplyStatus: CommanderControllerLatestReplyStatus | null;
+	latestAssistantReplyLength: number | null;
+	latestAssistantReplyFingerprint: string | null;
+	latestAssistantReplyReadAt: string | null;
+	assistantCountBeforeSubmit: number | null;
+	latestAssistantReplyFingerprintBeforeSubmit: string | null;
+}
+
+type CommanderControllerBrowserAiSubmissionResult =
+	CommanderControllerCommandResult &
+		Omit<CommanderControllerBrowserAiSubmissionState, "status" | "type"> & {
+			status: CommanderControllerBrowserAiSubmissionResultStatus;
+			type: CommanderControllerBrowserAiSubmissionType | null;
+			ok: boolean;
+		};
+
 interface CommanderControllerCommands {
 	version: "0.1";
 	workspaceId: string;
@@ -366,6 +411,8 @@ interface CommanderControllerCommands {
 	sendWorkerResponseToBrowserAI: (
 		input?: unknown,
 	) => Promise<CommanderControllerSendWorkerResponseResult>;
+	getBrowserAiLastSubmission: () => CommanderControllerBrowserAiSubmissionResult;
+	getBrowserAiSubmissionState: () => CommanderControllerBrowserAiSubmissionResult;
 }
 
 type CommanderControllerWindow = Window &
@@ -399,6 +446,9 @@ export function CommanderTab({
 	] = useState(true);
 	const lastWorkerInstructionMarkerRef =
 		useRef<CommanderControllerLastWorkerInstructionMarker | null>(null);
+	const lastBrowserAiSubmissionRef =
+		useRef<CommanderControllerBrowserAiSubmissionState | null>(null);
+	const browserAiSubmissionSequenceRef = useRef(0);
 
 	const workerPrompt = useMemo(
 		() => generateWorkerPrompt(state),
@@ -564,6 +614,161 @@ export function CommanderTab({
 			tabId: activeTabId,
 		}),
 		[workspaceId, activeTabId],
+	);
+
+	const recordBrowserAiSubmissionControllerState = useCallback(
+		(
+			input: Omit<
+				CommanderControllerBrowserAiSubmissionState,
+				| "submissionId"
+				| "recordedAt"
+				| "detectedUserMessageAfterSubmit"
+				| "detectedAssistantReplyAfterSubmit"
+				| "latestAssistantReplyStatus"
+				| "latestAssistantReplyLength"
+				| "latestAssistantReplyFingerprint"
+				| "latestAssistantReplyReadAt"
+			>,
+		): CommanderControllerBrowserAiSubmissionState => {
+			browserAiSubmissionSequenceRef.current += 1;
+			const submission: CommanderControllerBrowserAiSubmissionState = {
+				...input,
+				submissionId: `browser-ai-submission-${Date.now().toString(36)}-${browserAiSubmissionSequenceRef.current.toString(36)}`,
+				recordedAt: new Date().toISOString(),
+				detectedUserMessageAfterSubmit:
+					input.status === "SENT" && input.injectionResult === "submitted"
+						? null
+						: false,
+				detectedAssistantReplyAfterSubmit: null,
+				latestAssistantReplyStatus: null,
+				latestAssistantReplyLength: null,
+				latestAssistantReplyFingerprint: null,
+				latestAssistantReplyReadAt: null,
+			};
+			lastBrowserAiSubmissionRef.current = submission;
+			return submission;
+		},
+		[],
+	);
+
+	const getBrowserAiSubmissionStateController =
+		useCallback((): CommanderControllerBrowserAiSubmissionResult => {
+			const submission = lastBrowserAiSubmissionRef.current;
+			if (!submission) {
+				return {
+					ok: false,
+					...getCommanderControllerContext(),
+					status: "NONE",
+					submissionId: "",
+					activeTabId: activeTabId,
+					type: null,
+					browserAiProvider: "Unsupported",
+					browserAiReady: false,
+					browserAiSlotOk: false,
+					promptLength: 0,
+					payloadLength: 0,
+					sentAt: null,
+					recordedAt: "",
+					injectionResult: null,
+					message: "No Browser AI submission has been recorded",
+					warnings: [],
+					blockers: [],
+					detectedUserMessageAfterSubmit: null,
+					detectedAssistantReplyAfterSubmit: null,
+					latestAssistantReplyStatus: null,
+					latestAssistantReplyLength: null,
+					latestAssistantReplyFingerprint: null,
+					latestAssistantReplyReadAt: null,
+					assistantCountBeforeSubmit: null,
+					latestAssistantReplyFingerprintBeforeSubmit: null,
+				};
+			}
+			return {
+				ok: submission.status === "SENT",
+				...getCommanderControllerContext(),
+				...submission,
+				status: submission.status === "SENT" ? "READY" : submission.status,
+			};
+		}, [activeTabId, getCommanderControllerContext]);
+
+	const syncBrowserAiSubmissionAfterLatestReplyRead = useCallback(
+		({
+			activeTabId: readActiveTabId,
+			browserAiProvider,
+			status,
+			latestReplyText,
+			latestReplyFingerprint,
+			assistantCount,
+			readAt,
+		}: {
+			activeTabId: string | null;
+			browserAiProvider: string;
+			status: CommanderControllerLatestReplyStatus;
+			latestReplyText: string;
+			latestReplyFingerprint: string | null;
+			assistantCount: number | null;
+			readAt: string | null;
+		}): string[] => {
+			const submission = lastBrowserAiSubmissionRef.current;
+			if (!submission) return [];
+			const warnings: string[] = [];
+			if (submission.activeTabId !== readActiveTabId) {
+				warnings.push(
+					`last Browser AI submission belongs to tab ${submission.activeTabId ?? "(none)"}, current tab is ${readActiveTabId ?? "(none)"}`,
+				);
+				return warnings;
+			}
+			if (submission.browserAiProvider !== browserAiProvider) {
+				warnings.push(
+					`browser ai provider changed after last submission: ${submission.browserAiProvider} -> ${browserAiProvider}`,
+				);
+			}
+
+			const latestTextAvailable = latestReplyText.trim().length > 0;
+			let detectedAssistantReplyAfterSubmit: boolean | null = null;
+			if (status === "READY" && latestTextAvailable) {
+				if (
+					submission.latestAssistantReplyFingerprintBeforeSubmit &&
+					latestReplyFingerprint
+				) {
+					detectedAssistantReplyAfterSubmit =
+						latestReplyFingerprint !==
+						submission.latestAssistantReplyFingerprintBeforeSubmit;
+				} else if (
+					submission.assistantCountBeforeSubmit !== null &&
+					assistantCount !== null
+				) {
+					detectedAssistantReplyAfterSubmit =
+						assistantCount > submission.assistantCountBeforeSubmit;
+				} else {
+					detectedAssistantReplyAfterSubmit = null;
+				}
+			} else if (status === "WAITING" && !latestTextAvailable) {
+				detectedAssistantReplyAfterSubmit = false;
+			}
+
+			if (
+				submission.status === "SENT" &&
+				status === "WAITING" &&
+				!latestTextAvailable
+			) {
+				warnings.push(
+					`last Browser AI submission was ${submission.type} at ${submission.sentAt ?? submission.recordedAt}; no assistant reply detected after last submission`,
+				);
+				warnings.push("provider/thread may have changed or Browser AI may still be responding");
+			}
+
+			lastBrowserAiSubmissionRef.current = {
+				...submission,
+				detectedAssistantReplyAfterSubmit,
+				latestAssistantReplyStatus: status,
+				latestAssistantReplyLength: latestReplyText.length,
+				latestAssistantReplyFingerprint: latestReplyFingerprint,
+				latestAssistantReplyReadAt: readAt,
+			};
+			return warnings;
+		},
+		[],
 	);
 
 	const getCommanderSessionControllerResult =
@@ -863,6 +1068,16 @@ export function CommanderTab({
 			}
 
 			const prompt = ledger.trim() ? buildSendHandoffLedgerPrompt(ledger) : "";
+			let latestReplyBeforeSubmit: BrowserAiLatestReplyState | null = null;
+			if (provider && runtime.status === "available" && runtime.bridgeAvailable) {
+				try {
+					latestReplyBeforeSubmit = normalizeBrowserAiLatestReplyState(
+						await webview.injectIntoPage(buildLatestReplyStateScript(provider)),
+					);
+				} catch {
+					warnings.push("browser ai latest reply baseline unavailable before submit");
+				}
+			}
 			const baseResult = {
 				...getCommanderControllerContext(),
 				activeTabId: activeTabIdSnapshot,
@@ -883,11 +1098,31 @@ export function CommanderTab({
 			};
 
 			if (blockers.length > 0 || !provider) {
+				const message = getSendHandoffBlockedMessage(blockers);
+				recordBrowserAiSubmissionControllerState({
+					activeTabId: activeTabIdSnapshot,
+					type: "handoff",
+					browserAiProvider: baseResult.browserAiProvider,
+					browserAiReady,
+					browserAiSlotOk,
+					promptLength: prompt.length,
+					payloadLength: handoffLedgerLength,
+					sentAt: null,
+					injectionResult: null,
+					status: "BLOCKED",
+					message,
+					warnings: [...warnings],
+					blockers: [...blockers],
+					assistantCountBeforeSubmit:
+						latestReplyBeforeSubmit?.assistantCount ?? null,
+					latestAssistantReplyFingerprintBeforeSubmit:
+						latestReplyBeforeSubmit?.latestFingerprint ?? null,
+				});
 				return {
 					ok: false,
 					...baseResult,
 					status: "BLOCKED",
-					message: getSendHandoffBlockedMessage(blockers),
+					message,
 				};
 			}
 
@@ -897,40 +1132,102 @@ export function CommanderTab({
 				);
 				const injectionResult = typeof result === "string" ? result : "unknown";
 				if (injectionResult === "submitted") {
+					const sentAt = new Date().toISOString();
+					const message = `${getProviderLabel(provider)}にHandoff Ledgerを送信しました`;
+					recordBrowserAiSubmissionControllerState({
+						activeTabId: activeTabIdSnapshot,
+						type: "handoff",
+						browserAiProvider: baseResult.browserAiProvider,
+						browserAiReady,
+						browserAiSlotOk,
+						promptLength: prompt.length,
+						payloadLength: handoffLedgerLength,
+						sentAt,
+						injectionResult,
+						status: "SENT",
+						message,
+						warnings: [...warnings],
+						blockers: [...blockers],
+						assistantCountBeforeSubmit:
+							latestReplyBeforeSubmit?.assistantCount ?? null,
+						latestAssistantReplyFingerprintBeforeSubmit:
+							latestReplyBeforeSubmit?.latestFingerprint ?? null,
+					});
 					return {
 						ok: true,
 						...baseResult,
 						status: "SENT",
-						message: `${getProviderLabel(provider)}にHandoff Ledgerを送信しました`,
-						sentAt: new Date().toISOString(),
+						message,
+						sentAt,
 						injectionResult,
 					};
 				}
+				const message =
+					injectionResult === "injected"
+						? "Handoff Ledger was injected but not submitted"
+						: `Handoff Ledger submit failed: ${injectionResult}`;
+				recordBrowserAiSubmissionControllerState({
+					activeTabId: activeTabIdSnapshot,
+					type: "handoff",
+					browserAiProvider: baseResult.browserAiProvider,
+					browserAiReady,
+					browserAiSlotOk,
+					promptLength: prompt.length,
+					payloadLength: handoffLedgerLength,
+					sentAt: null,
+					injectionResult,
+					status: "FAILED",
+					message,
+					warnings: [...warnings],
+					blockers: [...blockers],
+					assistantCountBeforeSubmit:
+						latestReplyBeforeSubmit?.assistantCount ?? null,
+					latestAssistantReplyFingerprintBeforeSubmit:
+						latestReplyBeforeSubmit?.latestFingerprint ?? null,
+				});
 				return {
 					ok: false,
 					...baseResult,
 					status: "FAILED",
-					message:
-						injectionResult === "injected"
-							? "Handoff Ledger was injected but not submitted"
-							: `Handoff Ledger submit failed: ${injectionResult}`,
+					message,
 					injectionResult,
 				};
 			} catch (error) {
+				const message =
+					error instanceof Error
+						? `Handoff Ledger submit failed: ${error.message}`
+						: "Handoff Ledger submit failed";
+				recordBrowserAiSubmissionControllerState({
+					activeTabId: activeTabIdSnapshot,
+					type: "handoff",
+					browserAiProvider: baseResult.browserAiProvider,
+					browserAiReady,
+					browserAiSlotOk,
+					promptLength: prompt.length,
+					payloadLength: handoffLedgerLength,
+					sentAt: null,
+					injectionResult: null,
+					status: "FAILED",
+					message,
+					warnings: [...warnings],
+					blockers: [...blockers],
+					assistantCountBeforeSubmit:
+						latestReplyBeforeSubmit?.assistantCount ?? null,
+					latestAssistantReplyFingerprintBeforeSubmit:
+						latestReplyBeforeSubmit?.latestFingerprint ?? null,
+				});
 				return {
 					ok: false,
 					...baseResult,
 					status: "FAILED",
-					message:
-						error instanceof Error
-							? `Handoff Ledger submit failed: ${error.message}`
-							: "Handoff Ledger submit failed",
+					message,
 				};
 			}
 		}, [
 			activeTabId,
 			buildHandoffLedgerController,
 			getCommanderControllerContext,
+			recordBrowserAiSubmissionControllerState,
 			webview.currentUrl,
 			webview.getLiveUrl,
 			webview.getRuntimeSnapshot,
@@ -987,6 +1284,17 @@ export function CommanderTab({
 			};
 
 			if (blockers.length > 0 || !provider) {
+				warnings.push(
+					...syncBrowserAiSubmissionAfterLatestReplyRead({
+						activeTabId: activeTabIdSnapshot,
+						browserAiProvider: baseResult.browserAiProvider,
+						status: "BLOCKED",
+						latestReplyText: "",
+						latestReplyFingerprint: null,
+						assistantCount: null,
+						readAt: null,
+					}),
+				);
 				return {
 					ok: false,
 					...baseResult,
@@ -1015,6 +1323,18 @@ export function CommanderTab({
 					await webview.injectIntoPage(buildLatestReplyStateScript(provider)),
 				);
 			} catch (error) {
+				const readAt = new Date().toISOString();
+				warnings.push(
+					...syncBrowserAiSubmissionAfterLatestReplyRead({
+						activeTabId: activeTabIdSnapshot,
+						browserAiProvider: baseResult.browserAiProvider,
+						status: "FAILED",
+						latestReplyText: "",
+						latestReplyFingerprint: null,
+						assistantCount: null,
+						readAt,
+					}),
+				);
 				return {
 					ok: false,
 					...baseResult,
@@ -1036,11 +1356,23 @@ export function CommanderTab({
 						error instanceof Error
 							? `Browser AI latest reply read failed: ${error.message}`
 							: "Browser AI latest reply read failed",
-					readAt: new Date().toISOString(),
+					readAt,
 				};
 			}
 
 			if (latestState.isResponding) {
+				const readAt = new Date().toISOString();
+				warnings.push(
+					...syncBrowserAiSubmissionAfterLatestReplyRead({
+						activeTabId: activeTabIdSnapshot,
+						browserAiProvider: baseResult.browserAiProvider,
+						status: "WAITING",
+						latestReplyText: latestState.latestText,
+						latestReplyFingerprint: latestState.latestFingerprint,
+						assistantCount: latestState.assistantCount,
+						readAt,
+					}),
+				);
 				return {
 					ok: false,
 					...baseResult,
@@ -1059,7 +1391,7 @@ export function CommanderTab({
 					blockers,
 					warnings,
 					message: "Browser AI is still responding",
-					readAt: new Date().toISOString(),
+					readAt,
 				};
 			}
 
@@ -1068,6 +1400,18 @@ export function CommanderTab({
 			}
 
 			if (blockers.length > 0) {
+				const readAt = new Date().toISOString();
+				warnings.push(
+					...syncBrowserAiSubmissionAfterLatestReplyRead({
+						activeTabId: activeTabIdSnapshot,
+						browserAiProvider: baseResult.browserAiProvider,
+						status: "BLOCKED",
+						latestReplyText: latestState.latestText,
+						latestReplyFingerprint: latestState.latestFingerprint,
+						assistantCount: latestState.assistantCount,
+						readAt,
+					}),
+				);
 				return {
 					ok: false,
 					...baseResult,
@@ -1086,12 +1430,24 @@ export function CommanderTab({
 					blockers,
 					warnings,
 					message: getBrowserAiLatestReplyMessage("BLOCKED", blockers, warnings),
-					readAt: new Date().toISOString(),
+					readAt,
 				};
 			}
 
 			if (!latestState.latestText.trim()) {
 				warnings.push("latest assistant reply not found");
+				const readAt = new Date().toISOString();
+				warnings.push(
+					...syncBrowserAiSubmissionAfterLatestReplyRead({
+						activeTabId: activeTabIdSnapshot,
+						browserAiProvider: baseResult.browserAiProvider,
+						status: "WAITING",
+						latestReplyText: "",
+						latestReplyFingerprint: latestState.latestFingerprint,
+						assistantCount: latestState.assistantCount,
+						readAt,
+					}),
+				);
 				return {
 					ok: false,
 					...baseResult,
@@ -1110,7 +1466,7 @@ export function CommanderTab({
 					blockers,
 					warnings,
 					message: getBrowserAiLatestReplyMessage("WAITING", blockers, warnings),
-					readAt: new Date().toISOString(),
+					readAt,
 				};
 			}
 
@@ -1120,6 +1476,18 @@ export function CommanderTab({
 			const extractedStopSignal = extractBrowserAiStopSignal(latestState.latestText);
 			const extractedDoyConfirmationItems = extractDoyConfirmationItems(
 				latestState.latestText,
+			);
+			const readAt = new Date().toISOString();
+			warnings.push(
+				...syncBrowserAiSubmissionAfterLatestReplyRead({
+					activeTabId: activeTabIdSnapshot,
+					browserAiProvider: baseResult.browserAiProvider,
+					status: "READY",
+					latestReplyText: latestState.latestText,
+					latestReplyFingerprint: latestState.latestFingerprint,
+					assistantCount: latestState.assistantCount,
+					readAt,
+				}),
 			);
 
 			return {
@@ -1140,13 +1508,14 @@ export function CommanderTab({
 				blockers,
 				warnings,
 				message: getBrowserAiLatestReplyMessage("READY", blockers, warnings),
-				readAt: new Date().toISOString(),
+				readAt,
 			};
-		}, [
-			activeTabId,
-			getCommanderControllerContext,
-			webview.currentUrl,
-			webview.getLiveUrl,
+			}, [
+				activeTabId,
+				getCommanderControllerContext,
+				syncBrowserAiSubmissionAfterLatestReplyRead,
+				webview.currentUrl,
+				webview.getLiveUrl,
 			webview.getRuntimeSnapshot,
 			webview.injectIntoPage,
 			workspaceId,
@@ -1614,6 +1983,16 @@ export function CommanderTab({
 						hasGitOperationSignal: workerResponse.hasGitOperationSignal,
 					})
 				: "";
+			let latestReplyBeforeSubmit: BrowserAiLatestReplyState | null = null;
+			if (provider && runtime.status === "available" && runtime.bridgeAvailable) {
+				try {
+					latestReplyBeforeSubmit = normalizeBrowserAiLatestReplyState(
+						await webview.injectIntoPage(buildLatestReplyStateScript(provider)),
+					);
+				} catch {
+					warnings.push("browser ai latest reply baseline unavailable before submit");
+				}
+			}
 			const baseResult = {
 				...getCommanderControllerContext(),
 				activeTabId: activeTabIdSnapshot,
@@ -1643,11 +2022,31 @@ export function CommanderTab({
 			};
 
 			if (blockers.length > 0 || !provider) {
+				const message = getSendWorkerResponseBlockedMessage(blockers);
+				recordBrowserAiSubmissionControllerState({
+					activeTabId: activeTabIdSnapshot,
+					type: "worker-response",
+					browserAiProvider: baseResult.browserAiProvider,
+					browserAiReady,
+					browserAiSlotOk,
+					promptLength: prompt.length,
+					payloadLength: responseText.length,
+					sentAt: null,
+					injectionResult: null,
+					status: "BLOCKED",
+					message,
+					warnings: [...warnings],
+					blockers: [...blockers],
+					assistantCountBeforeSubmit:
+						latestReplyBeforeSubmit?.assistantCount ?? null,
+					latestAssistantReplyFingerprintBeforeSubmit:
+						latestReplyBeforeSubmit?.latestFingerprint ?? null,
+				});
 				return {
 					ok: false,
 					...baseResult,
 					status: "BLOCKED",
-					message: getSendWorkerResponseBlockedMessage(blockers),
+					message,
 				};
 			}
 
@@ -1657,39 +2056,101 @@ export function CommanderTab({
 				);
 				const injectionResult = typeof result === "string" ? result : "unknown";
 				if (injectionResult === "submitted") {
+					const sentAt = new Date().toISOString();
+					const message = `${getProviderLabel(provider)}にWorker Responseを送信しました`;
+					recordBrowserAiSubmissionControllerState({
+						activeTabId: activeTabIdSnapshot,
+						type: "worker-response",
+						browserAiProvider: baseResult.browserAiProvider,
+						browserAiReady,
+						browserAiSlotOk,
+						promptLength: prompt.length,
+						payloadLength: responseText.length,
+						sentAt,
+						injectionResult,
+						status: "SENT",
+						message,
+						warnings: [...warnings],
+						blockers: [...blockers],
+						assistantCountBeforeSubmit:
+							latestReplyBeforeSubmit?.assistantCount ?? null,
+						latestAssistantReplyFingerprintBeforeSubmit:
+							latestReplyBeforeSubmit?.latestFingerprint ?? null,
+					});
 					return {
 						ok: true,
 						...baseResult,
 						status: "SENT",
-						message: `${getProviderLabel(provider)}にWorker Responseを送信しました`,
-						sentAt: new Date().toISOString(),
+						message,
+						sentAt,
 						injectionResult,
 					};
 				}
+				const message =
+					injectionResult === "injected"
+						? "Worker Response was injected but not submitted"
+						: `Worker Response submit failed: ${injectionResult}`;
+				recordBrowserAiSubmissionControllerState({
+					activeTabId: activeTabIdSnapshot,
+					type: "worker-response",
+					browserAiProvider: baseResult.browserAiProvider,
+					browserAiReady,
+					browserAiSlotOk,
+					promptLength: prompt.length,
+					payloadLength: responseText.length,
+					sentAt: null,
+					injectionResult,
+					status: "FAILED",
+					message,
+					warnings: [...warnings],
+					blockers: [...blockers],
+					assistantCountBeforeSubmit:
+						latestReplyBeforeSubmit?.assistantCount ?? null,
+					latestAssistantReplyFingerprintBeforeSubmit:
+						latestReplyBeforeSubmit?.latestFingerprint ?? null,
+				});
 				return {
 					ok: false,
 					...baseResult,
 					status: "FAILED",
-					message:
-						injectionResult === "injected"
-							? "Worker Response was injected but not submitted"
-							: `Worker Response submit failed: ${injectionResult}`,
+					message,
 					injectionResult,
 				};
 			} catch (error) {
+				const message =
+					error instanceof Error
+						? `Worker Response submit failed: ${error.message}`
+						: "Worker Response submit failed";
+				recordBrowserAiSubmissionControllerState({
+					activeTabId: activeTabIdSnapshot,
+					type: "worker-response",
+					browserAiProvider: baseResult.browserAiProvider,
+					browserAiReady,
+					browserAiSlotOk,
+					promptLength: prompt.length,
+					payloadLength: responseText.length,
+					sentAt: null,
+					injectionResult: null,
+					status: "FAILED",
+					message,
+					warnings: [...warnings],
+					blockers: [...blockers],
+					assistantCountBeforeSubmit:
+						latestReplyBeforeSubmit?.assistantCount ?? null,
+					latestAssistantReplyFingerprintBeforeSubmit:
+						latestReplyBeforeSubmit?.latestFingerprint ?? null,
+				});
 				return {
 					ok: false,
 					...baseResult,
 					status: "FAILED",
-					message:
-						error instanceof Error
-							? `Worker Response submit failed: ${error.message}`
-							: "Worker Response submit failed",
+					message,
 				};
 			}
 		}, [
 			activeTabId,
 			getCommanderControllerContext,
+			recordBrowserAiSubmissionControllerState,
 			readBoundWorkerLatestResponseController,
 			webview.currentUrl,
 			webview.getLiveUrl,
@@ -1747,6 +2208,8 @@ export function CommanderTab({
 			sendBoundWorkerResponseToBrowserAI:
 				sendBoundWorkerResponseToBrowserAiController,
 			sendWorkerResponseToBrowserAI: sendBoundWorkerResponseToBrowserAiController,
+			getBrowserAiLastSubmission: getBrowserAiSubmissionStateController,
+			getBrowserAiSubmissionState: getBrowserAiSubmissionStateController,
 		};
 		target.__doydeckCommanderController = commands;
 		return () => {
@@ -1766,6 +2229,7 @@ export function CommanderTab({
 		sendInstructionToBoundWorkerController,
 		readBoundWorkerLatestResponseController,
 		sendBoundWorkerResponseToBrowserAiController,
+		getBrowserAiSubmissionStateController,
 	]);
 
 	const currentProvider = detectProvider(webview.currentUrl);
