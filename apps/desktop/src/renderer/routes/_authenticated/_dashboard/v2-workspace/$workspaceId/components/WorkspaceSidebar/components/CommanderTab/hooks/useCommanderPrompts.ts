@@ -372,6 +372,7 @@ export function generateWorkSessionLedgerMarkdown({
 	latestBrowserDecision,
 	latestQaResult,
 }: WorkSessionLedgerInput): string {
+	const recordedOutcome = extractLatestControllerChainOutcome(session);
 	const goal = session.goal || state.goal;
 	const objective = goal.trim() || "未設定。必要ならSessionに目的を追加してください";
 	const currentTask =
@@ -380,15 +381,36 @@ export function generateWorkSessionLedgerMarkdown({
 		"未設定。必要なら現在地を追記してください";
 	const completed = latestWorkerReport.trim()
 		? summarizeBlock(latestWorkerReport)
-		: "未取得。Worker Responseを取得後に更新してください";
+		: recordedOutcome
+			? `Controller chain ${recordedOutcome.chainStatus || "RECORDED"}: ${recordedOutcome.finalDecision || "記録済み"}`
+			: "未取得。Worker Responseを取得後に更新してください";
 	const browserDecision = latestBrowserDecision.trim()
 		? summarizeBlock(latestBrowserDecision)
-		: "未取得。Browser AI判断を取得後に更新してください";
+		: recordedOutcome?.finalDecision
+			? summarizeBlock(
+					[
+						recordedOutcome.finalDecision,
+						recordedOutcome.extractedStopSignal
+							? `STOP: ${recordedOutcome.extractedStopSignal}`
+							: "",
+						recordedOutcome.hasCodexInstruction === "true"
+							? `Codex instruction: ${recordedOutcome.extractedCodexInstructionSummary || "あり"}`
+							: "Codex instruction: false",
+						recordedOutcome.hasDoyConfirmationItems === "true"
+							? `Doy confirmation: ${recordedOutcome.extractedDoyConfirmationItems || "あり"}`
+							: "Doy confirmation: false",
+					]
+						.filter(Boolean)
+						.join("\n"),
+				)
+			: "未取得。Browser AI判断を取得後に更新してください";
 	const unresolved = session.risksOpenQuestions.trim()
 		? session.risksOpenQuestions
 		: "未設定。未解決があれば追加してください";
 	const nextAction = latestBrowserDecision.trim()
 		? "Latest Browser AI Decisionを確認し、必要なら次のWorker指示を作成してください。"
+		: recordedOutcome?.nextAction
+			? recordedOutcome.nextAction
 		: session.currentTask.trim() || state.currentProblem.trim()
 			? "Current Taskを確認し、次の最小アクションを決めてください。"
 			: "目的と制約を整理し、最初のWorker指示を作るか判断してください。";
@@ -406,6 +428,19 @@ export function generateWorkSessionLedgerMarkdown({
 				.filter(Boolean)
 				.join("\n")
 		: "- status: UNKNOWN\n- report: 未取得\n- screenshots: 未取得";
+	const recordedQaLines =
+		!latestQaResult && recordedOutcome
+			? [
+					`- status: ${recordedOutcome.chainStatus || "RECORDED"}`,
+					`- Browser AI review: ${recordedOutcome.latestBrowserAiReviewStatus || "未取得"}`,
+					`- Worker response: ${recordedOutcome.latestWorkerResponseStatus || "未取得"}`,
+					`- Worker response returned to Browser AI: ${recordedOutcome.workerResponseReturnedToBrowserAi || "未取得"}`,
+					`- STOP: ${recordedOutcome.hasStopSignal || "false"}`,
+					`- Codex instruction: ${recordedOutcome.hasCodexInstruction || "false"}`,
+					`- Doy confirmation: ${recordedOutcome.hasDoyConfirmationItems || "false"}`,
+					`- Auto Loop: ${recordedOutcome.autoLoop || "未取得"}`,
+				].join("\n")
+			: "";
 	const targetFiles = session.targetFiles.length
 		? session.targetFiles.map((path) => `- ${path}`).join("\n")
 		: "未設定";
@@ -432,7 +467,7 @@ ${unresolved}
 1. ${nextAction}
 
 ## 最新QA
-${qaLines}
+${recordedQaLines || qaLines}
 
 ## Worker / Browser AI
 - latest worker: ${latestWorkerReport.trim() ? "あり" : "未取得"}
@@ -512,6 +547,62 @@ function sanitizeHandoffLedgerFileName(value: string): string {
 		.replace(/-+/g, "-")
 		.replace(/^-|-$/g, "")
 		.slice(0, 80);
+}
+
+interface RecordedControllerChainOutcome {
+	chainStatus: string;
+	finalDecision: string;
+	nextAction: string;
+	latestBrowserAiReviewStatus: string;
+	latestWorkerResponseStatus: string;
+	workerResponseReturnedToBrowserAi: string;
+	hasStopSignal: string;
+	hasCodexInstruction: string;
+	hasDoyConfirmationItems: string;
+	extractedStopSignal: string;
+	extractedCodexInstructionSummary: string;
+	extractedDoyConfirmationItems: string;
+	autoLoop: string;
+}
+
+function extractLatestControllerChainOutcome(
+	session: CommanderSession,
+): RecordedControllerChainOutcome | null {
+	const combined = [
+		session.intentNotes,
+		session.completionCriteria,
+		session.implementationPlan,
+		session.testPlan,
+		session.risksOpenQuestions,
+	]
+		.filter(Boolean)
+		.join("\n\n");
+	const sections = combined.split("--- Controller Chain Outcome ---").slice(1);
+	const latest = sections[sections.length - 1]?.trim();
+	if (!latest) return null;
+	const readLine = (key: string) => {
+		const match = latest.match(new RegExp(`^- ${key}:\\s*(.*)$`, "m"));
+		return match?.[1]?.trim() ?? "";
+	};
+	return {
+		chainStatus: readLine("chainStatus"),
+		finalDecision: readLine("finalDecision"),
+		nextAction: readLine("nextAction"),
+		latestBrowserAiReviewStatus: readLine("latestBrowserAiReviewStatus"),
+		latestWorkerResponseStatus: readLine("latestWorkerResponseStatus"),
+		workerResponseReturnedToBrowserAi: readLine(
+			"workerResponseReturnedToBrowserAi",
+		),
+		hasStopSignal: readLine("hasStopSignal"),
+		hasCodexInstruction: readLine("hasCodexInstruction"),
+		hasDoyConfirmationItems: readLine("hasDoyConfirmationItems"),
+		extractedStopSignal: readLine("extractedStopSignal"),
+		extractedCodexInstructionSummary: readLine(
+			"extractedCodexInstructionSummary",
+		),
+		extractedDoyConfirmationItems: readLine("extractedDoyConfirmationItems"),
+		autoLoop: readLine("autoLoop"),
+	};
 }
 
 function summarizeBlock(value: string, maxLength = 900): string {

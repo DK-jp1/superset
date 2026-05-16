@@ -102,6 +102,26 @@ interface CommanderControllerHandoffResult
 	session?: CommanderSession;
 }
 
+type CommanderControllerChainStatus =
+	| "PASS"
+	| "STOP"
+	| "BLOCKED"
+	| "FAILED";
+
+type CommanderControllerChainRecordStatus =
+	| "RECORDED"
+	| "BLOCKED"
+	| "FAILED";
+
+interface CommanderControllerChainOutcomeInput {
+	chainStatus?: unknown;
+	workerResponseReturnedToBrowserAi?: unknown;
+	finalDecision?: unknown;
+	nextAction?: unknown;
+	completedAt?: unknown;
+	notes?: unknown;
+}
+
 type CommanderControllerPreflightStatus =
 	| "READY"
 	| "READY_WITH_NOTES"
@@ -174,6 +194,61 @@ interface CommanderControllerAutoLoopPreflightResult
 	workerIdentityStatus: DoyDeckWorkerIdentityStatus;
 	workerIdentityBlockers: string[];
 	handoffMissingFields: string[];
+}
+
+interface CommanderControllerChainSummaryResult
+	extends CommanderControllerCommandResult {
+	status: "READY" | "BLOCKED" | "FAILED";
+	activeTabId: string | null;
+	chainStatus: CommanderControllerChainStatus;
+	browserAiProvider: string;
+	workerType: string;
+	workerIdentityOk: boolean;
+	latestBrowserAiReviewStatus: CommanderControllerLatestReplyStatus;
+	latestWorkerResponseStatus: CommanderControllerBoundWorkerOutputStatus;
+	workerResponseReturnedToBrowserAi: boolean;
+	hasStopSignal: boolean;
+	hasCodexInstruction: boolean;
+	hasDoyConfirmationItems: boolean;
+	extractedStopSignal: string | null;
+	extractedCodexInstruction: string;
+	extractedCodexInstructionSummary: string;
+	extractedDoyConfirmationItems: string[];
+	finalDecision: string;
+	nextAction: string;
+	completedAt: string;
+	notes: string;
+	blockers: string[];
+	warnings: string[];
+	message: string;
+	preflightStatus: CommanderControllerPreflightStatus;
+	preflightBlockers: string[];
+	preflightWarnings: string[];
+	browserAiLatestReplyLength: number;
+	browserAiLatestReplyFingerprint: string | null;
+	workerLatestResponseLength: number;
+	lastSubmissionType: CommanderControllerBrowserAiSubmissionType | null;
+	lastSubmissionStatus: CommanderControllerBrowserAiSubmissionRecordStatus | null;
+	lastSubmissionInjectionResult: string | null;
+	autoLoopMode: AutoRelayMode;
+	autoLoopPhase: string;
+}
+
+interface CommanderControllerRecordChainOutcomeResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerChainRecordStatus;
+	activeTabId: string | null;
+	chainStatus: CommanderControllerChainStatus;
+	finalDecision: string;
+	nextAction: string;
+	updatedFields: string[];
+	handoffLedgerLength: number;
+	blockers: string[];
+	warnings: string[];
+	message: string;
+	recordedAt: string;
+	session?: CommanderSession;
+	summary: CommanderControllerChainSummaryResult;
 }
 
 type CommanderControllerSendHandoffStatus = "SENT" | "BLOCKED" | "FAILED";
@@ -459,6 +534,15 @@ interface CommanderControllerCommands {
 	) => Promise<CommanderControllerSendWorkerResponseResult>;
 	getBrowserAiLastSubmission: () => CommanderControllerBrowserAiSubmissionResult;
 	getBrowserAiSubmissionState: () => CommanderControllerBrowserAiSubmissionResult;
+	getControllerChainSummary: (
+		input?: CommanderControllerChainOutcomeInput,
+	) => Promise<CommanderControllerChainSummaryResult>;
+	recordControllerChainOutcome: (
+		input?: CommanderControllerChainOutcomeInput,
+	) => Promise<CommanderControllerRecordChainOutcomeResult>;
+	updateHandoffLedgerWithControllerOutcome: (
+		input?: CommanderControllerChainOutcomeInput,
+	) => Promise<CommanderControllerRecordChainOutcomeResult>;
 }
 
 type CommanderControllerWindow = Window &
@@ -2229,6 +2313,210 @@ export function CommanderTab({
 			workspaceId,
 		]);
 
+	const getControllerChainSummaryController = useCallback(
+		async (
+			input?: CommanderControllerChainOutcomeInput,
+		): Promise<CommanderControllerChainSummaryResult> => {
+			const completedAt =
+				normalizeControllerIsoDateInput(input?.completedAt) ??
+				new Date().toISOString();
+			const preflight = await getAutoLoopPreflightController();
+			const latestReply = await readBrowserAiLatestReplyController();
+			const workerResponse = await readBoundWorkerLatestResponseController();
+			const lastSubmission = lastBrowserAiSubmissionRef.current;
+			const blockers: string[] = [];
+			const warnings: string[] = [
+				...preflight.warnings.map((warning) => `preflight: ${warning}`),
+				...latestReply.warnings.map((warning) => `browser ai: ${warning}`),
+				...workerResponse.warnings.map(
+					(warning) => `worker response: ${warning}`,
+				),
+			];
+
+			if (!preflight.activeTabId) blockers.push("active tab not found");
+			if (latestReply.status !== "READY") {
+				blockers.push(`browser ai review reply not ready: ${latestReply.status}`);
+			}
+			if (workerResponse.status !== "READY") {
+				blockers.push(`bound worker response not ready: ${workerResponse.status}`);
+			}
+			if (!workerResponse.workerIdentityOk) {
+				blockers.push("bound worker identity could not be verified");
+			}
+			const requestedWorkerResponseReturned =
+				normalizeControllerBooleanInput(input?.workerResponseReturnedToBrowserAi);
+			const workerResponseReturnedToBrowserAi =
+				requestedWorkerResponseReturned ??
+				(lastSubmission?.type === "worker-response" &&
+					lastSubmission.status === "SENT" &&
+					lastSubmission.injectionResult === "submitted");
+			if (!workerResponseReturnedToBrowserAi) {
+				warnings.push(
+					"latest worker-response submission tracking is unavailable or not SENT",
+				);
+			}
+			if (latestReply.extractedCodexInstruction.trim()) {
+				blockers.push(
+					...findInstructionSafetyBlockers(
+						latestReply.extractedCodexInstruction,
+					),
+				);
+			}
+
+			const requestedStatus = normalizeControllerChainStatus(input?.chainStatus);
+			const chainStatus =
+				requestedStatus ??
+				inferControllerChainStatus({
+					blockers,
+					latestReplyStatus: latestReply.status,
+					workerResponseStatus: workerResponse.status,
+					hasStopSignal: latestReply.hasStopSignal,
+				});
+			const extractedCodexInstructionSummary = summarizeControllerOutcomeText(
+				latestReply.extractedCodexInstruction,
+				300,
+			);
+			const finalDecision =
+				normalizeControllerTextInput(input?.finalDecision) ||
+				getControllerChainFinalDecision({
+					chainStatus,
+					hasCodexInstruction: latestReply.hasCodexInstruction,
+					hasDoyConfirmationItems: latestReply.hasDoyConfirmationItems,
+				});
+			const nextAction =
+				normalizeControllerTextInput(input?.nextAction) ||
+				getControllerChainNextAction({
+					chainStatus,
+					hasCodexInstruction: latestReply.hasCodexInstruction,
+					hasDoyConfirmationItems: latestReply.hasDoyConfirmationItems,
+					nextRequiredAction: preflight.nextRequiredAction,
+					blockers,
+				});
+			const notes = normalizeControllerTextInput(input?.notes);
+			const status: CommanderControllerChainSummaryResult["status"] =
+				blockers.length > 0
+					? chainStatus === "FAILED"
+						? "FAILED"
+						: "BLOCKED"
+					: "READY";
+
+			return {
+				ok: blockers.length === 0,
+				...getCommanderControllerContext(),
+				status,
+				activeTabId: preflight.activeTabId,
+				chainStatus,
+				browserAiProvider:
+					latestReply.browserAiProvider || preflight.browserAiProvider,
+				workerType: workerResponse.workerType || preflight.workerType,
+				workerIdentityOk: workerResponse.workerIdentityOk,
+				latestBrowserAiReviewStatus: latestReply.status,
+				latestWorkerResponseStatus: workerResponse.status,
+				workerResponseReturnedToBrowserAi,
+				hasStopSignal: latestReply.hasStopSignal,
+				hasCodexInstruction: latestReply.hasCodexInstruction,
+				hasDoyConfirmationItems: latestReply.hasDoyConfirmationItems,
+				extractedStopSignal: latestReply.extractedStopSignal,
+				extractedCodexInstruction: latestReply.extractedCodexInstruction,
+				extractedCodexInstructionSummary,
+				extractedDoyConfirmationItems: latestReply.extractedDoyConfirmationItems,
+				finalDecision,
+				nextAction,
+				completedAt,
+				notes,
+				blockers,
+				warnings,
+				message: getControllerChainSummaryMessage(status, chainStatus, blockers),
+				preflightStatus: preflight.status,
+				preflightBlockers: preflight.blockers,
+				preflightWarnings: preflight.warnings,
+				browserAiLatestReplyLength: latestReply.latestReplyLength,
+				browserAiLatestReplyFingerprint: latestReply.latestReplyFingerprint,
+				workerLatestResponseLength: workerResponse.latestResponseLength,
+				lastSubmissionType: lastSubmission?.type ?? null,
+				lastSubmissionStatus: lastSubmission?.status ?? null,
+				lastSubmissionInjectionResult: lastSubmission?.injectionResult ?? null,
+				autoLoopMode: preflight.autoLoopMode,
+				autoLoopPhase: preflight.autoLoopPhase,
+			};
+		},
+		[
+			getAutoLoopPreflightController,
+			getCommanderControllerContext,
+			readBrowserAiLatestReplyController,
+			readBoundWorkerLatestResponseController,
+		],
+	);
+
+	const recordControllerChainOutcomeController = useCallback(
+		async (
+			input?: CommanderControllerChainOutcomeInput,
+		): Promise<CommanderControllerRecordChainOutcomeResult> => {
+			const summary = await getControllerChainSummaryController(input);
+			const recordedAt = summary.completedAt;
+			if (!summary.activeTabId) {
+				return {
+					ok: false,
+					...getCommanderControllerContext(),
+					status: "BLOCKED",
+					activeTabId: null,
+					chainStatus: summary.chainStatus,
+					finalDecision: summary.finalDecision,
+					nextAction: summary.nextAction,
+					updatedFields: [],
+					handoffLedgerLength: 0,
+					blockers: ["active tab not found"],
+					warnings: summary.warnings,
+					message: "Controller chain outcome record blocked: active tab not found",
+					recordedAt,
+					summary,
+				};
+			}
+
+			const baseSession = sessionRef.current;
+			const { session: nextSession, updatedFields } =
+				applyControllerChainOutcomeToSession(baseSession, summary);
+			if (updatedFields.length > 0) {
+				sessionRef.current = nextSession;
+				setSession(nextSession);
+				setState(commanderStateFromSession(nextSession));
+				handleSessionApplied(nextSession);
+			}
+			const stateSnapshot = commanderStateFromSession(nextSession);
+			const ledger = transfer.buildHandoffLedger({
+				session: nextSession,
+				state: stateSnapshot,
+			});
+
+			return {
+				ok: true,
+				...getCommanderControllerContext(),
+				status: "RECORDED",
+				activeTabId: summary.activeTabId,
+				chainStatus: summary.chainStatus,
+				finalDecision: summary.finalDecision,
+				nextAction: summary.nextAction,
+				updatedFields,
+				handoffLedgerLength: ledger.length,
+				blockers: [...summary.blockers],
+				warnings: [...summary.warnings],
+				message:
+					updatedFields.length > 0
+						? "Controller chain outcome recorded in Commander Session"
+						: "Controller chain outcome was already recorded",
+				recordedAt,
+				session: nextSession,
+				summary,
+			};
+		},
+		[
+			getCommanderControllerContext,
+			getControllerChainSummaryController,
+			handleSessionApplied,
+			transfer.buildHandoffLedger,
+		],
+	);
+
 	useEffect(() => {
 		console.log(
 			"[S3.11] registerCommanderBridge with onAutoCaptureTrigger =",
@@ -2280,6 +2568,10 @@ export function CommanderTab({
 			sendWorkerResponseToBrowserAI: sendBoundWorkerResponseToBrowserAiController,
 			getBrowserAiLastSubmission: getBrowserAiSubmissionStateController,
 			getBrowserAiSubmissionState: getBrowserAiSubmissionStateController,
+			getControllerChainSummary: getControllerChainSummaryController,
+			recordControllerChainOutcome: recordControllerChainOutcomeController,
+			updateHandoffLedgerWithControllerOutcome:
+				recordControllerChainOutcomeController,
 		};
 		target.__doydeckCommanderController = commands;
 		return () => {
@@ -2300,6 +2592,8 @@ export function CommanderTab({
 		readBoundWorkerLatestResponseController,
 		sendBoundWorkerResponseToBrowserAiController,
 		getBrowserAiSubmissionStateController,
+		getControllerChainSummaryController,
+		recordControllerChainOutcomeController,
 	]);
 
 	const currentProvider = detectProvider(webview.currentUrl);
@@ -2555,6 +2849,254 @@ function mergeCommanderSessionControllerInput(
 	return { session: next, changedFields, skippedFields };
 }
 
+function applyControllerChainOutcomeToSession(
+	base: CommanderSession,
+	summary: CommanderControllerChainSummaryResult,
+): { session: CommanderSession; updatedFields: string[] } {
+	const outcomeBlock = formatControllerChainOutcomeForSession(summary);
+	const completionBlock = [
+		`chainStatus: ${summary.chainStatus}`,
+		`completedAt: ${summary.completedAt}`,
+		`finalDecision: ${summary.finalDecision}`,
+		summary.chainStatus === "STOP"
+			? "result: STOP / 次のCodex指示は不要"
+			: `result: ${summary.nextAction}`,
+	].join("\n");
+	const qaBlock = [
+		`Browser AI review reply: ${summary.latestBrowserAiReviewStatus}`,
+		`Browser AI review length: ${summary.browserAiLatestReplyLength}`,
+		`Worker response: ${summary.latestWorkerResponseStatus}`,
+		`Worker response returned to Browser AI: ${summary.workerResponseReturnedToBrowserAi}`,
+		`STOP: ${summary.hasStopSignal}`,
+		`Codex instruction: ${summary.hasCodexInstruction}`,
+		`Doy confirmation: ${summary.hasDoyConfirmationItems}`,
+		`Auto Loop: ${summary.autoLoopMode} / ${summary.autoLoopPhase}`,
+	].join("\n");
+	const risksBlock =
+		summary.blockers.length > 0
+			? [`Controller chain blockers:`, ...summary.blockers.map((b) => `- ${b}`)].join(
+					"\n",
+				)
+			: "Controller chain blockers: none";
+	const currentTask = getControllerChainCurrentTask(summary);
+	const next: CommanderSession = {
+		...base,
+		targetFiles: [...base.targetFiles],
+		selectedFiles: [...base.selectedFiles],
+		currentTask,
+		intentNotes: replaceCommanderControllerSection(
+			base.intentNotes,
+			outcomeBlock,
+			"Controller Chain Outcome",
+		),
+		completionCriteria: replaceCommanderControllerSection(
+			base.completionCriteria,
+			completionBlock,
+			"Controller Chain Completion",
+		),
+		implementationPlan: replaceCommanderControllerSection(
+			base.implementationPlan,
+			summary.nextAction,
+			"Controller Chain Next Action",
+		),
+		testPlan: replaceCommanderControllerSection(
+			base.testPlan,
+			qaBlock,
+			"Controller Chain Latest QA",
+		),
+		risksOpenQuestions: replaceCommanderControllerSection(
+			base.risksOpenQuestions,
+			risksBlock,
+			"Controller Chain Blockers",
+		),
+	};
+	const updatedFields = (
+		[
+			"currentTask",
+			"intentNotes",
+			"completionCriteria",
+			"implementationPlan",
+			"testPlan",
+			"risksOpenQuestions",
+		] as const
+	).filter((field) => next[field] !== base[field]);
+	return { session: next, updatedFields: [...updatedFields] };
+}
+
+function formatControllerChainOutcomeForSession(
+	summary: CommanderControllerChainSummaryResult,
+): string {
+	const extractedInstruction = summary.extractedCodexInstructionSummary || "none";
+	const doyItems = summary.extractedDoyConfirmationItems.length
+		? summary.extractedDoyConfirmationItems.join(" / ")
+		: "none";
+	const blockers = summary.blockers.length
+		? summary.blockers.join(" / ")
+		: "none";
+	const warnings = summary.warnings.length
+		? summary.warnings.join(" / ")
+		: "none";
+	return [
+		`- activeTabId: ${summary.activeTabId || "unknown"}`,
+		`- chainStatus: ${summary.chainStatus}`,
+		`- browserAiProvider: ${summary.browserAiProvider}`,
+		`- workerType: ${summary.workerType}`,
+		`- workerIdentityOk: ${summary.workerIdentityOk}`,
+		`- latestBrowserAiReviewStatus: ${summary.latestBrowserAiReviewStatus}`,
+		`- latestWorkerResponseStatus: ${summary.latestWorkerResponseStatus}`,
+		`- workerResponseReturnedToBrowserAi: ${summary.workerResponseReturnedToBrowserAi}`,
+		`- hasStopSignal: ${summary.hasStopSignal}`,
+		`- hasCodexInstruction: ${summary.hasCodexInstruction}`,
+		`- hasDoyConfirmationItems: ${summary.hasDoyConfirmationItems}`,
+		`- extractedStopSignal: ${summary.extractedStopSignal || "none"}`,
+		`- extractedCodexInstructionSummary: ${extractedInstruction}`,
+		`- extractedDoyConfirmationItems: ${doyItems}`,
+		`- finalDecision: ${summary.finalDecision}`,
+		`- nextAction: ${summary.nextAction}`,
+		`- completedAt: ${summary.completedAt}`,
+		`- autoLoop: ${summary.autoLoopMode} / ${summary.autoLoopPhase}`,
+		`- blockers: ${blockers}`,
+		`- warnings: ${warnings}`,
+		summary.notes ? `- notes: ${summary.notes}` : "",
+	]
+		.filter(Boolean)
+		.join("\n");
+}
+
+function getControllerChainCurrentTask(
+	summary: CommanderControllerChainSummaryResult,
+): string {
+	if (summary.chainStatus === "STOP") {
+		return `${summary.finalDecision} ${summary.nextAction}. Codex追加送信なし。Auto Loop未開始。`;
+	}
+	if (summary.chainStatus === "BLOCKED" || summary.chainStatus === "FAILED") {
+		return `Controller chain ${summary.chainStatus}: ${summary.nextAction}`;
+	}
+	return `Controller chain completed: ${summary.finalDecision} Next action: ${summary.nextAction}`;
+}
+
+function normalizeControllerChainStatus(
+	value: unknown,
+): CommanderControllerChainStatus | null {
+	if (
+		value === "PASS" ||
+		value === "STOP" ||
+		value === "BLOCKED" ||
+		value === "FAILED"
+	) {
+		return value;
+	}
+	return null;
+}
+
+function normalizeControllerIsoDateInput(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim();
+	if (!trimmed) return null;
+	const date = new Date(trimmed);
+	if (Number.isNaN(date.getTime())) return null;
+	return date.toISOString();
+}
+
+function normalizeControllerBooleanInput(value: unknown): boolean | null {
+	if (typeof value === "boolean") return value;
+	if (typeof value !== "string") return null;
+	const normalized = value.trim().toLowerCase();
+	if (normalized === "true" || normalized === "yes" || normalized === "1") {
+		return true;
+	}
+	if (normalized === "false" || normalized === "no" || normalized === "0") {
+		return false;
+	}
+	return null;
+}
+
+function inferControllerChainStatus({
+	blockers,
+	latestReplyStatus,
+	workerResponseStatus,
+	hasStopSignal,
+}: {
+	blockers: string[];
+	latestReplyStatus: CommanderControllerLatestReplyStatus;
+	workerResponseStatus: CommanderControllerBoundWorkerOutputStatus;
+	hasStopSignal: boolean;
+}): CommanderControllerChainStatus {
+	if (latestReplyStatus === "FAILED" || workerResponseStatus === "FAILED") {
+		return "FAILED";
+	}
+	if (blockers.length > 0) return "BLOCKED";
+	if (hasStopSignal) return "STOP";
+	return "PASS";
+}
+
+function getControllerChainFinalDecision({
+	chainStatus,
+	hasCodexInstruction,
+	hasDoyConfirmationItems,
+}: {
+	chainStatus: CommanderControllerChainStatus;
+	hasCodexInstruction: boolean;
+	hasDoyConfirmationItems: boolean;
+}): string {
+	if (chainStatus === "STOP") {
+		return "Browser AI judged no additional Codex work is needed.";
+	}
+	if (chainStatus === "BLOCKED") {
+		return "Controller chain outcome is blocked and needs resolution before continuing.";
+	}
+	if (chainStatus === "FAILED") {
+		return "Controller chain outcome failed and needs investigation.";
+	}
+	if (hasDoyConfirmationItems) {
+		return "Browser AI requested Doy confirmation before the next action.";
+	}
+	if (hasCodexInstruction) {
+		return "Browser AI returned a next Codex instruction.";
+	}
+	return "Controller chain completed without a STOP signal or next Codex instruction.";
+}
+
+function getControllerChainNextAction({
+	chainStatus,
+	hasCodexInstruction,
+	hasDoyConfirmationItems,
+	nextRequiredAction,
+	blockers,
+}: {
+	chainStatus: CommanderControllerChainStatus;
+	hasCodexInstruction: boolean;
+	hasDoyConfirmationItems: boolean;
+	nextRequiredAction: string;
+	blockers: string[];
+}): string {
+	if (chainStatus === "STOP") return "STOP / 次のCodex指示は不要";
+	if (chainStatus === "BLOCKED" || chainStatus === "FAILED") {
+		return nextRequiredAction || blockers[0] || "Resolve controller chain blocker";
+	}
+	if (hasDoyConfirmationItems) return "Doy確認事項を確認して判断待ち";
+	if (hasCodexInstruction) return "Codex送信前に安全条件を確認する";
+	return "Controller chain resultを確認し、次アクション有無を判断する";
+}
+
+function getControllerChainSummaryMessage(
+	status: CommanderControllerChainSummaryResult["status"],
+	chainStatus: CommanderControllerChainStatus,
+	blockers: string[],
+): string {
+	if (status === "READY") return `Controller chain summary ready: ${chainStatus}`;
+	const firstBlocker = blockers[0];
+	if (firstBlocker) return `Controller chain summary ${status}: ${firstBlocker}`;
+	return `Controller chain summary ${status}`;
+}
+
+function summarizeControllerOutcomeText(value: string, maxLength: number): string {
+	const normalized = value.replace(/\s+/g, " ").trim();
+	if (!normalized) return "";
+	if (normalized.length <= maxLength) return normalized;
+	return `${normalized.slice(0, maxLength).trimEnd()}...`;
+}
+
 function normalizeControllerTextInput(value: unknown): string {
 	if (typeof value !== "string") return "";
 	return value.trim();
@@ -2579,6 +3121,31 @@ function appendCommanderControllerSection(
 	if (!trimmedBase) return section;
 	if (trimmedBase.includes(trimmedValue)) return trimmedBase;
 	return `${trimmedBase}\n\n${section}`;
+}
+
+function replaceCommanderControllerSection(
+	base: string,
+	value: string,
+	label: string,
+): string {
+	const withoutExistingSection = removeCommanderControllerSections(base, label);
+	return appendCommanderControllerSection(withoutExistingSection, value, label);
+}
+
+function removeCommanderControllerSections(base: string, label: string): string {
+	const trimmedBase = base.trim();
+	if (!trimmedBase) return "";
+	const pattern = new RegExp(
+		`(?:^|\\n\\n)--- ${escapeRegExp(
+			label,
+		)} ---\\n[\\s\\S]*?(?=\\n\\n--- [^-]+ ---\\n|$)`,
+		"g",
+	);
+	return trimmedBase.replace(pattern, "").trim();
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function getCommanderSessionMissingFields(
