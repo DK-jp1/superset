@@ -282,6 +282,15 @@ clear / deleteのような強制操作はせず、送信前にinput residueが�
 Worker送信を控え、pane activate / output capture / prompt echo除外で状態を確認する。
 input residueやstale markerは実応答扱いしない。
 
+S9.6では、Claude Code paneがfeedback prompt / recap / stale marker状態のまま
+新規instructionを受けられるように見える問題を扱う。
+Claude paneへ送る前にready-stateを確認し、feedback promptや未送信prompt residueが
+見える場合は送信前に停止する。recapやstale markerが見える場合はwarningとして扱い、
+誤READYより安全停止を優先する。
+
+input clear / deleteやClaude Code再起動はDoy確認対象であり、S9.6の範囲では実装しない。
+まずは状態検出、preflight / readinessへの反映、送信前BLOCKEDまたはwarningまでをpilot範囲にする。
+
 ## 12. 完了報告形式
 
 S9 pilotの完了報告には以下を含める。

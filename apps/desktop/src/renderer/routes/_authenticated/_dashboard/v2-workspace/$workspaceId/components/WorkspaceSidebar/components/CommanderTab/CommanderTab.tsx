@@ -136,6 +136,23 @@ type CommanderControllerPreflightStatus =
 	| "READY_WITH_NOTES"
 	| "BLOCKED";
 
+type CommanderControllerWorkerUiState =
+	| "ready-for-input"
+	| "busy-running"
+	| "feedback-prompt"
+	| "recap-visible"
+	| "stale-marker-only"
+	| "prompt-echo-residue"
+	| "unknown";
+
+interface CommanderControllerWorkerInputReadiness {
+	workerUiState: CommanderControllerWorkerUiState;
+	workerInputReady: boolean;
+	workerInputBlockers: string[];
+	workerInputWarnings: string[];
+	workerUiStateReason: string | null;
+}
+
 interface CommanderControllerBrowserAiReadiness {
 	checked: boolean;
 	ready: boolean;
@@ -202,6 +219,11 @@ interface CommanderControllerAutoLoopPreflightResult
 	workerIdentityOk: boolean;
 	workerIdentityStatus: DoyDeckWorkerIdentityStatus;
 	workerIdentityBlockers: string[];
+	workerUiState: CommanderControllerWorkerUiState;
+	workerInputReady: boolean;
+	workerInputBlockers: string[];
+	workerInputWarnings: string[];
+	workerUiStateReason: string | null;
 	handoffMissingFields: string[];
 }
 
@@ -268,6 +290,11 @@ interface CommanderControllerSupervisorPilotReadinessResult
 	workerIdentityOk: boolean;
 	workerPaneId: string | null;
 	terminalId: string | null;
+	workerUiState: CommanderControllerWorkerUiState;
+	workerInputReady: boolean;
+	workerInputBlockers: string[];
+	workerInputWarnings: string[];
+	workerUiStateReason: string | null;
 	autoLoopMode: AutoRelayMode;
 	autoLoopPhase: string;
 	blockers: string[];
@@ -510,6 +537,11 @@ interface CommanderControllerSendInstructionResult
 	preflightStatus: CommanderControllerPreflightStatus;
 	preflightBlockers: string[];
 	preflightWarnings: string[];
+	workerUiState: CommanderControllerWorkerUiState;
+	workerInputReady: boolean;
+	workerInputBlockers: string[];
+	workerInputWarnings: string[];
+	workerUiStateReason: string | null;
 }
 
 interface CommanderControllerLastWorkerInstructionMarker {
@@ -1209,6 +1241,19 @@ export function CommanderTab({
 			const workerIdentity = evaluateDoyDeckWorkerIdentity(
 				workerBinding.workerType,
 			);
+			const workerInputReadiness =
+				workerBound && workerIdentity.workerIdentityOk
+					? evaluateBoundWorkerInputReadiness({
+							workerType: workerBinding.workerType,
+							paneId: workerBinding.workerPaneId,
+						})
+					: {
+							workerUiState: "unknown" as const,
+							workerInputReady: false,
+							workerInputBlockers: [],
+							workerInputWarnings: [],
+							workerUiStateReason: null,
+						};
 			const fallbackUsed =
 				!requireBoundWorkerForAutoLoop &&
 				workerBinding.bindingStatus !== "bound";
@@ -1247,6 +1292,11 @@ export function CommanderTab({
 			} else if (!workerIdentity.workerIdentityOk) {
 				blockers.push(...workerIdentity.workerIdentityBlockers);
 				diagnosticsBlockers.push(...workerIdentity.workerIdentityBlockers);
+			}
+			if (workerBound && workerIdentity.workerIdentityOk) {
+				blockers.push(...workerInputReadiness.workerInputBlockers);
+				diagnosticsBlockers.push(...workerInputReadiness.workerInputBlockers);
+				warnings.push(...workerInputReadiness.workerInputWarnings);
 			}
 			if (fallbackUsed) blockers.push("active terminal fallback would be used");
 			if (workerBinding.workerBindingMismatch) {
@@ -1317,6 +1367,11 @@ export function CommanderTab({
 				workerIdentityOk: workerIdentity.workerIdentityOk,
 				workerIdentityStatus: workerIdentity.workerIdentityStatus,
 				workerIdentityBlockers: workerIdentity.workerIdentityBlockers,
+				workerUiState: workerInputReadiness.workerUiState,
+				workerInputReady: workerInputReadiness.workerInputReady,
+				workerInputBlockers: workerInputReadiness.workerInputBlockers,
+				workerInputWarnings: workerInputReadiness.workerInputWarnings,
+				workerUiStateReason: workerInputReadiness.workerUiStateReason,
 				handoffMissingFields,
 			};
 		}, [
@@ -1511,6 +1566,11 @@ export function CommanderTab({
 				workerIdentityOk: preflight.workerIdentityOk,
 				workerPaneId: preflight.workerPaneId,
 				terminalId: preflight.terminalId,
+				workerUiState: preflight.workerUiState,
+				workerInputReady: preflight.workerInputReady,
+				workerInputBlockers: preflight.workerInputBlockers,
+				workerInputWarnings: preflight.workerInputWarnings,
+				workerUiStateReason: preflight.workerUiStateReason,
 				autoLoopMode: preflight.autoLoopMode,
 				autoLoopPhase: preflight.autoLoopPhase,
 				blockers,
@@ -2408,6 +2468,9 @@ export function CommanderTab({
 			if (requirePreflight && preflight.status === "BLOCKED") {
 				blockers.push(...preflight.blockers.map((blocker) => `preflight: ${blocker}`));
 			}
+			if (!requirePreflight && preflight.workerInputBlockers.length > 0) {
+				blockers.push(...preflight.workerInputBlockers);
+			}
 			if (!preflight.workerBound) blockers.push("worker binding required");
 			if (!preflight.workerIdentityOk) {
 				blockers.push(...preflight.workerIdentityBlockers);
@@ -2453,6 +2516,11 @@ export function CommanderTab({
 				preflightStatus: preflight.status,
 				preflightBlockers: preflight.blockers,
 				preflightWarnings: preflight.warnings,
+				workerUiState: preflight.workerUiState,
+				workerInputReady: preflight.workerInputReady,
+				workerInputBlockers: preflight.workerInputBlockers,
+				workerInputWarnings: preflight.workerInputWarnings,
+				workerUiStateReason: preflight.workerUiStateReason,
 			};
 
 			if (blockers.length > 0) {
@@ -5056,6 +5124,172 @@ function normalizeWorkerOutputText(text: string): string {
 		.trim();
 }
 
+function evaluateBoundWorkerInputReadiness(params: {
+	workerType: string;
+	paneId: string | null;
+}): CommanderControllerWorkerInputReadiness {
+	const { workerType, paneId } = params;
+	if (workerType !== "claude") {
+		return {
+			workerUiState: "ready-for-input",
+			workerInputReady: true,
+			workerInputBlockers: [],
+			workerInputWarnings: [],
+			workerUiStateReason:
+				"worker input readiness guard is only required for Claude workers",
+		};
+	}
+
+	if (!paneId) {
+		return {
+			workerUiState: "unknown",
+			workerInputReady: false,
+			workerInputBlockers: ["claude worker paneId not found"],
+			workerInputWarnings: [],
+			workerUiStateReason: "bound Claude worker paneId was unavailable",
+		};
+	}
+
+	const snapshot = getTerminalOutputSnapshot(paneId);
+	const outputLogText = getOutputLogSince(paneId, 0);
+	const visibleText = normalizeWorkerOutputText(
+		[
+			snapshot?.screenText ?? "",
+			snapshot?.viewportText ?? "",
+			snapshot?.outputText ?? "",
+			snapshot?.text ?? "",
+			outputLogText ? outputLogText.slice(-6000) : "",
+		]
+			.filter(Boolean)
+			.join("\n"),
+	);
+	const lines = visibleText
+		.split("\n")
+		.map((line) => line.replace(/\s+/g, " ").trim())
+		.filter(Boolean);
+	const tailLines = lines.slice(-48);
+	const tailText = tailLines.join("\n");
+	const workerInputBlockers: string[] = [];
+	const workerInputWarnings: string[] = [];
+	const findTailLine = (pattern: RegExp): string | null =>
+		tailLines.find((line) => pattern.test(line)) ?? null;
+
+	if (!visibleText) {
+		workerInputBlockers.push(
+			"claude worker input readiness could not be inspected",
+		);
+		return {
+			workerUiState: "unknown",
+			workerInputReady: false,
+			workerInputBlockers,
+			workerInputWarnings,
+			workerUiStateReason: "Claude terminal output snapshot is empty",
+		};
+	}
+
+	const feedbackLine = findTailLine(
+		/(?:How is Claude doing this session\?|1\s*:\s*Bad.*2\s*:\s*Fine.*3\s*:\s*Good.*0\s*:\s*Dismiss)/i,
+	);
+	if (feedbackLine) {
+		workerInputBlockers.push(
+			"claude feedback prompt requires dismissal before sending",
+		);
+		return {
+			workerUiState: "feedback-prompt",
+			workerInputReady: false,
+			workerInputBlockers,
+			workerInputWarnings,
+			workerUiStateReason: `Claude feedback prompt visible: ${feedbackLine}`,
+		};
+	}
+
+	const busyLine = findTailLine(
+		/(?:Crunching|Churning|Searching|Garnishing|Baking|Brewing)\b|\bWorking\([^)]*(?:esc|interrupt)|tool use in progress|command still running/i,
+	);
+	if (busyLine) {
+		workerInputBlockers.push("claude worker appears busy");
+		return {
+			workerUiState: "busy-running",
+			workerInputReady: false,
+			workerInputBlockers,
+			workerInputWarnings,
+			workerUiStateReason: `Claude running indicator visible: ${busyLine}`,
+		};
+	}
+
+	const promptResidueLine =
+		tailLines.find(
+			(line) =>
+				/^[❯>]\s+\S/.test(line) ||
+				(/\bS[789]_[A-Za-z0-9_]*\b/.test(line) &&
+					/(?:返信してください|返答してください|報告してください|確認してください|含めてください|commit\/push|必要なら|完了したら)/.test(
+						line,
+					)),
+		) ?? null;
+	if (promptResidueLine) {
+		workerInputBlockers.push(
+			"claude input appears to contain unsent prompt residue",
+		);
+		return {
+			workerUiState: "prompt-echo-residue",
+			workerInputReady: false,
+			workerInputBlockers,
+			workerInputWarnings,
+			workerUiStateReason: `Claude input residue visible: ${promptResidueLine}`,
+		};
+	}
+
+	const readyPromptLine = findTailLine(
+		/^(?:❯|>|⏵⏵\s*bypass\s*permissions\s*on\b|⏵⏵bypasspermissionson\b)/i,
+	);
+	const recapLine = findTailLine(/※\s*recap:|\(disable recaps in \/config\)/i);
+	const visibleAckMarkers = extractWorkerAckMarkersFromInstruction(tailText);
+	if (recapLine) {
+		workerInputWarnings.push(`claude recap is visible: ${recapLine}`);
+	}
+	if (visibleAckMarkers.length > 0) {
+		workerInputWarnings.push(
+			`claude pane contains stale ack marker: ${visibleAckMarkers.at(-1)}`,
+		);
+	}
+
+	if (!readyPromptLine) {
+		const state: CommanderControllerWorkerUiState =
+			visibleAckMarkers.length > 0
+				? "stale-marker-only"
+				: recapLine
+					? "recap-visible"
+					: "unknown";
+		workerInputBlockers.push(
+			"claude worker input prompt is not ready for a new instruction",
+		);
+		return {
+			workerUiState: state,
+			workerInputReady: false,
+			workerInputBlockers,
+			workerInputWarnings,
+			workerUiStateReason:
+				state === "stale-marker-only"
+					? "Claude pane shows stale markers but no ready prompt"
+					: state === "recap-visible"
+						? "Claude recap is visible and ready prompt was not confirmed"
+						: "Claude ready prompt was not confirmed",
+		};
+	}
+
+	return {
+		workerUiState: recapLine
+			? "recap-visible"
+			: visibleAckMarkers.length > 0
+				? "stale-marker-only"
+				: "ready-for-input",
+		workerInputReady: true,
+		workerInputBlockers,
+		workerInputWarnings,
+		workerUiStateReason: `Claude ready prompt visible: ${readyPromptLine}`,
+	};
+}
+
 function hashControllerText(text: string): string {
 	const normalized = text.replace(/\s+/g, " ").trim();
 	let hash = 0;
@@ -6752,17 +6986,40 @@ function applySupervisorWorkerCandidateToPreflight(
 				"worker binding required",
 				"worker identity could not be verified",
 				"bound terminal is shell, not a recognized worker",
+				"claude feedback prompt",
+				"claude input",
+				"claude worker appears busy",
+				"claude worker input",
 			].some((workerBlocker) => blocker.includes(workerBlocker)),
 	);
+	const filteredWarnings = preflight.warnings.filter(
+		(warning) =>
+			![
+				"claude recap is visible",
+				"claude pane contains stale ack marker",
+			].some((workerWarning) => warning.includes(workerWarning)),
+	);
+	const workerInputReadiness = evaluateBoundWorkerInputReadiness({
+		workerType: candidate.workerType,
+		paneId: candidate.paneId,
+	});
+	const nextBlockers = [
+		...filteredBlockers,
+		...workerInputReadiness.workerInputBlockers,
+	];
+	const nextWarnings = [
+		...filteredWarnings,
+		...workerInputReadiness.workerInputWarnings,
+	];
 	const status: CommanderControllerPreflightStatus =
-		filteredBlockers.length > 0
+		nextBlockers.length > 0
 			? "BLOCKED"
-			: preflight.warnings.length > 0
+			: nextWarnings.length > 0
 				? "READY_WITH_NOTES"
 				: "READY";
 	return {
 		...preflight,
-		ok: filteredBlockers.length === 0,
+		ok: nextBlockers.length === 0,
 		status,
 		workerBound: true,
 		workerBindingStatus: "bound",
@@ -6772,10 +7029,16 @@ function applySupervisorWorkerCandidateToPreflight(
 		workerIdentityOk: true,
 		workerIdentityStatus: candidate.workerIdentityStatus,
 		workerIdentityBlockers: [],
-		blockers: filteredBlockers,
+		workerUiState: workerInputReadiness.workerUiState,
+		workerInputReady: workerInputReadiness.workerInputReady,
+		workerInputBlockers: workerInputReadiness.workerInputBlockers,
+		workerInputWarnings: workerInputReadiness.workerInputWarnings,
+		workerUiStateReason: workerInputReadiness.workerUiStateReason,
+		blockers: nextBlockers,
+		warnings: nextWarnings,
 		nextRequiredAction: getAutoLoopPreflightNextAction(
-			filteredBlockers,
-			preflight.warnings,
+			nextBlockers,
+			nextWarnings,
 		),
 	};
 }
@@ -6802,6 +7065,13 @@ function getAutoLoopPreflightNextAction(
 		}
 		if (firstBlocker.includes("bound worker stale")) {
 			return "Rebind an existing Worker terminal to this tab.";
+		}
+		if (
+			firstBlocker.includes("claude feedback prompt") ||
+			firstBlocker.includes("claude worker input") ||
+			firstBlocker.includes("claude input")
+		) {
+			return "Resolve the Claude Code pane prompt state, then rerun preflight.";
 		}
 		if (firstBlocker.includes("browser ai provider")) {
 			return "Select ChatGPT or Claude and wait until the Browser AI composer is ready.";
