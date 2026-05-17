@@ -1,6 +1,6 @@
 # DoyDeck S8 Supervisor Pilot Checkpoint
 
-Status: S8.6 low-risk docs pilot checkpoint summary.
+Status: S8.7 Claude Code worker smoke checkpoint summary.
 
 This document summarizes what S8 verified after the S7 controller chain work.
 It is a checkpoint for the Supervisor operation pilot, not a request to build a
@@ -250,6 +250,34 @@ Remaining note:
 - S8.6の主経路PASSのブロッカーではないが、`completionDetected:false`が残った。
 - 今後、編集なしdocs確認完了系のcompletion signalをもう少し拾う余地がある。
 
+### S8.7: Claude Code worker smoke result
+
+S8.7では、作業側CC / Claude CodeがDoyDeck上でrecognized workerとして扱えるかを
+no-op smokeで確認した。
+
+Result:
+
+- `result: PASS`
+- `workerType: claude`
+- `workerIdentityOk:true`
+- 既存Claude Code terminalをrecognized workerとしてactive tabへbindできた。
+- `sendInstructionToBoundWorker(requirePreflight:true)`でno-op指示を送信できた。
+- `readBoundWorkerLatestResponse()`でClaude返答を`READY`として取得できた。
+- `receivedInstructionAck:true`
+- `ackMarkerDetected:S8_7_CC_NOOP_ACK_ACTIVE_PANE`
+- Auto Loopは開始していない。
+
+Confirmed in S8.7:
+
+- Codex chainだけでなく、Claude Code chainもno-opレベルでController chainを通せた。
+- Claude TUI特有の表示差分に対応するため、Claude worker terminal output captureを修正した。
+- Claude workerでもpreflight、identity guard、bound worker send、response readの主経路が通った。
+
+Remaining note:
+
+- 非表示 / 非mount状態のClaude paneではsnapshot取得ができない場合がある。
+- 必要なら、paneId指定で既存terminal paneを表示 / activateするController accessorが次候補。
+
 ## 3. S8で確認できたController flow
 
 S8では、以下のcontroller flowがpilotとして確認できた。
@@ -294,6 +322,8 @@ S8での主要な到達点:
 - Codex完了報告を`WAITING`ではなくREADYとして扱えるようになった。
 - completed worker reportsをREADYとして扱い、Browser AIへ返送できるようになった。
 - Worker instruction内の禁止/否定表現を危険要求として誤BLOCKしにくくなった。
+- 作業側Claude Codeを`workerType: claude`としてrecognized workerにできる。
+- Claude Code workerにもno-op指示を送り、ACK返答をREADYとして読める。
 - OutcomeをHandoff Ledgerへ記録できる。
 - Handoff Ledger内でrecorded outcomeとlive stateを分けて見られる。
 
@@ -346,7 +376,8 @@ S8 checkpoint時点で、以下はまだpilot扱い。
 - commit / push自動化はしない。
 - destructive / private API / token / cookie / local DB直接操作は対象外。
 - `local.db` / `app-state.json` / `~/.superset` / `~/.doydeck-superset-dev`直接操作は対象外。
-- 作業側CC / Claude Code chainは別途smokeが必要。
+- 作業側CC / Claude Code chainはno-op smoke済みだが、実作業docs pilotはまだ未実施。
+- 非表示 / 非mount状態のClaude pane snapshot取得は継続改善候補。
 - ChatGPT submit target warningは継続監視。
 - Browser-AI-only軽量preflightはあると便利。
 - Doy Feedback / Decision Ledgerは未実装。
@@ -372,15 +403,15 @@ S8 pilotで維持する安全ルール:
 
 ## 9. 次フェーズ候補
 
-Priority A: 作業側CC / Claude Code smoke
+Priority A: 作業側CC / Claude Code low-risk docs pilot
 
-- Claude Codeをrecognized workerとしてbindし、Codexと同じcontroller chainが通るか確認する。
-- Claude Code固有のTUI noise、ACK、response extraction差分を見る。
+- S8.7でno-op smokeはPASSしたため、次は小さいdocs題材で実作業pilotを確認する。
+- Claude Code固有のTUI noise、ACK、response extraction差分が実作業でも問題ないか見る。
 
-Priority B: `completionDetected:false`改善
+Priority B: Claude pane activation / snapshot stability
 
-- 編集なしdocs確認完了、完了報告、STOP報告などをcompletion signalとしてより正確に拾う。
-- 主経路PASSと補助判定のズレを減らす。
+- 非表示 / 非mount状態のClaude paneでsnapshot取得できない場合がある。
+- 必要ならpaneId指定で既存terminal paneを表示 / activateするController accessorを検討する。
 
 Priority C: 低リスクdocsタスクを別題材で再pilot
 
@@ -410,11 +441,12 @@ Browser AI -> 作業側Codex -> Browser AI -> STOP記録までの低リスク1�
 ことを確認した。S8.5では、no-opではなく低リスクdocsタスクでも主経路が進み、
 commit / pushやDoy確認境界で安全停止できることを確認した。S8.6では、別題材の
 低リスクdocsタスクで、Browser AI -> Codex -> Browser AI -> Outcome記録までPASSし、
-Doy確認事項なしでSTOPできることを確認した。
+Doy確認事項なしでSTOPできることを確認した。S8.7では、作業側Claude Codeも
+recognized workerとしてbindでき、no-op送信とREADY返答取得まで通ることを確認した。
 
 まだ完全自律ではない。Meta AIはAuto Loopを再実装せず、既存Auto Loop /
 Controller chainを監視、確認し、介入判断と記録を行うpilot段階にいる。
 
-ただし、ready復旧、Handoff送信、Codex指示抽出、bound Codex送信、Codex返答取得、
+ただし、ready復旧、Handoff送信、指示抽出、bound worker送信、worker返答取得、
 Browser AI返送、STOP分類、Handoff記録までがDoyDeck-nativeに揃い始めたため、
 DoyDeckは実運用入口として成立し始めている。
