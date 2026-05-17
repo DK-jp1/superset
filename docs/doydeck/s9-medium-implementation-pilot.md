@@ -217,7 +217,8 @@ smokeで確認できなかったことは、完了報告に明記する。
    - 目的: Worker不要のレビュー、壁打ち、要件整理だけを軽く確認する。
    - 期待効果: Browser AI ready / slot / composer / latest reply / last submissionの切り分けを簡単にする。
    - 状態: S9.1で `getBrowserAiPreflight()` を追加し、S9.1-BでHandoffレビュー、STOP分類、Browser-AI-only outcome記録まで確認した。
-   - 次の注意: 対象docs本文をBrowser AIに渡した内容レビューは次pilotで確認する。Auto Loop代替にはしない。
+   - 状態: S9.2で対象docs本文をBrowser AIに渡し、低リスク実運用OK範囲とS9中規模pilot入口条件をレビューできた。
+   - 次の注意: Auto Loop代替にはしない。長いdocs本文を渡す場合はprompt lengthと対象範囲を明示する。
 
 3. completionDetected細部改善
    - 目的: Worker responseがREADYでも`completionDetected:false`になる細部を減らす。
@@ -245,12 +246,13 @@ S9.1では、Browser-AI-only lightweight preflightを実装し、Worker不要の
 - Auto Loop本体を改造せず、Worker binding requiredをBrowser-AI-only用途のblockerにしない。
 - S9.1-Bでは、Browser AI reply `READY`、`次のWorker指示は不要`、Doy確認事項なし、Browser-AI-only outcome記録まで通った。
 
-S9.2で安全に進める候補は、Target docs attached Browser-AI-only readiness review。
-Handoffだけでなく対象docs本文をBrowser AIに渡し、実運用OK範囲と中規模実装pilotの入口条件を確認する。
+S9.2では、Target docs attached Browser-AI-only readiness reviewを確認した。
+Handoffだけでなく対象docs本文をBrowser AIに渡し、低リスクdocs / 調査 / Browser AIレビュー用途は
+実運用OK、中規模実装pilotへ進行可能という判断を得た。Worker指示は不要、Doy確認事項なし。
 
-次点は、paneId指定で既存terminal paneを表示 / activateするController accessor。
+次に安全な中規模実装pilot候補は、paneId指定で既存terminal paneを表示 / activateするController accessor。
 これはClaude Code chainの運用改善に効くが、terminal pane表示やmount状態に関わるため、
-Browser-AI-only preflightよりblast radiusが大きい。
+小さいsliceに限定し、terminal基盤の大改造へ広げない。
 
 ## 12. 完了報告形式
 

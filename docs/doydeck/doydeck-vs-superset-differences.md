@@ -356,9 +356,9 @@ Browser AIへHandoff送信
 - 既存Auto Loop / Controller chainを使ったSupervisor運用pilotは次フェーズ。
 - 2ターン以上の自動周回は未整理。
 - Auto Loop本体との統合/監視UIは未完成。
-- Doy Feedback / Decision Ledgerは未実装。
+- Doy Feedback / Decision LedgerはMarkdown MVPと初回Decision Recordまで作成済み。
 - 作業側CC / Claude Code実機smokeは必要なら別途。
-- Browser-AI-only軽量preflightは未実装。
+- Browser-AI-only軽量preflightは実装済み。Worker不要の要件整理/壁打ち/対象docsレビューで使える。
 - ChatGPT submit target warningは継続監視。
 - Controller Chain Outcomeの長期的な履歴/永続化は未設計。
 - 最新Superset追従は優先度を下げ、safe-devで体験を固める方針。
@@ -405,9 +405,9 @@ AI作業を安全に進めるための状態管理と受け渡しの環境です
    - Browser AIがSTOPではなく次Codex指示を返すケースを実機で確認。
    - 2ターン目でもtab、Browser AI slot、Worker bindingが混ざらないか見る。
 
-3. Browser-AI-only preflight
-   - Worker不要の要件整理/壁打ちを軽く回せるようにする。
-   - provider、slot、composer、last submission、latest replyだけを見る。
+3. paneId指定activate accessor
+   - 非表示/非mount状態の既存terminal paneを安全に表示/activateする。
+   - 新規Worker起動を避け、既存recognized workerを復旧しやすくする。
 
 4. Doy Feedback / Decision Ledger
    - Doyの承認、違和感、却下理由、最終判断をHandoffとは別粒度で残す。

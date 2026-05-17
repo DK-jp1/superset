@@ -109,7 +109,8 @@ pushを含む運用は、まだDoy確認ゲート付きpilot扱い。
 - Browser-AI-only docs本文レビュー
   - `getBrowserAiPreflight()`でWorker不要のレビュー/要件整理だけを軽量に確認できるようになった。
   - S9.1-BではHandoff上の要件整理レビュー、STOP分類、Browser-AI-only outcome記録まで通った。
-  - 対象docs本文をBrowser AIへ渡して内容レビューする運用は次のpilot対象。
+  - S9.2では対象docs本文をBrowser AIへ渡し、実運用OK範囲とS9中規模pilot入口条件をレビューできた。
+  - 今後は対象docs本文が長い場合のprompt分割/要約運用を継続監視する。
 - paneId指定activate accessor
   - 非表示 / 非mount状態のterminal paneを明示activateするController accessorは未実装。
 - completionDetected細部改善
@@ -212,15 +213,17 @@ batch運用でも、commitは意味単位で分け、pushはDoy確認で止め�
 
 ## 8. 次にやるべき最小タスク
 
-Priority A: Target docs attached Browser-AI-only readiness review
+Priority A: paneId指定activate accessor
 
-- S9.1-BでBrowser-AI-only Handoffレビューは通った。
-- 次は対象docs本文をBrowser AIに渡したうえで、実運用OK範囲とS9中規模実装pilot入口条件を確認する。
-- Workerは使わず、`getBrowserAiPreflight()`、Handoff送信、latest reply取得、Browser-AI-only outcome記録だけで回す。
+- S9.2のBrowser-AI-only docs本文レビューは通った。
+- 次に中規模実装pilotへ進むなら、既存terminal paneをpaneIdで表示/activateできるController accessorが第一候補。
+- 新規Worker起動ではなく、既存paneの安全な復旧に限定する。
+- terminal基盤の大改造へ広げない。
 
 Priority B: Handoff LedgerからDecision Recordへの短い参照を置く運用の継続
 
 - S9.1-Bで `DR-2026-05-17-001` の短参照をHandoffに載せ、Outcome記録後のHandoff Ledgerにも残せることを確認した。
+- S9.2でも対象docs本文レビュー時に短参照を維持し、Decision Record本文全文はpromptへ入れていない。
 - 今後もDecision Ledger全文ではなく、関連Decisionの短い要約だけをHandoffへ出す。
 - DoyDeck本体開発とsafe-dev検証分離のDecision Recordを最初の題材にする。
 - 参照例:
@@ -236,12 +239,7 @@ Priority C: 低リスクdocsタスクをもう1件実運用
 - CodexまたはClaude Codeで、小さいdocs整理をもう1件回す。
 - Doy確認事項なし、STOP、Outcome記録まで通るか見る。
 
-Priority D: paneId指定activate accessor
-
-- 既存terminal paneをpaneIdで表示/activateできるController accessorを検討する。
-- 新規Worker起動ではなく、既存paneの安全な復旧に限定する。
-
-Priority E: completionDetected細部改善
+Priority D: completionDetected細部改善
 
 - Claude / Codexの完了報告表現をもう少し広く拾う。
 - `READY`と`completionDetected`の差を減らす。

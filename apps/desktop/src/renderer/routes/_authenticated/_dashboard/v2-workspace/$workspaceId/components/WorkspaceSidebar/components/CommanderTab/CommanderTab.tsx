@@ -125,6 +125,12 @@ interface CommanderControllerChainOutcomeInput {
 	notes?: unknown;
 }
 
+interface CommanderControllerSendHandoffInput {
+	additionalInstructions?: unknown;
+	additionalContext?: unknown;
+	additionalContextLabel?: unknown;
+}
+
 type CommanderControllerPreflightStatus =
 	| "READY"
 	| "READY_WITH_NOTES"
@@ -361,6 +367,8 @@ interface CommanderControllerSendHandoffResult
 	browserAiReady: boolean;
 	browserAiSlotOk: boolean;
 	handoffLedgerLength: number;
+	additionalInstructionsLength: number;
+	additionalContextLength: number;
 	promptLength: number;
 	blockers: string[];
 	warnings: string[];
@@ -1623,10 +1631,11 @@ export function CommanderTab({
 
 	const sendHandoffToBrowserAiController =
 		useCallback(async (
-			_input?: unknown,
+			input?: unknown,
 		): Promise<CommanderControllerSendHandoffResult> => {
 			const blockers: string[] = [];
 			const warnings: string[] = [];
+			const sendInput = normalizeSendHandoffControllerInput(input);
 			const activeTabIdSnapshot = activeTabId;
 			const runtime = webview.getRuntimeSnapshot();
 			const liveUrl = webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
@@ -1684,7 +1693,12 @@ export function CommanderTab({
 				warnings.push(`browser ai visual status needs fix: ${runtime.visualReason}`);
 			}
 
-			const prompt = ledger.trim() ? buildSendHandoffLedgerPrompt(ledger) : "";
+			const prompt = ledger.trim()
+				? appendBrowserAiHandoffPromptContext(
+						buildSendHandoffLedgerPrompt(ledger),
+						sendInput,
+					)
+				: "";
 			let latestReplyBeforeSubmit: BrowserAiLatestReplyState | null = null;
 			if (provider && runtime.status === "available" && runtime.bridgeAvailable) {
 				try {
@@ -1702,6 +1716,8 @@ export function CommanderTab({
 				browserAiReady,
 				browserAiSlotOk,
 				handoffLedgerLength,
+				additionalInstructionsLength: sendInput.additionalInstructions.length,
+				additionalContextLength: sendInput.additionalContext.length,
 				promptLength: prompt.length,
 				blockers,
 				warnings,
@@ -3719,6 +3735,51 @@ function normalizeControllerStringArray(value: unknown): string[] {
 	return value
 		.map((item) => (typeof item === "string" ? item.trim() : ""))
 		.filter(Boolean);
+}
+
+function normalizeSendHandoffControllerInput(
+	input: unknown,
+): {
+	additionalInstructions: string;
+	additionalContext: string;
+	additionalContextLabel: string;
+} {
+	if (!input || typeof input !== "object") {
+		return {
+			additionalInstructions: "",
+			additionalContext: "",
+			additionalContextLabel: "Additional Context",
+		};
+	}
+	const record = input as CommanderControllerSendHandoffInput;
+	const additionalContextLabel =
+		normalizeControllerTextInput(record.additionalContextLabel) ||
+		"Additional Context";
+	return {
+		additionalInstructions: normalizeControllerTextInput(
+			record.additionalInstructions,
+		),
+		additionalContext: normalizeControllerTextInput(record.additionalContext),
+		additionalContextLabel,
+	};
+}
+
+function appendBrowserAiHandoffPromptContext(
+	basePrompt: string,
+	input: ReturnType<typeof normalizeSendHandoffControllerInput>,
+): string {
+	const sections = [basePrompt.trim()];
+	if (input.additionalInstructions) {
+		sections.push(
+			`--- Additional Browser AI Instructions ---\n${input.additionalInstructions}`,
+		);
+	}
+	if (input.additionalContext) {
+		sections.push(
+			`--- ${input.additionalContextLabel} ---\n${input.additionalContext}`,
+		);
+	}
+	return sections.filter(Boolean).join("\n\n");
 }
 
 function appendCommanderControllerSection(
