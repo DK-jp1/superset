@@ -5300,6 +5300,16 @@ function getBoundWorkerPromptEchoResidualReason(
 	);
 	if (
 		compactMarkers.some(
+			(marker) =>
+				marker.length >= 12 &&
+				compactText.length >= 12 &&
+				marker.includes(compactText),
+		)
+	) {
+		return "worker output contains partial submitted prompt marker";
+	}
+	if (
+		compactMarkers.some(
 			(marker) => marker.length >= 8 && compactText.includes(marker),
 		) &&
 		/(返信してください|返答してください|報告してください|確認してください|変更は不要|please\s+(?:reply|report|check))/i.test(
@@ -5320,7 +5330,7 @@ function getBoundWorkerPromptEchoResidualReason(
 	for (const line of lines) {
 		if (isBoundWorkerUiNoiseLine(line)) continue;
 		const compactLine = compactWorkerInstructionForComparison(line);
-		if (!compactLine) continue;
+		if (compactLine.length < 8) continue;
 		usableLines += 1;
 		if (
 			compactLine.length >= 8 &&
@@ -5507,7 +5517,8 @@ function stripInlineBoundWorkerUiNoise(line: string): string {
 		.replace(/[›>]\s*Write tests for @filename.*$/i, "")
 		.replace(/gpt-\d(?:\.\d+)?\s+\w+\s+·\s+~?\/.*$/i, "")
 		.replace(/[•·]?\s*Working\([^)]*(?:interrupt|interupt)[^)]*\).*$/i, "")
-		.replace(/[✢✳✻✶✽·]?\s*(?:Crunching|Garnishing|Churning|Searching)[….\s\S]*$/i, "")
+		.replace(/[✢✳✻✶✽·]\s*Worked for\b.*$/i, "")
+		.replace(/[✢✳✻✶✽·]?\s*(?:Baked|Baking|Crunching|Garnishing|Churning|Searching)[….\s\S]*$/i, "")
 		.replace(
 			/[•·]?\d*(?:Working|Workin|Worki|Work|Wor|Wo)(?:[•·]?\d*(?:Working|Workin|Worki|Work|Wor|Wo|W|orking|rking|king|ing|ng|g))*.*$/i,
 			"",
@@ -5530,8 +5541,11 @@ function isBoundWorkerUiNoiseLine(line: string): boolean {
 		/^⏵⏵\s*bypass\s*permissions\s*on/i,
 		/^⏵⏵bypasspermissionson/i,
 		/\bctrl\+g\s+to\s+edit\s+in\s+Vim\b/i,
-		/^✻\s*(?:Cooked|Crunched|Reticulating)\b/i,
-		/^[✢✳✻✶✽·]?\s*(?:Crunching|Garnishing|Churning|Searching)\b/i,
+		/^●?\s*How is Claude doing this session\?/i,
+		/^\d+\s*:\s*Bad\s*\d+\s*:\s*Fine\s*\d+\s*:\s*Good\s*\d+\s*:\s*Dismiss/i,
+		/^✻\s*Worked for\b/i,
+		/^✻\s*(?:Baked|Baking|Cooked|Crunched|Reticulating)\b/i,
+		/^[✢✳✻✶✽·]?\s*(?:Baked|Baking|Crunching|Garnishing|Churning|Searching)\b/i,
 		/^·\s*Reticulating/i,
 		/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏◐◓◑◒⏳]\s*(?:Working|Thinking|Running)?/i,
 		/^OpenAI Codex\b/i,
@@ -5552,7 +5566,7 @@ function scoreBoundWorkerResponseCandidate(line: string): number {
 	if (/※\s*recap:|\(disable recaps in \/config\)/i.test(normalized)) return 0;
 	if (/返信してください|返答してください|reply\s+with/i.test(normalized)) return 0;
 	const scoredPatterns: Array<[RegExp, number]> = [
-		[/\bS[78]_[A-Za-z0-9_]*\b/, 130],
+		[/\bS[789]_[A-Za-z0-9_]*\b/, 130],
 		[/\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*(?:SAFE|NOOP)_ACK(?:_[A-Za-z0-9]+)*\b/i, 130],
 		[/受け取りました/, 120],
 		[/受信しました/, 115],
@@ -6123,7 +6137,7 @@ function detectWorkerAckMarker({
 function extractWorkerAckMarkersFromInstruction(instruction: string): string[] {
 	const markers = new Set<string>();
 	const patterns = [
-		/\bS[78]_[A-Za-z0-9_]*\b/g,
+		/\bS[789]_[A-Za-z0-9_]*\b/g,
 		/\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*(?:SAFE|NOOP)_ACK(?:_[A-Za-z0-9]+)*\b/gi,
 		/\b[A-Za-z0-9]{8,}(?:_[A-Za-z0-9]{3,}){2,}\b/g,
 	];
