@@ -5355,7 +5355,18 @@ function extractBoundWorkerResponseForAnalysis(params: {
 		if (focused.uiNoiseRemoved) {
 			analysisWarnings.push("worker UI noise removed from response analysis");
 		}
-		if (!focused.responseFocused) {
+		const focusedIsMarkerOnly =
+			lastInstructionMarker &&
+			isBoundWorkerMarkerOnlyResponse(
+				focused.text,
+				lastInstructionMarker.instruction,
+			);
+		if (focusedIsMarkerOnly) {
+			analysisWarnings.push(
+				"worker output delta contained only the last ack marker; checking visible output",
+			);
+		}
+		if (!focused.responseFocused || focusedIsMarkerOnly) {
 			const visibleDeltaText = extractVisibleBoundWorkerDeltaText({
 				screenText,
 				viewportText,
@@ -5670,6 +5681,34 @@ function getBoundWorkerStaleAckMarkerReason(
 		return "worker output contains stale ack marker not found in last instruction";
 	}
 	return null;
+}
+
+function isBoundWorkerMarkerOnlyResponse(
+	text: string,
+	instruction: string,
+): boolean {
+	const normalized = text.trim();
+	if (!normalized) return false;
+	const markers = extractWorkerAckMarkersFromInstruction(instruction);
+	const marker = markers.find((candidate) =>
+		includesAckMarker(normalized, candidate),
+	);
+	if (!marker) return false;
+	let residual = normalized.replaceAll(marker, " ");
+	residual = residual.replace(
+		new RegExp(
+			marker
+				.split("")
+				.map((char) => escapeRegExp(char))
+				.join("\\s*"),
+			"g",
+		),
+		" ",
+	);
+	const residualCompact = residual
+		.replace(/[✢✳✻✶✽·⏺●•・┃│╭╮╰╯─\s.,。:：/\\-]+/g, "")
+		.trim();
+	return residualCompact.length === 0;
 }
 
 function extractVisibleBoundWorkerDeltaText(params: {
@@ -6038,7 +6077,10 @@ function analyzeBoundWorkerOutput(
 	const normalized = text.trim();
 	const completionSignal = detectBoundWorkerCompletionSignal(normalized);
 	const outputLooksComplete = completionSignal.completionDetected;
-	const rawRunningSignal = detectBoundWorkerRunningSignal(normalized);
+	const runningSignalText = [normalized, context?.deltaText ?? ""]
+		.filter((part) => part.trim())
+		.join("\n");
+	const rawRunningSignal = detectBoundWorkerRunningSignal(runningSignalText);
 	const outputLooksStillRunning =
 		rawRunningSignal.outputLooksStillRunning && !outputLooksComplete;
 	const runningSignalReason = outputLooksStillRunning
@@ -6256,6 +6298,7 @@ function detectBoundWorkerRunningSignal(text: string): {
 		[/\bworking\b/i, "working signal detected"],
 		[/\brunning\b/i, "running signal detected"],
 		[/\bthinking\b/i, "thinking signal detected"],
+		[/\bconsidering\b/i, "Claude running signal detected: Considering"],
 		[/\banalyzing\b/i, "analyzing signal detected"],
 		[/\bexecuting\b/i, "executing signal detected"],
 		[/\bcrunching\b/i, "Claude running signal detected: Crunching"],
