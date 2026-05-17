@@ -156,6 +156,32 @@ pushを含む運用は、まだDoy確認ゲート付きpilot扱い。
 - 実運用では既存Auto Loop / Controller chainの状態、結果、stop reasonを監視する。
 - SmokeではController accessorを順番に呼ぶことがあるが、それは部品検証である。
 
+### batch / 並列運用の扱い
+
+低リスクdocs、調査、Handoff / Decision Ledger整理のように独立している作業は、
+最大2〜3 taskまでbatch化できる。
+
+実運用OK:
+
+- 互いに触るファイルが違うdocs整理。
+- read-onlyな調査。
+- 影響範囲確認。
+- テスト観点整理。
+- Handoff / Decision Ledger整理。
+
+まだpilotまたは直列化:
+
+- code変更。
+- 同じファイルを触る作業。
+- `CommanderTab.tsx`など中核ファイル。
+- Worker binding / Browser AI送信 / Auto Loop周辺。
+- 同じDoyDeck tab / Worker / Browser AI slotを使う作業。
+- 複数commitが絡む作業。
+
+batch運用でも、commitは意味単位で分け、pushはDoy確認で止める。最後の報告では、
+タスク一覧、status、変更ファイル、commit hash、smoke結果、self-review、reviewer観点、
+未解決、Doy確認事項をまとめる。
+
 ## 7. 実運用開始チェックリスト
 
 開始前:

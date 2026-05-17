@@ -152,6 +152,81 @@ DoyDeck内運用:
 Meta AI / Controllerはpreflight、worker identity、danger signal、maxTurnsを確認し、
 矛盾があれば停止する。
 
+### 並列タスク実行とsubagent / agent-team活用
+
+並列タスク実行の目的は、Doyの短時間コピペ中継負担を減らし、独立タスクをまとめて
+進め、最後にbatch summaryとしてレビューできるようにすることである。
+
+ただし、これはDoyDeck safe-dev内で同じtab、Worker、Browser AI slotを奪い合う
+複数タブ並列実行を許可するものではない。S8のSupervisor pilotでは、1タスク1タブ、
+`maxTurns`、preflight、worker identity、Doy確認境界を維持する。
+
+並列OKなタスク:
+
+- docs整理。
+- 調査。
+- 影響範囲確認。
+- テスト観点整理。
+- Handoff / Decision Ledger整理。
+- 互いに触るファイルが違う小修正。
+
+並列NG / 注意タスク:
+
+- 同じファイルを触る実装。
+- `CommanderTab.tsx`など中核ファイルの同時編集。
+- Worker binding / Browser AI送信 / Auto Loop周辺の同時改修。
+- git commitが絡む複数作業。
+- 同じDoyDeck tab / Worker / Browser AI slotを奪い合う作業。
+
+並列実行ルール:
+
+- 原則は最大2〜3 taskまで。
+- 変更ファイルが重なる場合は直列化する。
+- docs-onlyは並列しやすい。
+- code変更は原則1本ずつ進める。
+- commitは意味単位で分ける。
+- pushはDoy確認で止める。
+- 最後にbatch summaryを出す。
+
+subagent / agent-team活用方針:
+
+- 利用可能なsubagentがある場合は、独立した調査、実装、検証、レビューを分担させる。
+- subagentが利用できない場合も、同一セッション内で役割分担を明示する。
+- 役割は `Planner`、`Implementer`、`Tester`、`Reviewer`、`Reporter` を基本にする。
+- `Planner`はscope、対象ファイル、停止条件、確認手順を整理する。
+- `Implementer`は最小差分で実装またはdocs修正を行う。
+- `Tester`は`git diff --check`、typecheck、smoke、対象別確認を実施する。
+- `Reviewer`は反対視点で、過剰実装、禁止事項、既存挙動破壊、smoke不足を見る。
+- `Reporter`はbatch summary、未解決、Doy確認事項をまとめる。
+
+今の開発環境では、別文脈AIはChatGPT、実装AIは作業側Codexである。DoyDeck内運用では、
+別文脈AIはBrowser AI、実装AIはWorker AI（作業側Codex / 作業側CC / Claude Code）である。
+どちらでも、実装AIセルフレビューと別文脈AIレビューを組み合わせる。
+
+batch報告には以下を含める。
+
+- タスク一覧。
+- 各タスクのstatus。
+- 変更ファイル。
+- commit hash。
+- smoke結果。
+- self-review。
+- reviewer観点。
+- 未解決。
+- Doy確認事項。
+
+並列タスク中でも、以下に当たる場合は停止する。
+
+- push。
+- destructive操作。
+- cookie / token / private API。
+- `local.db` / `app-state.json`直接操作。
+- 新規Worker起動。
+- 仕様 / UX / 文言の最終判断。
+- scope拡大。
+- 同じ失敗が許容回数を超えた場合。
+- 並列タスク間で変更衝突が起きた場合。
+
 ### 壁を越えてから報告する
 
 軽微な壁ではDoyへ細かく戻さない。実装AI / Meta AIは、Doy確認条件に当たらない範囲で
