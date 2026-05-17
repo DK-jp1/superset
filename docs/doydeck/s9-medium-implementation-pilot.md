@@ -291,6 +291,17 @@ Claude paneへ送る前にready-stateを確認し、feedback promptや未送信p
 input clear / deleteやClaude Code再起動はDoy確認対象であり、S9.6の範囲では実装しない。
 まずは状態検出、preflight / readinessへの反映、送信前BLOCKEDまたはwarningまでをpilot範囲にする。
 
+S9.6-Bでは、ready-state復旧方針を確認した。
+Claude paneが`prompt-echo-residue`、`feedback-prompt`、またはready promptなしの
+`recap-visible` / `stale-marker-only`なら、新規instructionは送らない。
+許可する非破壊操作は、既存paneのactivate、既存worker bind、snapshot / output log確認、
+preflight再実行までに限定する。
+
+復旧のためにinput clear / delete、feedback promptの強制dismiss、Claude Code再起動、
+新規Claude worker起動が必要な場合はDoy確認で止める。
+ready-for-inputかつ`workerInputReady:true`が確認できた場合だけ、no-opまたはdocs-onlyの
+短いsliceを送信する。
+
 ## 12. 完了報告形式
 
 S9 pilotの完了報告には以下を含める。
