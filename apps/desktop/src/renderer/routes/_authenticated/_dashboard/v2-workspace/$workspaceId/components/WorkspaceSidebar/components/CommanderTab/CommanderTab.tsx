@@ -186,6 +186,45 @@ interface CommanderControllerGetActiveTabResult
 	message: string;
 }
 
+type CommanderControllerActivateTabStatus = "ACTIVATED" | "BLOCKED";
+
+interface CommanderControllerActivateTabInput {
+	tabId?: unknown;
+}
+
+interface CommanderControllerActivateTabResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerActivateTabStatus;
+	requestedTabId: string | null;
+	activeTabIdBefore: string | null;
+	activeTabIdAfter: string | null;
+	tab: CommanderControllerTabSummary | null;
+	warnings: string[];
+	blockers: string[];
+	message: string;
+}
+
+type CommanderControllerRenameTaskTabStatus = "RENAMED" | "BLOCKED";
+
+interface CommanderControllerRenameTaskTabInput {
+	tabId?: unknown;
+	title?: unknown;
+	newTitle?: unknown;
+	name?: unknown;
+}
+
+interface CommanderControllerRenameTaskTabResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerRenameTaskTabStatus;
+	tabId: string | null;
+	titleBefore: string | null;
+	titleAfter: string | null;
+	tab: CommanderControllerTabSummary | null;
+	warnings: string[];
+	blockers: string[];
+	message: string;
+}
+
 type CommanderControllerChainStatus =
 	| "PASS"
 	| "STOP"
@@ -797,6 +836,12 @@ interface CommanderControllerCommands {
 	getActiveTabId: () => string | null;
 	listTabs: () => CommanderControllerListTabsResult;
 	getActiveTab: () => CommanderControllerGetActiveTabResult;
+	activateTab: (
+		input?: CommanderControllerActivateTabInput,
+	) => Promise<CommanderControllerActivateTabResult>;
+	renameTaskTab: (
+		input?: CommanderControllerRenameTaskTabInput,
+	) => Promise<CommanderControllerRenameTaskTabResult>;
 	createTaskTab: (
 		input?: CommanderControllerCreateTaskTabInput,
 	) => Promise<CommanderControllerCreateTaskTabResult>;
@@ -1352,9 +1397,201 @@ export function CommanderTab({
 			};
 		}, [activeTabId, workspaceId]);
 
-	const createTaskTabController = useCallback(
+	const activateTabController = useCallback(
 		async (
-			input: CommanderControllerCreateTaskTabInput = {},
+			input?: CommanderControllerActivateTabInput,
+		): Promise<CommanderControllerActivateTabResult> => {
+			const tabsState = useTabsStore.getState();
+			const record = input && typeof input === "object" ? input : {};
+			const requestedTabId = normalizeControllerTextInput(
+				(record as CommanderControllerActivateTabInput).tabId,
+			);
+			const activeTabIdBefore =
+				tabsState.activeTabIds[workspaceId] ?? activeTabId ?? null;
+			const blockers: string[] = [];
+			const warnings: string[] = [];
+			const targetTab = requestedTabId
+				? (tabsState.tabs.find((tab) => tab.id === requestedTabId) ?? null)
+				: null;
+
+			if (!workspaceId) blockers.push("workspace not found");
+			if (!requestedTabId) blockers.push("tabId is required");
+			if (requestedTabId && !targetTab) blockers.push("tab not found");
+			if (targetTab && targetTab.workspaceId !== workspaceId) {
+				blockers.push("tab belongs to another workspace");
+			}
+
+			if (activeTabIdBefore === requestedTabId) {
+				warnings.push("requested tab is already active");
+			}
+
+			if (blockers.length > 0 || !targetTab) {
+				const tabSummary =
+					targetTab && targetTab.workspaceId === workspaceId
+						? buildControllerTabSummary({
+								tab: targetTab,
+								panes: tabsState.panes,
+								activeTabId: activeTabIdBefore,
+								focusedPaneId: tabsState.focusedPaneIds[targetTab.id] ?? null,
+							})
+						: null;
+				return {
+					ok: false,
+					workspaceId,
+					tabId: activeTabIdBefore,
+					status: "BLOCKED",
+					requestedTabId: requestedTabId || null,
+					activeTabIdBefore,
+					activeTabIdAfter: activeTabIdBefore,
+					tab: tabSummary,
+					warnings,
+					blockers,
+					message: `activateTab blocked: ${blockers[0] ?? "unknown reason"}`,
+				};
+			}
+
+			tabsState.setActiveTab(workspaceId, targetTab.id);
+			await delay(0);
+
+			const nextTabsState = useTabsStore.getState();
+			const activeTabIdAfter =
+				nextTabsState.activeTabIds[workspaceId] ?? activeTabIdBefore;
+			const nextTab =
+				nextTabsState.tabs.find((tab) => tab.id === targetTab.id) ?? targetTab;
+			const tabSummary = buildControllerTabSummary({
+				tab: nextTab,
+				panes: nextTabsState.panes,
+				activeTabId: activeTabIdAfter,
+				focusedPaneId: nextTabsState.focusedPaneIds[nextTab.id] ?? null,
+			});
+
+			if (activeTabIdAfter !== targetTab.id) {
+				blockers.push("active tab did not update");
+			}
+
+			return {
+				ok: blockers.length === 0,
+				workspaceId,
+				tabId: activeTabIdAfter,
+				status: blockers.length === 0 ? "ACTIVATED" : "BLOCKED",
+				requestedTabId: targetTab.id,
+				activeTabIdBefore,
+				activeTabIdAfter,
+				tab: tabSummary,
+				warnings,
+				blockers,
+				message:
+					blockers.length === 0
+						? `activated tab ${targetTab.id}`
+						: `activateTab blocked: ${blockers[0]}`,
+			};
+		},
+		[activeTabId, workspaceId],
+	);
+
+	const renameTaskTabController = useCallback(
+		async (
+			input?: CommanderControllerRenameTaskTabInput,
+		): Promise<CommanderControllerRenameTaskTabResult> => {
+			const tabsState = useTabsStore.getState();
+			const record = input && typeof input === "object" ? input : {};
+			const requestedTabId = normalizeControllerTextInput(
+				(record as CommanderControllerRenameTaskTabInput).tabId,
+			);
+			const requestedTitle =
+				normalizeControllerTextInput(
+					(record as CommanderControllerRenameTaskTabInput).title,
+				) ||
+				normalizeControllerTextInput(
+					(record as CommanderControllerRenameTaskTabInput).newTitle,
+				) ||
+				normalizeControllerTextInput(
+					(record as CommanderControllerRenameTaskTabInput).name,
+				);
+			const activeTabIdSnapshot =
+				tabsState.activeTabIds[workspaceId] ?? activeTabId ?? null;
+			const blockers: string[] = [];
+			const warnings: string[] = [];
+			const targetTab = requestedTabId
+				? (tabsState.tabs.find((tab) => tab.id === requestedTabId) ?? null)
+				: null;
+			const titleBefore = targetTab ? getTabDisplayName(targetTab) : null;
+
+			if (!workspaceId) blockers.push("workspace not found");
+			if (!requestedTabId) blockers.push("tabId is required");
+			if (requestedTabId && !targetTab) blockers.push("tab not found");
+			if (targetTab && targetTab.workspaceId !== workspaceId) {
+				blockers.push("tab belongs to another workspace");
+			}
+			if (!requestedTitle) blockers.push("title is required");
+			if (titleBefore && requestedTitle && titleBefore === requestedTitle) {
+				warnings.push("requested title already matches current title");
+			}
+
+			if (blockers.length > 0 || !targetTab) {
+				const tabSummary =
+					targetTab && targetTab.workspaceId === workspaceId
+						? buildControllerTabSummary({
+								tab: targetTab,
+								panes: tabsState.panes,
+								activeTabId: activeTabIdSnapshot,
+								focusedPaneId: tabsState.focusedPaneIds[targetTab.id] ?? null,
+							})
+						: null;
+				return {
+					ok: false,
+					workspaceId,
+					tabId: requestedTabId || null,
+					status: "BLOCKED",
+					titleBefore,
+					titleAfter: titleBefore,
+					tab: tabSummary,
+					warnings,
+					blockers,
+					message: `renameTaskTab blocked: ${blockers[0] ?? "unknown reason"}`,
+				};
+			}
+
+			tabsState.renameTab(targetTab.id, requestedTitle);
+			await delay(0);
+
+			const nextTabsState = useTabsStore.getState();
+			const nextTab =
+				nextTabsState.tabs.find((tab) => tab.id === targetTab.id) ?? targetTab;
+			const titleAfter = getTabDisplayName(nextTab);
+			const tabSummary = buildControllerTabSummary({
+				tab: nextTab,
+				panes: nextTabsState.panes,
+				activeTabId: nextTabsState.activeTabIds[workspaceId] ?? activeTabIdSnapshot,
+				focusedPaneId: nextTabsState.focusedPaneIds[nextTab.id] ?? null,
+			});
+
+			if (titleAfter !== requestedTitle) {
+				blockers.push("tab title did not update");
+			}
+
+			return {
+				ok: blockers.length === 0,
+				workspaceId,
+				tabId: targetTab.id,
+				status: blockers.length === 0 ? "RENAMED" : "BLOCKED",
+				titleBefore,
+				titleAfter,
+				tab: tabSummary,
+				warnings,
+				blockers,
+				message:
+					blockers.length === 0
+						? `renamed tab ${targetTab.id}`
+						: `renameTaskTab blocked: ${blockers[0]}`,
+			};
+		},
+		[activeTabId, workspaceId],
+	);
+
+	const createTaskTabController = useCallback(
+			async (
+				input: CommanderControllerCreateTaskTabInput = {},
 		): Promise<CommanderControllerCreateTaskTabResult> => {
 			const startedAt = performance.now();
 			const mark = () => Number((performance.now() - startedAt).toFixed(1));
@@ -3760,6 +3997,8 @@ export function CommanderTab({
 			getActiveTabId: getActiveTabIdController,
 			listTabs: listTabsController,
 			getActiveTab: getActiveTabController,
+			activateTab: activateTabController,
+			renameTaskTab: renameTaskTabController,
 			createTaskTab: createTaskTabController,
 			createWorkspaceTaskTab: createTaskTabController,
 			getCommanderSession: getCommanderSessionControllerResult,
@@ -3804,6 +4043,8 @@ export function CommanderTab({
 		getActiveTabIdController,
 		listTabsController,
 		getActiveTabController,
+		activateTabController,
+		renameTaskTabController,
 		createTaskTabController,
 		getCommanderSessionControllerResult,
 		setCommanderSessionController,
