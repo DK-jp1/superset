@@ -270,3 +270,56 @@ Doy Feedback / Decision Ledgerは、Doyの違和感、採用判断、却下理�
 Handoff Ledgerが作業の現在地を残すのに対し、Decision LedgerはDoyの判断方針を
 再利用可能な形で残す。最初はMarkdownで小さく運用し、必要になってからHandoff連携、
 Controller accessor、UI化へ進める。
+
+## Decision Records
+
+## 2026-05-17: DoyDeck本体開発とsafe-dev検証を分離する
+
+- date: 2026-05-17
+- context:
+  - task: S8 safe-dev / Supervisor pilot運用方針
+  - related handoff: S8 Supervisor pilot checkpoint
+  - related files:
+    - `docs/doydeck/s8-supervisor-operation-pilot.md`
+    - `docs/doydeck/s8-supervisor-pilot-checkpoint.md`
+    - `docs/doydeck/doydeck-vs-superset-differences.md`
+  - related commits:
+    - `f16e539a docs(doydeck): clarify S8 safe-dev scope boundary`
+    - `735fad9b docs(doydeck): clarify S8 supervisor pilot operation model`
+    - `92d20e61 docs(doydeck): clarify review roles and self-review policy`
+- Doy feedback:
+  - DoyDeck本体開発をDoyDeck自身の中だけで進めると、開発対象と検証対象が混ざる。
+  - renderer reload、session切断、webview / terminal / worker binding状態の喪失が起き得る。
+  - DoyDeck safe-devは、DoyDeck本体開発の母艦ではなく、Controller chain / Meta AI連携 /
+    実運用pilotの検証対象として扱いたい。
+- decision:
+  - adopted:
+    - DoyDeck本体開発は、外側環境 / 通常Superset / 作業側Codex・CCで進める。
+    - DoyDeck safe-devは、Controller chain / Meta AI連携 / 実運用pilotの検証対象として使う。
+  - rejected:
+    - DoyDeck本体開発をDoyDeck safe-dev自身を母艦にして進める運用。
+    - safe-dev上のSupervisor pilotを、本体開発をDoyDeckだけで完結させる方針として扱うこと。
+- reason:
+  - renderer reloadやHMRで、Browser AI slot、terminal pane、worker binding、Commander Sessionが
+    失われたり古くなったりする。
+  - 開発作業とDoyDeck内pilotを同じ面で進めると、検証対象の状態を開発作業が壊す可能性がある。
+  - 外側環境で本体開発し、safe-devを検証対象として使う方が、失敗原因を切り分けやすい。
+  - DoyDeckの価値は「DoyDeck自身だけでDoyDeckを開発する」ことではなく、AI作業の状態確認、
+    受け渡し、検証、記録を安全に行うことにある。
+- rule going forward:
+  - DoyDeck本体コード変更は、外側環境 / 通常Superset / 作業側Codex・CCから行う。
+  - DoyDeck safe-devは、Controller Commands、Browser AI、Worker binding、Handoff Ledger、
+    Supervisor pilotの動作確認に使う。
+  - safe-dev内のpilot中に本体開発へ踏み込みそうになったら、scope拡大としてDoy確認で止める。
+  - safe-devのrenderer reloadやbinding喪失は、開発母艦化のリスクとして扱い、設計上の前提にする。
+- review notes:
+  - implementation AI self-review:
+    - この判断はS8 docsで繰り返し確認されたscope boundaryと一致している。
+    - docs-only記録であり、DoyDeck本体コードやController accessorは変更していない。
+  - separate-context AI review:
+    - Browser AI / ChatGPTには、safe-devを実運用pilot対象として扱い、DoyDeck本体開発の母艦と
+      誤読しないかを重点レビューさせる。
+- revisit condition:
+  - DoyDeckが十分安定し、renderer reload、session、webview、terminal bindingの復旧が
+    Controller-levelで安全に扱えるようになった場合。
+  - Doyが明示的に「DoyDeck自身を開発母艦として試す」pilotを別途許可した場合。
