@@ -4963,10 +4963,82 @@ function detectBoundWorkerCompletionSignal(text: string): {
 			};
 		}
 	}
+	const evidence = collectBoundWorkerCompletionEvidence(text);
+	if (evidence.hasReportAnchor && evidence.reasons.length >= 3) {
+		return {
+			completionDetected: true,
+			completionSignalReason: `completion evidence detected: ${evidence.reasons
+				.slice(0, 4)
+				.join(", ")}`,
+		};
+	}
 	return {
 		completionDetected: false,
 		completionSignalReason: null,
 	};
+}
+
+function collectBoundWorkerCompletionEvidence(text: string): {
+	reasons: string[];
+	hasReportAnchor: boolean;
+} {
+	const lines = text
+		.split("\n")
+		.map((line) => line.replace(/\s+/g, " ").trim())
+		.filter(Boolean);
+	const normalized = lines.join("\n");
+	const reasons = new Set<string>();
+	let hasReportAnchor = false;
+	const addEvidence = (reason: string, anchor = false) => {
+		reasons.add(reason);
+		if (anchor) hasReportAnchor = true;
+	};
+	const lineMatches = (pattern: RegExp) =>
+		lines.some((line) => pattern.test(line));
+
+	if (lineMatches(/(?:対象docs|対象ファイル|対象文書|docs|本文).*(?:確認しました|確認済み|読み|十分)/i)) {
+		addEvidence("target docs checked", true);
+	}
+	if (lineMatches(/(?:すでに|既に)?十分(?:です|なため|と判断|である)/)) {
+		addEvidence("content sufficient", true);
+	}
+	if (lineMatches(/(?:編集|修正|追加修正|変更)(?:は|を)?(?:していません|なし|無し|不要)/)) {
+		addEvidence("no edit needed", true);
+	}
+	if (lineMatches(/^変更ファイル\s*[:：]\s*(?:なし|無し|none|no changes?)$/i)) {
+		addEvidence("no changed files", true);
+	}
+	if (lineMatches(/^未解決(?:\s*\/\s*次にやるなら)?\s*[:：]\s*(?:なし|無し|none)$/i)) {
+		addEvidence("no unresolved items", true);
+	}
+	if (lineMatches(/^(?:確認結果|実施内容|セルフレビュー)\s*[:：]?/)) {
+		addEvidence("report section");
+	}
+	if (lineMatches(/\bgit\s+diff\s+--check\b.*(?:PASS|成功|通過|問題なし)|^(?:git diff --check\s*)?結果\s*[:：]\s*(?:PASS|成功|通過|問題なし)$/i)) {
+		addEvidence("git diff --check passed", true);
+	}
+	if (lineMatches(/\bgit\s+status\s+--short\b.*(?:clean|差分なし|変更なし)|git status clean/i)) {
+		addEvidence("git status clean", true);
+	}
+	if (lineMatches(/(?:Doy確認事項なし|Doy確認\s*[:：]\s*(?:不要|なし|無し))/)) {
+		addEvidence("no Doy confirmation");
+	}
+	if (lineMatches(/^(?:次の)?(?:Codex|Worker)?指示\s*[:：]\s*(?:不要|なし|無し)$/)) {
+		addEvidence("no next instruction");
+	}
+	if (lineMatches(/^(?:STOP|STOP[。.]|STOP\s*\/)/i)) {
+		addEvidence("stop signal");
+	}
+	if (lineMatches(/(?:追加作業不要|追加のCodex作業は不要|次のCodex指示は不要|次のWorker指示は不要)/)) {
+		addEvidence("additional work not needed", true);
+	}
+	if (/(?:受け取りました|受信しました|確認しました).*(?:現在待機中です|待機中です)/.test(normalized)) {
+		addEvidence("acknowledged and waiting", true);
+	}
+	if (/\b(?:SAFE|NOOP)_ACK\b/i.test(normalized)) {
+		addEvidence("ack marker", true);
+	}
+	return { reasons: [...reasons], hasReportAnchor };
 }
 
 function detectBoundWorkerRunningSignal(text: string): {
@@ -5097,10 +5169,14 @@ function detectBoundWorkerGitOperationSignal(text: string): {
 		/\bno git operations?\b/i,
 		/\bdo not use git\b/i,
 		/commit\/push(?:は|を)?していません/i,
+		/commit\s*\/\s*push\s*(?:なし|無し|不要|未実施|していません)/i,
+		/commit(?:は|を)?(?:なし|無し|不要|未実施)/i,
+		/push(?:は|を)?(?:なし|無し|不要|未実施)/i,
 		/commit(?:は|を)?していません/i,
 		/push(?:は|を)?していません/i,
 		/コミット(?:は|を)?していません/,
 		/プッシュ(?:は|を)?していません/,
+		/コミット\s*\/\s*プッシュ\s*(?:なし|無し|不要|未実施|していません)/,
 	];
 	let safeReason: string | null = null;
 	for (const line of text.split("\n")) {
