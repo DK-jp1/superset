@@ -4307,8 +4307,16 @@ function findInstructionSafetyBlockers(instruction: string): string[] {
 	const normalized = instruction.trim();
 	if (!normalized) return blockers;
 	const checks: Array<{ label: string; pattern: RegExp }> = [
-		{ label: "commit requires Doy confirmation", pattern: /\bcommit\b|コミット/i },
-		{ label: "push requires Doy confirmation", pattern: /\bpush\b|プッシュ/i },
+		{
+			label: "commit requires Doy confirmation",
+			pattern:
+				/\bgit\s+commit\b|\bcommit(?:\s|$|[\\/.,;:、。!?）)]|してください|する|して|実行|確認|必要)|コミット/i,
+		},
+		{
+			label: "push requires Doy confirmation",
+			pattern:
+				/\bgit\s+push\b|\bpush(?:\s|$|[\\/.,;:、。!?）)]|してください|する|して|実行|確認|必要)|プッシュ/i,
+		},
 		{
 			label: "destructive file operation requires Doy confirmation",
 			pattern:
@@ -4325,12 +4333,62 @@ function findInstructionSafetyBlockers(instruction: string): string[] {
 				/\bcookie\b|\bcookies\b|\btoken\b|\bprivate\s+api\b|秘密鍵|認証情報|トークン/i,
 		},
 	];
-	for (const check of checks) {
-		if (check.pattern.test(normalized) && !blockers.includes(check.label)) {
-			blockers.push(check.label);
+	let inNegativeSafetySection = false;
+	for (const rawLine of normalized.split("\n")) {
+		const line = rawLine.trim();
+		if (!line) continue;
+		if (isNegativeInstructionSafetySectionHeading(line)) {
+			inNegativeSafetySection = true;
+			continue;
+		}
+		if (isPositiveInstructionSectionHeading(line)) {
+			inNegativeSafetySection = false;
+		}
+		if (inNegativeSafetySection || isNegatedInstructionSafetyLine(line)) {
+			continue;
+		}
+		for (const check of checks) {
+			if (check.pattern.test(line) && !blockers.includes(check.label)) {
+				blockers.push(check.label);
+			}
 		}
 	}
 	return blockers;
+}
+
+function isNegativeInstructionSafetySectionHeading(line: string): boolean {
+	const normalized = line.replace(/^[#>*•・\-\d.)\s]+/, "").trim();
+	return /^(やらないこと|禁止|対象外|触らないこと|避けること|not allowed|forbidden|do not|don't|avoid)\s*[:：]?$/i.test(
+		normalized,
+	);
+}
+
+function isPositiveInstructionSectionHeading(line: string): boolean {
+	const normalized = line.replace(/^[#>*•・\-\d.)\s]+/, "").trim();
+	return /^(目的|対象|やること|実施内容|確認|確認方法|完了報告|必要なら|修正する場合|手順|出力|成果物|scope|task)\s*[:：]?$/i.test(
+		normalized,
+	);
+}
+
+function isNegatedInstructionSafetyLine(line: string): boolean {
+	return [
+		/しないでください/,
+		/しないこと/,
+		/していません/,
+		/なし/,
+		/無し/,
+		/触らない/,
+		/使わない/,
+		/行わない/,
+		/不要/,
+		/禁止/,
+		/対象外/,
+		/\bdo not\b/i,
+		/\bdon't\b/i,
+		/\bno\s+(?:commit|push|cookies?|tokens?|private\s+api|database|db)\b/i,
+		/\bnot\s+(?:allowed|required|needed|performed|used)\b/i,
+		/\bwithout\s+(?:commit|push|cookies?|tokens?)\b/i,
+	].some((pattern) => pattern.test(line));
 }
 
 function getSendInstructionBlockedMessage(blockers: string[]): string {
