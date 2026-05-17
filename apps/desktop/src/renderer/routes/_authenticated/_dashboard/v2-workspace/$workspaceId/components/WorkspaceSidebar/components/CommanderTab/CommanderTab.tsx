@@ -237,8 +237,19 @@ type CommanderControllerChainRecordStatus =
 	| "BLOCKED"
 	| "FAILED";
 
+type CommanderControllerChainMode =
+	| "browser-worker-review"
+	| "worker-only"
+	| "browser-ai-only"
+	| "preflight-smoke"
+	| "noop-smoke";
+
 interface CommanderControllerChainOutcomeInput {
 	browserAiOnly?: unknown;
+	chainMode?: unknown;
+	expectBrowserAiReview?: unknown;
+	expectWorkerResponse?: unknown;
+	smokeType?: unknown;
 	chainStatus?: unknown;
 	workerResponseReturnedToBrowserAi?: unknown;
 	finalDecision?: unknown;
@@ -561,6 +572,13 @@ interface CommanderControllerChainSummaryResult
 	status: "READY" | "BLOCKED" | "FAILED";
 	activeTabId: string | null;
 	browserAiOnly: boolean;
+	chainMode: CommanderControllerChainMode;
+	smokeType: string | null;
+	browserAiReviewExpected: boolean;
+	browserAiReviewStatus: CommanderControllerLatestReplyStatus;
+	workerResponseExpected: boolean;
+	workerResponseStatus: CommanderControllerBoundWorkerOutputStatus;
+	workerOnlySmokePassed: boolean;
 	chainStatus: CommanderControllerChainStatus;
 	browserAiProvider: string;
 	workerType: string;
@@ -4075,8 +4093,23 @@ export function CommanderTab({
 		async (
 			input?: CommanderControllerChainOutcomeInput,
 		): Promise<CommanderControllerChainSummaryResult> => {
-			const browserAiOnly =
-				normalizeControllerBooleanInput(input?.browserAiOnly) ?? false;
+			const requestedChainMode = normalizeControllerChainMode(input?.chainMode);
+			const requestedBrowserAiOnly = normalizeControllerBooleanInput(
+				input?.browserAiOnly,
+			);
+			const chainMode: CommanderControllerChainMode =
+				requestedChainMode ??
+				(requestedBrowserAiOnly ? "browser-ai-only" : "browser-worker-review");
+			const browserAiOnly = chainMode === "browser-ai-only";
+			const smokeType = normalizeControllerTextInput(input?.smokeType);
+			const browserAiReviewExpected =
+				normalizeControllerBooleanInput(input?.expectBrowserAiReview) ??
+				(chainMode === "browser-worker-review" || chainMode === "browser-ai-only");
+			const workerResponseExpected =
+				normalizeControllerBooleanInput(input?.expectWorkerResponse) ??
+				(chainMode === "browser-worker-review" ||
+					chainMode === "worker-only" ||
+					chainMode === "noop-smoke");
 			const completedAt =
 				normalizeControllerIsoDateInput(input?.completedAt) ??
 				new Date().toISOString();
@@ -4084,15 +4117,17 @@ export function CommanderTab({
 				? await getBrowserAiPreflightController()
 				: await getAutoLoopPreflightController();
 			const latestReply = await readBrowserAiLatestReplyController();
-			const workerResponse = browserAiOnly
-				? null
-				: await readBoundWorkerLatestResponseController();
+			const resolvedWorkerResponse = workerResponseExpected
+				? await readBoundWorkerLatestResponseController()
+				: null;
 			const lastSubmission = lastBrowserAiSubmissionRef.current;
 			const blockers: string[] = [];
 			const warnings: string[] = [
 				...preflight.warnings.map((warning) => `preflight: ${warning}`),
-				...latestReply.warnings.map((warning) => `browser ai: ${warning}`),
-				...(workerResponse?.warnings ?? []).map(
+				...(browserAiReviewExpected
+					? latestReply.warnings.map((warning) => `browser ai: ${warning}`)
+					: []),
+				...(resolvedWorkerResponse?.warnings ?? []).map(
 					(warning) => `worker response: ${warning}`,
 				),
 			];
@@ -4101,16 +4136,16 @@ export function CommanderTab({
 			if (browserAiOnly && preflight.status === "BLOCKED") {
 				blockers.push(...preflight.blockers);
 			}
-			if (latestReply.status !== "READY") {
+			if (browserAiReviewExpected && latestReply.status !== "READY") {
 				blockers.push(`browser ai review reply not ready: ${latestReply.status}`);
 			}
-			if (!browserAiOnly) {
-				if (workerResponse?.status !== "READY") {
+			if (workerResponseExpected) {
+				if (resolvedWorkerResponse?.status !== "READY") {
 					blockers.push(
-						`bound worker response not ready: ${workerResponse?.status ?? "FAILED"}`,
+						`bound worker response not ready: ${resolvedWorkerResponse?.status ?? "FAILED"}`,
 					);
 				}
-				if (!workerResponse?.workerIdentityOk) {
+				if (!resolvedWorkerResponse?.workerIdentityOk) {
 					blockers.push("bound worker identity could not be verified");
 				}
 			}
@@ -4118,17 +4153,21 @@ export function CommanderTab({
 				normalizeControllerBooleanInput(input?.workerResponseReturnedToBrowserAi);
 			const workerResponseReturnedToBrowserAi =
 				requestedWorkerResponseReturned ??
-				(browserAiOnly
+				(!workerResponseExpected
 					? false
 					: lastSubmission?.type === "worker-response" &&
-						lastSubmission.status === "SENT" &&
-						lastSubmission.injectionResult === "submitted");
-			if (!browserAiOnly && !workerResponseReturnedToBrowserAi) {
+							lastSubmission.status === "SENT" &&
+							lastSubmission.injectionResult === "submitted");
+			if (
+				browserAiReviewExpected &&
+				workerResponseExpected &&
+				!workerResponseReturnedToBrowserAi
+			) {
 				warnings.push(
 					"latest worker-response submission tracking is unavailable or not SENT",
 				);
 			}
-			if (latestReply.extractedCodexInstruction.trim()) {
+			if (browserAiReviewExpected && latestReply.extractedCodexInstruction.trim()) {
 				blockers.push(
 					...findInstructionSafetyBlockers(
 						latestReply.extractedCodexInstruction,
@@ -4138,14 +4177,29 @@ export function CommanderTab({
 
 			const requestedStatus = normalizeControllerChainStatus(input?.chainStatus);
 			const latestWorkerResponseStatus: CommanderControllerBoundWorkerOutputStatus =
-				browserAiOnly ? "READY" : (workerResponse?.status ?? "FAILED");
+				workerResponseExpected
+					? (resolvedWorkerResponse?.status ?? "FAILED")
+					: "READY";
+			const effectiveLatestReplyStatus: CommanderControllerLatestReplyStatus =
+				browserAiReviewExpected ? latestReply.status : "READY";
+			const effectiveStopSignal =
+				browserAiReviewExpected && latestReply.hasStopSignal;
+			const effectiveHasCodexInstruction =
+				browserAiReviewExpected && latestReply.hasCodexInstruction;
+			const effectiveHasDoyConfirmationItems =
+				browserAiReviewExpected && latestReply.hasDoyConfirmationItems;
+			const workerOnlySmokePassed =
+				!browserAiReviewExpected &&
+				workerResponseExpected &&
+				latestWorkerResponseStatus === "READY" &&
+				Boolean(resolvedWorkerResponse?.receivedInstructionAck);
 			const chainStatus =
 				requestedStatus ??
 				inferControllerChainStatus({
 					blockers,
-					latestReplyStatus: latestReply.status,
+					latestReplyStatus: effectiveLatestReplyStatus,
 					workerResponseStatus: latestWorkerResponseStatus,
-					hasStopSignal: latestReply.hasStopSignal,
+					hasStopSignal: effectiveStopSignal,
 				});
 			const extractedCodexInstructionSummary = summarizeControllerOutcomeText(
 				latestReply.extractedCodexInstruction,
@@ -4155,15 +4209,15 @@ export function CommanderTab({
 				normalizeControllerTextInput(input?.finalDecision) ||
 				getControllerChainFinalDecision({
 					chainStatus,
-					hasCodexInstruction: latestReply.hasCodexInstruction,
-					hasDoyConfirmationItems: latestReply.hasDoyConfirmationItems,
+					hasCodexInstruction: effectiveHasCodexInstruction,
+					hasDoyConfirmationItems: effectiveHasDoyConfirmationItems,
 				});
 			const nextAction =
 				normalizeControllerTextInput(input?.nextAction) ||
 				getControllerChainNextAction({
 					chainStatus,
-					hasCodexInstruction: latestReply.hasCodexInstruction,
-					hasDoyConfirmationItems: latestReply.hasDoyConfirmationItems,
+					hasCodexInstruction: effectiveHasCodexInstruction,
+					hasDoyConfirmationItems: effectiveHasDoyConfirmationItems,
 					nextRequiredAction: preflight.nextRequiredAction,
 					blockers,
 				});
@@ -4181,25 +4235,40 @@ export function CommanderTab({
 				status,
 				activeTabId: preflight.activeTabId,
 				browserAiOnly,
+				chainMode,
+				smokeType: smokeType || null,
+				browserAiReviewExpected,
+				browserAiReviewStatus: latestReply.status,
+				workerResponseExpected,
+				workerResponseStatus: latestWorkerResponseStatus,
+				workerOnlySmokePassed,
 				chainStatus,
 				browserAiProvider:
 					latestReply.browserAiProvider || preflight.browserAiProvider,
-				workerType: browserAiOnly
+				workerType: !workerResponseExpected
 					? "not-required"
-					: workerResponse?.workerType || "unknown",
-				workerIdentityOk: browserAiOnly
+					: resolvedWorkerResponse?.workerType || "unknown",
+				workerIdentityOk: !workerResponseExpected
 					? true
-					: (workerResponse?.workerIdentityOk ?? false),
+					: (resolvedWorkerResponse?.workerIdentityOk ?? false),
 				latestBrowserAiReviewStatus: latestReply.status,
 				latestWorkerResponseStatus,
 				workerResponseReturnedToBrowserAi,
-				hasStopSignal: latestReply.hasStopSignal,
-				hasCodexInstruction: latestReply.hasCodexInstruction,
-				hasDoyConfirmationItems: latestReply.hasDoyConfirmationItems,
-				extractedStopSignal: latestReply.extractedStopSignal,
-				extractedCodexInstruction: latestReply.extractedCodexInstruction,
-				extractedCodexInstructionSummary,
-				extractedDoyConfirmationItems: latestReply.extractedDoyConfirmationItems,
+				hasStopSignal: effectiveStopSignal,
+				hasCodexInstruction: effectiveHasCodexInstruction,
+				hasDoyConfirmationItems: effectiveHasDoyConfirmationItems,
+				extractedStopSignal: browserAiReviewExpected
+					? latestReply.extractedStopSignal
+					: null,
+				extractedCodexInstruction: browserAiReviewExpected
+					? latestReply.extractedCodexInstruction
+					: "",
+				extractedCodexInstructionSummary: browserAiReviewExpected
+					? extractedCodexInstructionSummary
+					: "",
+				extractedDoyConfirmationItems: browserAiReviewExpected
+					? latestReply.extractedDoyConfirmationItems
+					: [],
 				finalDecision,
 				nextAction,
 				completedAt,
@@ -4212,7 +4281,8 @@ export function CommanderTab({
 				preflightWarnings: preflight.warnings,
 				browserAiLatestReplyLength: latestReply.latestReplyLength,
 				browserAiLatestReplyFingerprint: latestReply.latestReplyFingerprint,
-				workerLatestResponseLength: workerResponse?.latestResponseLength ?? 0,
+				workerLatestResponseLength:
+					resolvedWorkerResponse?.latestResponseLength ?? 0,
 				lastSubmissionType: lastSubmission?.type ?? null,
 				lastSubmissionStatus: lastSubmission?.status ?? null,
 				lastSubmissionInjectionResult: lastSubmission?.injectionResult ?? null,
@@ -4680,10 +4750,14 @@ function applyControllerChainOutcomeToSession(
 			: `result: ${summary.nextAction}`,
 	].join("\n");
 	const qaBlock = [
+		`Chain mode: ${summary.chainMode}`,
+		`Browser AI review expected: ${summary.browserAiReviewExpected}`,
 		`Browser AI review reply: ${summary.latestBrowserAiReviewStatus}`,
 		`Browser AI review length: ${summary.browserAiLatestReplyLength}`,
+		`Worker response expected: ${summary.workerResponseExpected}`,
 		`Worker response: ${summary.latestWorkerResponseStatus}`,
 		`Worker response returned to Browser AI: ${summary.workerResponseReturnedToBrowserAi}`,
+		`Worker-only smoke passed: ${summary.workerOnlySmokePassed}`,
 		`STOP: ${summary.hasStopSignal}`,
 		`Codex instruction: ${summary.hasCodexInstruction}`,
 		`Doy confirmation: ${summary.hasDoyConfirmationItems}`,
@@ -4755,7 +4829,14 @@ function formatControllerChainOutcomeForSession(
 		: "none";
 	return [
 		`- activeTabId: ${summary.activeTabId || "unknown"}`,
+		`- chainMode: ${summary.chainMode}`,
+		summary.smokeType ? `- smokeType: ${summary.smokeType}` : "",
 		`- browserAiOnly: ${summary.browserAiOnly}`,
+		`- browserAiReviewExpected: ${summary.browserAiReviewExpected}`,
+		`- browserAiReviewStatus: ${summary.browserAiReviewStatus}`,
+		`- workerResponseExpected: ${summary.workerResponseExpected}`,
+		`- workerResponseStatus: ${summary.workerResponseStatus}`,
+		`- workerOnlySmokePassed: ${summary.workerOnlySmokePassed}`,
 		`- chainStatus: ${summary.chainStatus}`,
 		`- browserAiProvider: ${summary.browserAiProvider}`,
 		`- workerType: ${summary.workerType}`,
@@ -4791,6 +4872,23 @@ function getControllerChainCurrentTask(
 		return `Controller chain ${summary.chainStatus}: ${summary.nextAction}`;
 	}
 	return `Controller chain completed: ${summary.finalDecision} Next action: ${summary.nextAction}`;
+}
+
+function normalizeControllerChainMode(
+	value: unknown,
+): CommanderControllerChainMode | null {
+	if (typeof value !== "string") return null;
+	const normalized = value.trim().toLowerCase();
+	if (normalized === "browser-worker-review" || normalized === "full-chain") {
+		return "browser-worker-review";
+	}
+	if (normalized === "worker-only") return "worker-only";
+	if (normalized === "browser-ai-only") return "browser-ai-only";
+	if (normalized === "preflight-smoke") return "preflight-smoke";
+	if (normalized === "noop-smoke" || normalized === "worker-noop") {
+		return "noop-smoke";
+	}
+	return null;
 }
 
 function normalizeControllerChainStatus(

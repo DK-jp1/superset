@@ -436,9 +436,13 @@ export function generateWorkSessionLedgerMarkdown({
 		!latestQaResult && recordedOutcome
 			? [
 					`- status: ${recordedOutcome.chainStatus || "RECORDED"}`,
+					`- Chain mode: ${recordedOutcome.chainMode || "browser-worker-review"}`,
+					`- Browser AI review expected: ${recordedOutcome.browserAiReviewExpected || "true"}`,
 					`- Browser AI review: ${recordedOutcome.latestBrowserAiReviewStatus || "未取得"}`,
+					`- Worker response expected: ${recordedOutcome.workerResponseExpected || "true"}`,
 					`- Worker response: ${recordedOutcome.latestWorkerResponseStatus || "未取得"}`,
 					`- Worker response returned to Browser AI: ${recordedOutcome.workerResponseReturnedToBrowserAi || "未取得"}`,
+					`- Worker-only smoke passed: ${recordedOutcome.workerOnlySmokePassed || "false"}`,
 					`- STOP: ${recordedOutcome.hasStopSignal || "false"}`,
 					`- Codex instruction: ${recordedOutcome.hasCodexInstruction || "false"}`,
 					`- Doy confirmation: ${recordedOutcome.hasDoyConfirmationItems || "false"}`,
@@ -450,9 +454,14 @@ export function generateWorkSessionLedgerMarkdown({
 - chainStatus: ${recordedOutcome.chainStatus || "RECORDED"}
 - finalDecision: ${recordedOutcome.finalDecision || "記録済み"}
 - nextAction: ${recordedOutcome.nextAction || "未取得"}
+- Chain mode: ${recordedOutcome.chainMode || "browser-worker-review"}
+${recordedOutcome.smokeType ? `- Smoke type: ${recordedOutcome.smokeType}` : ""}
+- Browser AI review expected: ${recordedOutcome.browserAiReviewExpected || "true"}
 - Browser AI review result: ${recordedOutcome.latestBrowserAiReviewStatus || "未取得"}
+- Worker response expected: ${recordedOutcome.workerResponseExpected || "true"}
 - Worker response result: ${recordedOutcome.latestWorkerResponseStatus || "未取得"}
 - Worker response returned to Browser AI: ${recordedOutcome.workerResponseReturnedToBrowserAi || "未取得"}
+- Worker-only smoke passed: ${recordedOutcome.workerOnlySmokePassed || "false"}
 - Browser-AI-only: ${recordedOutcome.browserAiOnly || "false"}
 - STOP / 次のCodex指示不要: ${recordedOutcome.hasStopSignal === "true" ? recordedOutcome.extractedStopSignal || "true" : "false"}
 - Codex instruction: ${recordedOutcome.hasCodexInstruction || "false"}
@@ -629,7 +638,14 @@ function sanitizeHandoffLedgerFileName(value: string): string {
 }
 
 interface RecordedControllerChainOutcome {
+	chainMode: string;
+	smokeType: string;
 	browserAiOnly: string;
+	browserAiReviewExpected: string;
+	browserAiReviewStatus: string;
+	workerResponseExpected: string;
+	workerResponseStatus: string;
+	workerOnlySmokePassed: string;
 	browserAiProvider: string;
 	workerType: string;
 	workerIdentityOk: string;
@@ -670,7 +686,14 @@ function extractLatestControllerChainOutcome(
 		return match?.[1]?.trim() ?? "";
 	};
 	return {
+		chainMode: readLine("chainMode"),
+		smokeType: readLine("smokeType"),
 		browserAiOnly: readLine("browserAiOnly"),
+		browserAiReviewExpected: readLine("browserAiReviewExpected"),
+		browserAiReviewStatus: readLine("browserAiReviewStatus"),
+		workerResponseExpected: readLine("workerResponseExpected"),
+		workerResponseStatus: readLine("workerResponseStatus"),
+		workerOnlySmokePassed: readLine("workerOnlySmokePassed"),
 		browserAiProvider: readLine("browserAiProvider"),
 		workerType: readLine("workerType"),
 		workerIdentityOk: readLine("workerIdentityOk"),
