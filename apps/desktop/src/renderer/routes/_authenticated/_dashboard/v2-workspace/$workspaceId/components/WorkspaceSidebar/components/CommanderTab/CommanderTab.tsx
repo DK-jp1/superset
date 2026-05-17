@@ -301,6 +301,48 @@ interface CommanderControllerSupervisorPilotPrepareResult
 	selectedWorkerCandidate: CommanderControllerRecognizedWorkerCandidate | null;
 }
 
+type CommanderControllerActivateWorkerPaneStatus =
+	| "ACTIVATED"
+	| "DRY_RUN"
+	| "BLOCKED"
+	| "FAILED";
+
+interface CommanderControllerActivateWorkerPaneInput {
+	paneId?: unknown;
+	workerPaneId?: unknown;
+	requireRecognizedWorker?: unknown;
+	activateTab?: unknown;
+	focusPane?: unknown;
+	dryRun?: unknown;
+}
+
+interface CommanderControllerActivateWorkerPaneResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerActivateWorkerPaneStatus;
+	activeTabIdBefore: string | null;
+	activeTabIdAfter: string | null;
+	requestedPaneId: string | null;
+	paneId: string | null;
+	terminalId: string | null;
+	targetTabId: string | null;
+	paneFound: boolean;
+	paneType: string | null;
+	workerType: string;
+	workerIdentityOk: boolean;
+	workerIdentityStatus: DoyDeckWorkerIdentityStatus;
+	recognizedWorker: boolean;
+	activeTabChanged: boolean;
+	focusedPaneBefore: string | null;
+	focusedPaneAfter: string | null;
+	requireRecognizedWorker: boolean;
+	activateTab: boolean;
+	focusPane: boolean;
+	dryRun: boolean;
+	blockers: string[];
+	warnings: string[];
+	message: string;
+}
+
 interface CommanderControllerChainSummaryResult
 	extends CommanderControllerCommandResult {
 	status: "READY" | "BLOCKED" | "FAILED";
@@ -653,6 +695,15 @@ interface CommanderControllerCommands {
 	prepareSupervisorPilotReadiness: (
 		input?: CommanderControllerSupervisorPilotPrepareInput,
 	) => Promise<CommanderControllerSupervisorPilotPrepareResult>;
+	activateTerminalPaneForTab: (
+		input?: CommanderControllerActivateWorkerPaneInput,
+	) => Promise<CommanderControllerActivateWorkerPaneResult>;
+	activateWorkerPane: (
+		input?: CommanderControllerActivateWorkerPaneInput,
+	) => Promise<CommanderControllerActivateWorkerPaneResult>;
+	focusBoundWorkerPane: (
+		input?: CommanderControllerActivateWorkerPaneInput,
+	) => Promise<CommanderControllerActivateWorkerPaneResult>;
 	sendHandoffToBrowserAI: (
 		input?: unknown,
 	) => Promise<CommanderControllerSendHandoffResult>;
@@ -1625,6 +1676,168 @@ export function CommanderTab({
 			webview.getRuntimeSnapshot,
 			webview.injectIntoPage,
 			webview.navigateTo,
+			workspaceId,
+		],
+	);
+
+	const activateTerminalPaneForTabController = useCallback(
+		async (
+			input?: CommanderControllerActivateWorkerPaneInput,
+		): Promise<CommanderControllerActivateWorkerPaneResult> => {
+			const normalizedInput = normalizeActivateWorkerPaneInput(input);
+			const blockers: string[] = [];
+			const warnings: string[] = [];
+			const tabsState = useTabsStore.getState();
+			const activeTabIdBefore = activeTabId;
+			const requestedPaneId =
+				normalizedInput.paneId ?? workerBinding.workerPaneId ?? null;
+			const pane = requestedPaneId ? tabsState.panes[requestedPaneId] : null;
+			const targetTab = pane
+				? tabsState.tabs.find((tab) => tab.id === pane.tabId) ?? null
+				: null;
+			const targetTabId = targetTab?.id ?? null;
+			const focusedPaneBefore = targetTabId
+				? tabsState.focusedPaneIds[targetTabId] ?? null
+				: null;
+
+			if (!workspaceId) blockers.push("workspace not found");
+			if (!requestedPaneId) blockers.push("worker paneId not provided");
+			if (requestedPaneId && !pane) blockers.push("terminal pane not found");
+			if (pane && pane.type !== "terminal") {
+				blockers.push(`pane is not terminal: ${pane.type}`);
+			}
+			if (targetTab && workspaceId && targetTab.workspaceId !== workspaceId) {
+				blockers.push("terminal pane belongs to another workspace");
+			}
+			if (
+				normalizedInput.focusPane &&
+				targetTabId &&
+				activeTabIdBefore !== targetTabId &&
+				!normalizedInput.activateTab
+			) {
+				blockers.push("activateTab is required before focusing a pane in another tab");
+			}
+
+			const evidence = pane?.type === "terminal"
+				? getTerminalWorkerEvidenceForPane(pane)
+				: {
+						terminalId: null,
+						workerType: "unknown" as DoyDeckWorkerType,
+						workerIdentity: evaluateDoyDeckWorkerIdentity("unknown"),
+						evidenceSummary: "unknown: terminal pane not found",
+					};
+			const recognizedCandidate = getRecognizedWorkerCandidatesController().find(
+				(candidate) => candidate.paneId === requestedPaneId,
+			);
+			const recognizedWorker =
+				Boolean(recognizedCandidate?.workerIdentityOk) ||
+				evidence.workerIdentity.workerIdentityOk;
+			if (normalizedInput.requireRecognizedWorker && pane && !recognizedWorker) {
+				blockers.push("terminal pane is not a recognized Codex or Claude worker");
+			}
+			if (pane && !recognizedCandidate && evidence.workerIdentity.workerIdentityOk) {
+				warnings.push("recognized worker inferred from terminal evidence");
+			}
+
+			if (blockers.length > 0 || normalizedInput.dryRun) {
+				const status: CommanderControllerActivateWorkerPaneStatus =
+					blockers.length > 0
+						? "BLOCKED"
+						: normalizedInput.dryRun
+							? "DRY_RUN"
+							: "ACTIVATED";
+				return {
+					ok: blockers.length === 0,
+					...getCommanderControllerContext(),
+					status,
+					activeTabIdBefore,
+					activeTabIdAfter: activeTabIdBefore,
+					requestedPaneId,
+					paneId: pane?.id ?? null,
+					terminalId: evidence.terminalId,
+					targetTabId,
+					paneFound: Boolean(pane),
+					paneType: pane?.type ?? null,
+					workerType: recognizedCandidate?.workerType ?? evidence.workerType,
+					workerIdentityOk:
+						recognizedCandidate?.workerIdentityOk ??
+						evidence.workerIdentity.workerIdentityOk,
+					workerIdentityStatus:
+						recognizedCandidate?.workerIdentityStatus ??
+						evidence.workerIdentity.workerIdentityStatus,
+					recognizedWorker,
+					activeTabChanged: false,
+					focusedPaneBefore,
+					focusedPaneAfter: focusedPaneBefore,
+					requireRecognizedWorker: normalizedInput.requireRecognizedWorker,
+					activateTab: normalizedInput.activateTab,
+					focusPane: normalizedInput.focusPane,
+					dryRun: normalizedInput.dryRun,
+					blockers,
+					warnings,
+					message:
+						status === "DRY_RUN"
+							? `dryRun: would activate terminal pane ${requestedPaneId}`
+							: blockers[0]
+								? `terminal pane activation blocked: ${blockers[0]}`
+								: "terminal pane activation skipped",
+				};
+			}
+
+			if (workspaceId && targetTabId && normalizedInput.activateTab) {
+				tabsState.setActiveTab(workspaceId, targetTabId);
+			}
+			if (targetTabId && requestedPaneId && normalizedInput.focusPane) {
+				useTabsStore.getState().setFocusedPane(targetTabId, requestedPaneId);
+			}
+			if (requestedPaneId) {
+				useTabsStore.getState().markPaneAsUsed(requestedPaneId);
+			}
+			await delay(0);
+			const nextTabsState = useTabsStore.getState();
+			const activeTabIdAfter =
+				workspaceId ? nextTabsState.activeTabIds[workspaceId] ?? null : null;
+			const focusedPaneAfter = targetTabId
+				? nextTabsState.focusedPaneIds[targetTabId] ?? null
+				: null;
+			const activeTabChanged = activeTabIdBefore !== activeTabIdAfter;
+			return {
+				ok: true,
+				...getCommanderControllerContext(),
+				status: "ACTIVATED",
+				activeTabIdBefore,
+				activeTabIdAfter,
+				requestedPaneId,
+				paneId: pane?.id ?? null,
+				terminalId: evidence.terminalId,
+				targetTabId,
+				paneFound: Boolean(pane),
+				paneType: pane?.type ?? null,
+				workerType: recognizedCandidate?.workerType ?? evidence.workerType,
+				workerIdentityOk:
+					recognizedCandidate?.workerIdentityOk ??
+					evidence.workerIdentity.workerIdentityOk,
+				workerIdentityStatus:
+					recognizedCandidate?.workerIdentityStatus ??
+					evidence.workerIdentity.workerIdentityStatus,
+				recognizedWorker,
+				activeTabChanged,
+				focusedPaneBefore,
+				focusedPaneAfter,
+				requireRecognizedWorker: normalizedInput.requireRecognizedWorker,
+				activateTab: normalizedInput.activateTab,
+				focusPane: normalizedInput.focusPane,
+				dryRun: normalizedInput.dryRun,
+				blockers,
+				warnings,
+				message: `activated terminal pane ${requestedPaneId}`,
+			};
+		},
+		[
+			activeTabId,
+			getCommanderControllerContext,
+			getRecognizedWorkerCandidatesController,
+			workerBinding.workerPaneId,
 			workspaceId,
 		],
 	);
@@ -3181,6 +3394,9 @@ export function CommanderTab({
 			getSupervisorPilotReadiness: getSupervisorPilotReadinessController,
 			prepareSupervisorPilotReadiness:
 				prepareSupervisorPilotReadinessController,
+			activateTerminalPaneForTab: activateTerminalPaneForTabController,
+			activateWorkerPane: activateTerminalPaneForTabController,
+			focusBoundWorkerPane: activateTerminalPaneForTabController,
 			sendHandoffToBrowserAI: sendHandoffToBrowserAiController,
 			readBrowserAiLatestReply: readBrowserAiLatestReplyController,
 			getBrowserAiLatestReply: readBrowserAiLatestReplyController,
@@ -3213,6 +3429,7 @@ export function CommanderTab({
 		getAutoLoopPreflightController,
 		getSupervisorPilotReadinessController,
 		prepareSupervisorPilotReadinessController,
+		activateTerminalPaneForTabController,
 		sendHandoffToBrowserAiController,
 		readBrowserAiLatestReplyController,
 		sendInstructionToBoundWorkerController,
@@ -5970,8 +6187,22 @@ function getBoundWorkerLatestResponseSummary(
 			? "worker report looks complete"
 			: "worker report completion unknown",
 	];
+	const details = [
+		analysis.completionSignalReason
+			? `completion reason: ${analysis.completionSignalReason}`
+			: "",
+		analysis.runningSignalReason
+			? `running reason: ${analysis.runningSignalReason}`
+			: "",
+		analysis.fileChangeSignalReason
+			? `file-change reason: ${analysis.fileChangeSignalReason}`
+			: "",
+		analysis.gitOperationSignalReason
+			? `git-operation reason: ${analysis.gitOperationSignalReason}`
+			: "",
+	].filter(Boolean);
 	const preview = text.replace(/\s+/g, " ").trim().slice(0, 180);
-	return `${flags.join("; ")}. Preview: ${preview}`;
+	return `${flags.join("; ")}.${details.length ? ` ${details.join("; ")}.` : ""} Preview: ${preview}`;
 }
 
 function getBoundWorkerLatestResponseMessage(
@@ -6083,32 +6314,21 @@ function findSupervisorRecognizedWorkerCandidates({
 		.filter((pane) => pane.type === "terminal")
 		.filter((pane) => tabWorkspaceById.get(pane.tabId) === workspaceId)
 		.map((pane) => {
-			const terminalId = getTerminalIdFromPane(pane);
-			const outputText = getOutputLogSince(pane.id, 0);
-			const snapshot = getTerminalOutputSnapshot(pane.id);
-			const workerType = inferDoyDeckWorkerTypeFromEvidence({
-				outputText,
-				screenText: snapshot?.screenText,
-				viewportText: snapshot?.viewportText,
-				selectionText: getTerminalSelection(pane.id),
-				title: getPaneTextField(pane, "name"),
-				command: getPaneTextField(pane, "command"),
-				processName: getPaneTextField(pane, "processName"),
-			});
-			const identity = evaluateDoyDeckWorkerIdentity(workerType);
+			const evidence = getTerminalWorkerEvidenceForPane(pane);
 			return {
 				paneId: pane.id,
-				terminalId,
+				terminalId: evidence.terminalId,
 				tabId: pane.tabId,
-				workerType,
-				workerIdentityOk: identity.workerIdentityOk,
-				workerIdentityStatus: identity.workerIdentityStatus,
-				workerIdentityBlockers: identity.workerIdentityBlockers,
+				workerType: evidence.workerType,
+				workerIdentityOk: evidence.workerIdentity.workerIdentityOk,
+				workerIdentityStatus: evidence.workerIdentity.workerIdentityStatus,
+				workerIdentityBlockers:
+					evidence.workerIdentity.workerIdentityBlockers,
 				evidenceSummary: buildSupervisorWorkerEvidenceSummary({
-					workerType,
-					outputText,
-					screenText: snapshot?.screenText ?? "",
-					viewportText: snapshot?.viewportText ?? "",
+					workerType: evidence.workerType,
+					outputText: evidence.outputText,
+					screenText: evidence.screenText,
+					viewportText: evidence.viewportText,
 				}),
 			};
 		})
@@ -6123,6 +6343,38 @@ function findSupervisorRecognizedWorkerCandidates({
 		if (codexDelta !== 0) return codexDelta;
 		return a.paneId.localeCompare(b.paneId);
 	});
+}
+
+function getTerminalWorkerEvidenceForPane(pane: Pane): {
+	terminalId: string | null;
+	outputText: string;
+	screenText: string;
+	viewportText: string;
+	workerType: DoyDeckWorkerType;
+	workerIdentity: ReturnType<typeof evaluateDoyDeckWorkerIdentity>;
+} {
+	const terminalId = getTerminalIdFromPane(pane);
+	const outputText = getOutputLogSince(pane.id, 0);
+	const snapshot = getTerminalOutputSnapshot(pane.id);
+	const screenText = snapshot?.screenText ?? "";
+	const viewportText = snapshot?.viewportText ?? "";
+	const workerType = inferDoyDeckWorkerTypeFromEvidence({
+		outputText,
+		screenText,
+		viewportText,
+		selectionText: getTerminalSelection(pane.id),
+		title: getPaneTextField(pane, "name"),
+		command: getPaneTextField(pane, "command"),
+		processName: getPaneTextField(pane, "processName"),
+	});
+	return {
+		terminalId,
+		outputText,
+		screenText,
+		viewportText,
+		workerType,
+		workerIdentity: evaluateDoyDeckWorkerIdentity(workerType),
+	};
 }
 
 function getPaneTextField(pane: Pane, key: string): string | null {
@@ -6163,6 +6415,42 @@ function buildSupervisorWorkerEvidenceSummary({
 	return signals.length > 0
 		? `${workerType}: ${signals.join(", ")}`
 		: `${workerType}: recognized worker evidence`;
+}
+
+function normalizeActivateWorkerPaneInput(
+	input?: CommanderControllerActivateWorkerPaneInput,
+): {
+	paneId: string | null;
+	requireRecognizedWorker: boolean;
+	activateTab: boolean;
+	focusPane: boolean;
+	dryRun: boolean;
+} {
+	const record = input && typeof input === "object" ? input : {};
+	const rawPaneId =
+		(record as CommanderControllerActivateWorkerPaneInput).paneId ??
+		(record as CommanderControllerActivateWorkerPaneInput).workerPaneId;
+	const paneId = typeof rawPaneId === "string" ? rawPaneId.trim() || null : null;
+	return {
+		paneId,
+		requireRecognizedWorker:
+			normalizeControllerBooleanInput(
+				(record as CommanderControllerActivateWorkerPaneInput)
+					.requireRecognizedWorker,
+			) ?? true,
+		activateTab:
+			normalizeControllerBooleanInput(
+				(record as CommanderControllerActivateWorkerPaneInput).activateTab,
+			) ?? true,
+		focusPane:
+			normalizeControllerBooleanInput(
+				(record as CommanderControllerActivateWorkerPaneInput).focusPane,
+			) ?? true,
+		dryRun:
+			normalizeControllerBooleanInput(
+				(record as CommanderControllerActivateWorkerPaneInput).dryRun,
+			) ?? false,
+	};
 }
 
 function normalizeSupervisorPilotPrepareInput(
