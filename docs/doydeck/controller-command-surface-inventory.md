@@ -96,6 +96,7 @@ Implemented:
 | Diagnostics | `getSupervisorPilotReadiness()` | implemented | Supervisor pilot readiness snapshot. |
 | Diagnostics | `prepareSupervisorPilotReadiness(input?)` | implemented | Optional Browser AI navigation and existing worker bind. No new worker launch. |
 | Worker | `listRecognizedWorkers(input?)` | implemented | Read-only Codex / Claude worker candidate list with ignored shell/unknown candidates separated. |
+| Worker | `bindWorkerToTab(input?)` | implemented | Binds an existing recognized Codex / Claude worker pane to the active tab. |
 | Worker | `activateTerminalPaneForTab(input?)` | implemented | Activates/focuses existing terminal pane by pane id or bound worker. |
 | Worker | `activateWorkerPane(input?)` | implemented | Alias for `activateTerminalPaneForTab`. |
 | Worker | `focusBoundWorkerPane(input?)` | implemented | Alias for `activateTerminalPaneForTab`. |
@@ -147,8 +148,8 @@ Implemented:
 
 | Operation | Coverage | Priority | Notes |
 | --- | --- | --- | --- |
-| Bind active terminal | partially implemented | P1 | UI button exists; Controller path is mostly through readiness/prepare or pane activation. A direct bind-active-terminal command would help. |
-| Bind worker by paneId | partially implemented | P1 | `prepareSupervisorPilotReadiness()` can bind candidates; `activateTerminalPaneForTab()` can focus recognized pane. A direct explicit bind command would be clearer. |
+| Bind active terminal | partially implemented | P1 | UI button exists. Controller command currently binds by explicit paneId to avoid accidental shell binding. |
+| Bind worker by paneId | implemented | done | `bindWorkerToTab({ paneId })` binds only recognized Codex / Claude panes and blocks shell/unknown. |
 | Activate worker pane | implemented | done | `activateTerminalPaneForTab()` / aliases. |
 | Worker readiness | implemented | done | `getSupervisorPilotReadiness()` and `getAutoLoopPreflight()`. |
 | Send instruction to bound worker | implemented | done | `sendInstructionToBoundWorker()`. |
@@ -192,9 +193,6 @@ P1 missing or partial:
 - `prepareBrowserAiReady(input?)`
   - Browser-AI-only provider navigation/readiness.
   - Purpose: avoid Supervisor readiness when Worker is not needed.
-- `bindWorkerToTab(input)`
-  - Explicitly bind existing recognized worker pane to target tab.
-  - Purpose: separate bind from prepare/focus.
 - `getWorkerInputReadiness(input?)`
   - Read-only worker UI/input readiness.
   - Purpose: debug Claude feedback/recap/input residue before sending.
@@ -268,11 +266,11 @@ Candidate 1: `prepareBrowserAiReady(input?)`
 - Worker bindingを要求しない。
 - Browser AI provider navigationを行う場合は明示inputに限定する。
 
-Candidate 2: `bindWorkerToTab(input)`
+Candidate 2: `getWorkerInputReadiness(input?)`
 
-- Existing recognized workerだけをbindする。
-- 新規Worker起動はしない。
-- shell / unknownはBLOCKED。
+- Worker送信前状態をread-onlyで確認する。
+- Claude feedback / recap / input residueをsend前に確認する。
+- shell / unknownはrecognized worker扱いしない。
 
 ## 8. やらないこと
 
@@ -313,24 +311,24 @@ Visual sanity checkは以下の場合に使う。
    - 種別: readiness / optional provider preparation。
    - リスク: medium-low。
 
-2. `bindWorkerToTab(input)`
-   - 理由: 既存recognized workerのbindをprepare/focusから分離できる。
-   - 種別: small state mutation。
-   - リスク: medium。
-
-3. `getWorkerInputReadiness(input?)`
+2. `getWorkerInputReadiness(input?)`
    - 理由: Claude feedback/recap/input residueを送信前にread-onlyで確認できる。
    - 種別: read-only diagnostics。
    - リスク: low。
 
-4. `getTerminalOutputSnapshot(input)`
+3. `getTerminalOutputSnapshot(input)`
    - 理由: visual sanity check前のsafeなpane output確認をController pathにする。
    - 種別: read-only diagnostics。
    - リスク: medium-low。
 
-5. `getControllerCommandInventory()`
+4. `getControllerCommandInventory()`
    - 理由: Meta AI / Codexが現在のController surfaceをUI探索なしで把握できる。
    - 種別: read-only diagnostics。
+   - リスク: low。
+
+5. `findTabByTitle(input)`
+   - 理由: 日常的な「タスク管理アプリのタブへ戻って」をUI探索なしにする。
+   - 種別: read-only tab lookup。
    - リスク: low。
 
 ## 11. 実装順の提案
@@ -339,10 +337,10 @@ Recommended S9.9 / S10 entry:
 
 1. `prepareBrowserAiReady(input?)`
    - Browser-AI-only用途でSupervisor readinessを使わずに済む。
-2. `bindWorkerToTab(input)`
-   - existing recognized worker bindを明示操作にする。
-3. `getWorkerInputReadiness(input?)`
+2. `getWorkerInputReadiness(input?)`
    - Worker送信前状態のread-only確認を切り出す。
+3. `getTerminalOutputSnapshot(input)`
+   - pane output確認をController pathへ寄せる。
 
 Stop before implementation if any candidate expands into:
 

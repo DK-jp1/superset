@@ -5,6 +5,7 @@ import { LuLoader, LuX } from "react-icons/lu";
 import { registerDoyDeckCommanderActionBridge } from "renderer/stores/doydeck-commander-actions";
 import {
 	evaluateDoyDeckWorkerIdentity,
+	type DoyDeckWorkerBindingSnapshot,
 	type DoyDeckWorkerIdentityStatus,
 	type DoyDeckWorkerType,
 	inferDoyDeckWorkerTypeFromEvidence,
@@ -494,6 +495,31 @@ type CommanderControllerActivateWorkerPaneStatus =
 	| "BLOCKED"
 	| "FAILED";
 
+type CommanderControllerBindWorkerStatus = "BOUND" | "DRY_RUN" | "BLOCKED";
+
+interface CommanderControllerBindWorkerInput {
+	paneId?: unknown;
+	workerPaneId?: unknown;
+	dryRun?: unknown;
+}
+
+interface CommanderControllerBindWorkerResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerBindWorkerStatus;
+	activeTabId: string | null;
+	requestedPaneId: string | null;
+	workerType: DoyDeckWorkerType;
+	workerIdentityOk: boolean;
+	workerIdentityStatus: DoyDeckWorkerIdentityStatus;
+	paneId: string | null;
+	terminalId: string | null;
+	previousBinding: DoyDeckWorkerBindingSnapshot;
+	newBinding: DoyDeckWorkerBindingSnapshot | null;
+	blockers: string[];
+	warnings: string[];
+	message: string;
+}
+
 interface CommanderControllerActivateWorkerPaneInput {
 	paneId?: unknown;
 	workerPaneId?: unknown;
@@ -898,6 +924,9 @@ interface CommanderControllerCommands {
 	getAutoLoopPreflight: () => Promise<CommanderControllerAutoLoopPreflightResult>;
 	runAutoLoopPreflight: () => Promise<CommanderControllerAutoLoopPreflightResult>;
 	listRecognizedWorkers: (input?: unknown) => CommanderControllerListRecognizedWorkersResult;
+	bindWorkerToTab: (
+		input?: CommanderControllerBindWorkerInput,
+	) => Promise<CommanderControllerBindWorkerResult>;
 	getSupervisorPilotReadiness: () => Promise<CommanderControllerSupervisorPilotReadinessResult>;
 	prepareSupervisorPilotReadiness: (
 		input?: CommanderControllerSupervisorPilotPrepareInput,
@@ -2224,6 +2253,168 @@ export function CommanderTab({
 					"Recognized workers read from local terminal panes only; bind, activate, send, and readiness preflight were not run.",
 			};
 		}, [activeTabId, workerBinding, workspaceId]);
+
+	const bindWorkerToTabController = useCallback(
+		async (
+			input?: CommanderControllerBindWorkerInput,
+		): Promise<CommanderControllerBindWorkerResult> => {
+			const normalizedInput = normalizeBindWorkerToTabInput(input);
+			const blockers: string[] = [];
+			const warnings: string[] = [];
+			const tabsState = useTabsStore.getState();
+			const activeTabIdSnapshot =
+				tabsState.activeTabIds[workspaceId] ?? activeTabId ?? null;
+			const requestedPaneId = normalizedInput.paneId;
+			const pane = requestedPaneId ? tabsState.panes[requestedPaneId] : null;
+			const tab = pane
+				? tabsState.tabs.find((candidate) => candidate.id === pane.tabId) ??
+					null
+				: null;
+			const evidence = pane?.type === "terminal"
+				? getTerminalWorkerEvidenceForPane(pane)
+				: {
+						terminalId: null,
+						workerType: "unknown" as DoyDeckWorkerType,
+						workerIdentity: evaluateDoyDeckWorkerIdentity("unknown"),
+						evidenceSummary: "unknown: terminal pane not found",
+					};
+			const recognizedCandidate = getRecognizedWorkerCandidatesController().find(
+				(candidate) => candidate.paneId === requestedPaneId,
+			);
+			const workerType = recognizedCandidate?.workerType ?? evidence.workerType;
+			const workerIdentityOk =
+				recognizedCandidate?.workerIdentityOk ??
+				evidence.workerIdentity.workerIdentityOk;
+			const workerIdentityStatus =
+				recognizedCandidate?.workerIdentityStatus ??
+				evidence.workerIdentity.workerIdentityStatus;
+			const terminalId = recognizedCandidate?.terminalId ?? evidence.terminalId;
+			const previousBinding = workerBinding;
+			let newBinding: DoyDeckWorkerBindingSnapshot | null = null;
+
+			if (!workspaceId) blockers.push("workspace not found");
+			if (!activeTabIdSnapshot) blockers.push("active tab not found");
+			if (!requestedPaneId) blockers.push("worker paneId not provided");
+			if (requestedPaneId && !pane) blockers.push("terminal pane not found");
+			if (pane && pane.type !== "terminal") {
+				blockers.push(`pane is not terminal: ${pane.type}`);
+			}
+			if (tab && workspaceId && tab.workspaceId !== workspaceId) {
+				blockers.push("terminal pane belongs to another workspace");
+			}
+			if (pane && !workerIdentityOk) {
+				blockers.push("terminal pane is not a recognized Codex or Claude worker");
+			}
+			if (workerType !== "codex" && workerType !== "claude") {
+				blockers.push(`unsupported worker type: ${workerType}`);
+			}
+
+			if (blockers.length > 0 || normalizedInput.dryRun) {
+				const status: CommanderControllerBindWorkerStatus =
+					blockers.length > 0
+						? "BLOCKED"
+						: normalizedInput.dryRun
+							? "DRY_RUN"
+							: "BOUND";
+				return {
+					ok: blockers.length === 0,
+					...getCommanderControllerContext(),
+					status,
+					activeTabId: activeTabIdSnapshot,
+					requestedPaneId,
+					workerType,
+					workerIdentityOk,
+					workerIdentityStatus,
+					paneId: pane?.id ?? null,
+					terminalId,
+					previousBinding,
+					newBinding,
+					blockers,
+					warnings,
+					message:
+						status === "DRY_RUN"
+							? `dryRun: would bind ${workerType} terminal ${requestedPaneId} to active tab`
+							: blockers[0]
+								? `worker bind blocked: ${blockers[0]}`
+								: "worker bind skipped",
+				};
+			}
+
+			const activeTabIdForBinding = activeTabIdSnapshot;
+			const requestedPaneIdForBinding = requestedPaneId;
+			if (!workspaceId || !activeTabIdForBinding || !requestedPaneIdForBinding) {
+				return {
+					ok: false,
+					...getCommanderControllerContext(),
+					status: "BLOCKED",
+					activeTabId: activeTabIdSnapshot,
+					requestedPaneId,
+					workerType,
+					workerIdentityOk,
+					workerIdentityStatus,
+					paneId: pane?.id ?? null,
+					terminalId,
+					previousBinding,
+					newBinding,
+					blockers: [
+						...blockers,
+						"worker bind missing required workspace, tab, or pane after validation",
+					],
+					warnings,
+					message: "worker bind blocked: missing required binding target",
+				};
+			}
+
+			bindWorker({
+				workspaceId,
+				tabId: activeTabIdForBinding,
+				workerPaneId: requestedPaneIdForBinding,
+				terminalId,
+				workerType,
+				bindingMode: "bound",
+				boundAt: Date.now(),
+			});
+			await delay(0);
+			const nextBinding = useDoyDeckWorkerBindingsStore.getState().bindings[
+				makeDoyDeckWorkerBindingKey(workspaceId, activeTabIdForBinding)
+			];
+			newBinding = resolveDoyDeckWorkerBindingSnapshot({
+				workspaceId,
+				tabId: activeTabIdForBinding,
+				activeTerminalInfo,
+				binding: nextBinding,
+				getPaneTerminalId: (paneId) =>
+					getTerminalIdFromPane(useTabsStore.getState().panes[paneId]),
+			});
+
+			return {
+				ok: true,
+				...getCommanderControllerContext(),
+				status: "BOUND",
+				activeTabId: activeTabIdForBinding,
+				requestedPaneId: requestedPaneIdForBinding,
+				workerType,
+				workerIdentityOk,
+				workerIdentityStatus,
+				paneId: requestedPaneIdForBinding,
+				terminalId,
+				previousBinding,
+				newBinding,
+				blockers,
+				warnings,
+				message: `bound ${workerType} terminal ${requestedPaneId} to active tab`,
+			};
+		},
+		[
+			activeTabId,
+			activeTerminalInfo,
+			bindWorker,
+			getCommanderControllerContext,
+			getRecognizedWorkerCandidatesController,
+			workerBinding,
+			workspaceId,
+		],
+	);
 
 	const buildSupervisorPilotReadinessResult = useCallback(
 		(
@@ -4164,6 +4355,7 @@ export function CommanderTab({
 			getAutoLoopPreflight: getAutoLoopPreflightController,
 			runAutoLoopPreflight: getAutoLoopPreflightController,
 			listRecognizedWorkers: listRecognizedWorkersController,
+			bindWorkerToTab: bindWorkerToTabController,
 			getSupervisorPilotReadiness: getSupervisorPilotReadinessController,
 			prepareSupervisorPilotReadiness:
 				prepareSupervisorPilotReadinessController,
@@ -4207,6 +4399,7 @@ export function CommanderTab({
 		getBrowserAiPreflightController,
 		getAutoLoopPreflightController,
 		listRecognizedWorkersController,
+		bindWorkerToTabController,
 		getSupervisorPilotReadinessController,
 		prepareSupervisorPilotReadinessController,
 		activateTerminalPaneForTabController,
@@ -6370,6 +6563,24 @@ function getBoundWorkerStaleAckMarkerReason(
 	const responseMarkers = extractWorkerAckMarkersFromInstruction(text);
 	if (responseMarkers.length === 0) return null;
 	const instructionMarkers = extractWorkerAckMarkersFromInstruction(instruction);
+	const currentInstructionAck = instructionMarkers.some((instructionMarker) =>
+		includesAckMarker(text, instructionMarker),
+	);
+	if (
+		currentInstructionAck &&
+		hasAnyWorkerOutputSignal(text, [
+			/受信確認/,
+			/受け取りました/,
+			/確認しました/,
+			/了解しました/,
+			/\backnowledged\b/i,
+			/\breceived\b/i,
+			/現在待機中です/,
+			/待機中です/,
+		])
+	) {
+		return null;
+	}
 	const staleMarkers = responseMarkers.filter(
 		(responseMarker) =>
 			!instructionMarkers.some((instructionMarker) =>
@@ -6599,14 +6810,15 @@ function stripInlineBoundWorkerUiNoise(line: string): string {
 		.replace(/※\s*recap:.*$/i, "")
 		.replace(/\(disable recaps in \/config\).*$/i, "")
 		.replace(/[›>]\s*Write tests for @filename.*$/i, "")
-		.replace(/gpt-\d(?:\.\d+)?\s+\w+\s+·\s+~?\/.*$/i, "")
-		.replace(/[•·]?\s*Working\([^)]*(?:interrupt|interupt)[^)]*\).*$/i, "")
+			.replace(/gpt-\d(?:\.\d+)?\s+\w+\s+·\s+~?\/.*$/i, "")
+			.replace(/\s+›\s*Run\s+\/review\b.*$/i, "")
+			.replace(/[•·]?\s*Working\([^)]*(?:interrupt|interupt)[^)]*\).*$/i, "")
 		.replace(/[✢✳✻✶✽·]\s*Worked for\b.*$/i, "")
 		.replace(/[✢✳✻✶✽·]?\s*(?:Baked|Baking|Brewed|Brewing|Crunching|Garnishing|Churning|Searching)[….\s\S]*$/i, "")
-		.replace(
-			/[•·]?\d*(?:Working|Workin|Worki|Work|Wor|Wo)(?:[•·]?\d*(?:Working|Workin|Worki|Work|Wor|Wo|W|orking|rking|king|ing|ng|g))*.*$/i,
-			"",
-		)
+			.replace(
+				/(?:^|[\s•·])\d*(?:Working|Workin|Worki|Work|Wor|Wo)(?:[•·]?\d*(?:Working|Workin|Worki|Work|Wor|Wo|W|orking|rking|king|ing|ng|g))*.*$/i,
+				"",
+			)
 		.trimEnd();
 }
 
@@ -6789,32 +7001,6 @@ function analyzeBoundWorkerOutput(
 	const normalized = text.trim();
 	const completionSignal = detectBoundWorkerCompletionSignal(normalized);
 	const outputLooksComplete = completionSignal.completionDetected;
-	const runningSignalText = [normalized, context?.deltaText ?? ""]
-		.filter((part) => part.trim())
-		.join("\n");
-	const rawRunningSignal = detectBoundWorkerRunningSignal(runningSignalText);
-	const outputLooksStillRunning =
-		rawRunningSignal.outputLooksStillRunning && !outputLooksComplete;
-	const runningSignalReason = outputLooksStillRunning
-		? rawRunningSignal.runningSignalReason
-		: rawRunningSignal.runningSignalReason
-			? `ignored stale running signal after completion: ${rawRunningSignal.runningSignalReason}`
-			: null;
-	const isIdleOrReady = outputLooksComplete || hasAnyWorkerOutputSignal(normalized, [
-		/\bready\b/i,
-		/\bidle\b/i,
-		/\bwaiting\b/i,
-		/\bawaiting\b/i,
-		/待機中/,
-		/入力待ち/,
-		/次の指示/,
-		/追加指示/,
-		/受信確認/,
-		/コマンド実行なし/,
-		/ツール使用なし/,
-		/ファイル変更なし/,
-		/Git操作なし/i,
-	]);
 	const receivedInstructionAckByText = hasAnyWorkerOutputSignal(normalized, [
 		/受信確認/,
 		/受け取りました/,
@@ -6831,6 +7017,34 @@ function analyzeBoundWorkerOutput(
 	});
 	const receivedInstructionAck =
 		receivedInstructionAckByText || ackMarker.receivedInstructionAckByMarker;
+	const runningSignalText = [normalized, context?.deltaText ?? ""]
+		.filter((part) => part.trim())
+		.join("\n");
+	const rawRunningSignal = detectBoundWorkerRunningSignal(runningSignalText);
+	const outputLooksStillRunning =
+		rawRunningSignal.outputLooksStillRunning &&
+		!outputLooksComplete &&
+		!receivedInstructionAck;
+	const runningSignalReason = outputLooksStillRunning
+		? rawRunningSignal.runningSignalReason
+		: rawRunningSignal.runningSignalReason
+			? `ignored stale running signal after ${receivedInstructionAck ? "ack" : "completion"}: ${rawRunningSignal.runningSignalReason}`
+			: null;
+	const isIdleOrReady = outputLooksComplete || hasAnyWorkerOutputSignal(normalized, [
+		/\bready\b/i,
+		/\bidle\b/i,
+		/\bwaiting\b/i,
+		/\bawaiting\b/i,
+		/待機中/,
+		/入力待ち/,
+		/次の指示/,
+		/追加指示/,
+		/受信確認/,
+		/コマンド実行なし/,
+		/ツール使用なし/,
+		/ファイル変更なし/,
+		/Git操作なし/i,
+	]);
 	const isRunning = outputLooksStillRunning && !outputLooksComplete;
 	const errorSignal = detectBoundWorkerErrorSignal(normalized);
 	const hasToolUse = hasAnyWorkerOutputSignal(
@@ -7640,6 +7854,25 @@ function normalizeActivateWorkerPaneInput(
 		dryRun:
 			normalizeControllerBooleanInput(
 				(record as CommanderControllerActivateWorkerPaneInput).dryRun,
+			) ?? false,
+	};
+}
+
+function normalizeBindWorkerToTabInput(
+	input?: CommanderControllerBindWorkerInput,
+): {
+	paneId: string | null;
+	dryRun: boolean;
+} {
+	const record = input && typeof input === "object" ? input : {};
+	const rawPaneId =
+		(record as CommanderControllerBindWorkerInput).paneId ??
+		(record as CommanderControllerBindWorkerInput).workerPaneId;
+	return {
+		paneId: typeof rawPaneId === "string" ? rawPaneId.trim() || null : null,
+		dryRun:
+			normalizeControllerBooleanInput(
+				(record as CommanderControllerBindWorkerInput).dryRun,
 			) ?? false,
 	};
 }
