@@ -450,3 +450,28 @@ Controller chainを監視、確認し、介入判断と記録を行うpilot段�
 ただし、ready復旧、Handoff送信、指示抽出、bound worker送信、worker返答取得、
 Browser AI返送、STOP分類、Handoff記録までがDoyDeck-nativeに揃い始めたため、
 DoyDeckは実運用入口として成立し始めている。
+
+### S8.8-B: Claude Code chain docs pilot retry
+
+S8.8-Bでは、Browser AI -> 作業側Claude Code -> Claude返答取得 -> Browser AI返送 ->
+Browser AI review -> Outcome記録までの主経路が、docs-onlyの最小pilotで通ることを
+確認した。
+
+- 対象: docs-only（本ファイルへの最小追記）
+- workerType: claude
+- workerIdentityOk: true
+- sendInstructionToBoundWorker: SENT
+- readBoundWorkerLatestResponse: READY
+- sendBoundWorkerResponseToBrowserAI: SENT
+- Browser AI review: STOP / 次のCodex指示不要 / Doy確認事項なし
+- recordControllerChainOutcome: RECORDED
+- 新規Claude起動なし
+- Auto Loop開始なし
+- DoyDeck本体コード変更なし
+- pushなし
+
+補足: Claude TUIのrecap表示がworker応答に混ざるケースがあったため、
+readBoundWorkerLatestResponse() 側でrecap本文をUI noiseとして除外し、
+折り返されたcommit/pushなし表現をwrite-operationではなくsafe-check文脈として扱う
+補正を入れた。これにより、S8.7のno-op smokeに続き、Claude Code chainでも
+docs-only実作業pilotの1ターンをDoyDeck-nativeに完走できた。
