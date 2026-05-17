@@ -475,3 +475,18 @@ readBoundWorkerLatestResponse() 側でrecap本文をUI noiseとして除外し�
 折り返されたcommit/pushなし表現をwrite-operationではなくsafe-check文脈として扱う
 補正を入れた。これにより、S8.7のno-op smokeに続き、Claude Code chainでも
 docs-only実作業pilotの1ターンをDoyDeck-nativeに完走できた。
+
+### S8 review roles and self-review policy
+
+S8.8後の運用整理として、別文脈AI、実装AI、Doyの役割を明確化した。
+
+- 現在のDoyDeck開発環境では、別文脈AIはChatGPT、実装AIは作業側Codex、Doyは最終判断者。
+- DoyDeck内運用では、別文脈AIはBrowser AI、実装AIはWorker AI（作業側Codex / 作業側CC）、
+  Doyは最終判断者。
+- 実装AIは完了報告前に、変更過剰、scope拡大、禁止事項、smoke妥当性、warningの解釈、
+  未確認前提、別文脈AIに重点レビューしてほしい点を自己レビューする。
+- 別文脈AIは自己レビューを鵜呑みにせず、目的適合、diff過剰、既存挙動、smoke、安全条件、
+  反例、追加確認なしで進められるかを独立に見る。
+- 軽微な壁では止まらず、調査 -> 最小修正 -> 再smoke -> checkpoint commitまで進める。
+  ただしpush、destructive操作、cookie/token/private API、local DB/app-state直接操作、
+  新規Worker起動、仕様/UX/文言の最終判断、scope拡大、同じ失敗の繰り返しはDoy確認で止める。
