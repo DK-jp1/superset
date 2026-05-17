@@ -269,6 +269,19 @@ prompt echo / UI noise判定を小さく補強した。修正後は、Claude no-
 誤って古い入力をsubmitしないようにする。Claude Code長文docs pilotは、短文ACKと
 response captureが安定してから、別sliceで再確認する。
 
+S9.5では、Claude Code長文docs pilotを別sliceで再確認した。
+Claudeへの長めのdocs-only指示は`SENT`まで通ったが、実作業報告ではなくprompt echo、
+TUI progress、feedback prompt、過去/残留ACK markerが見えるケースがあった。
+このため、現在のinstructionに含まれないstale ACK markerや「markerを含めてください」
+系のprompt echo末尾をWorker応答として扱わないよう補強した。
+実作業docs pilotとしては未完了で、次回はClaudeへ渡す長文指示をさらに短いtask sliceへ
+分割して再確認する。
+
+Codex paneでは、古い入力欄テキストが残っている状態を確認した。
+clear / deleteのような強制操作はせず、送信前にinput residueが見える場合は
+Worker送信を控え、pane activate / output capture / prompt echo除外で状態を確認する。
+input residueやstale markerは実応答扱いしない。
+
 ## 12. 完了報告形式
 
 S9 pilotの完了報告には以下を含める。
