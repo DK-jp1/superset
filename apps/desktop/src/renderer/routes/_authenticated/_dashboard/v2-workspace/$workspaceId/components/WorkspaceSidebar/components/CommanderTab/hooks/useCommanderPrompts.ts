@@ -434,45 +434,10 @@ export function generateWorkSessionLedgerMarkdown({
 		: "- status: UNKNOWN\n- report: 未取得\n- screenshots: 未取得";
 	const recordedQaLines =
 		!latestQaResult && recordedOutcome
-			? [
-					`- status: ${recordedOutcome.chainStatus || "RECORDED"}`,
-					`- Chain mode: ${recordedOutcome.chainMode || "browser-worker-review"}`,
-					`- Browser AI review expected: ${recordedOutcome.browserAiReviewExpected || "true"}`,
-					`- Browser AI review: ${recordedOutcome.latestBrowserAiReviewStatus || "未取得"}`,
-					`- Worker response expected: ${recordedOutcome.workerResponseExpected || "true"}`,
-					`- Worker response: ${recordedOutcome.latestWorkerResponseStatus || "未取得"}`,
-					`- Worker response returned to Browser AI: ${recordedOutcome.workerResponseReturnedToBrowserAi || "未取得"}`,
-					`- Worker-only smoke passed: ${recordedOutcome.workerOnlySmokePassed || "false"}`,
-					`- STOP: ${recordedOutcome.hasStopSignal || "false"}`,
-					`- Codex instruction: ${recordedOutcome.hasCodexInstruction || "false"}`,
-					`- Doy confirmation: ${recordedOutcome.hasDoyConfirmationItems || "false"}`,
-					`- Auto Loop: ${recordedOutcome.autoLoop || "未取得"}`,
-				].join("\n")
+			? formatRecordedOutcomeQaLines(recordedOutcome)
 			: "";
 	const recordedOutcomeSection = recordedOutcome
-		? `## 記録済みController Chain Outcome
-- chainStatus: ${recordedOutcome.chainStatus || "RECORDED"}
-- finalDecision: ${recordedOutcome.finalDecision || "記録済み"}
-- nextAction: ${recordedOutcome.nextAction || "未取得"}
-- Chain mode: ${recordedOutcome.chainMode || "browser-worker-review"}
-${recordedOutcome.smokeType ? `- Smoke type: ${recordedOutcome.smokeType}` : ""}
-- Browser AI review expected: ${recordedOutcome.browserAiReviewExpected || "true"}
-- Browser AI review result: ${recordedOutcome.latestBrowserAiReviewStatus || "未取得"}
-- Worker response expected: ${recordedOutcome.workerResponseExpected || "true"}
-- Worker response result: ${recordedOutcome.latestWorkerResponseStatus || "未取得"}
-- Worker response returned to Browser AI: ${recordedOutcome.workerResponseReturnedToBrowserAi || "未取得"}
-- Worker-only smoke passed: ${recordedOutcome.workerOnlySmokePassed || "false"}
-- Browser-AI-only: ${recordedOutcome.browserAiOnly || "false"}
-- STOP / 次のCodex指示不要: ${recordedOutcome.hasStopSignal === "true" ? recordedOutcome.extractedStopSignal || "true" : "false"}
-- Codex instruction: ${recordedOutcome.hasCodexInstruction || "false"}
-- Doy confirmation: ${recordedOutcome.hasDoyConfirmationItems || "false"}
-- recorded Browser provider: ${recordedOutcome.browserAiProvider || "未取得"}
-- recorded worker type: ${recordedOutcome.workerType || "未取得"}
-- recorded workerIdentityOk: ${recordedOutcome.workerIdentityOk || "未取得"}
-- Auto Loop at record time: ${recordedOutcome.autoLoop || "未取得"}
-- completedAt / recordedAt: ${recordedOutcome.completedAt || "未取得"}
-${recordedOutcome.notes ? `- notes: ${recordedOutcome.notes}` : ""}
-`
+		? formatRecordedOutcomeSection(recordedOutcome)
 		: "";
 	const liveWarnings = [
 		browser.ready
@@ -664,6 +629,109 @@ interface RecordedControllerChainOutcome {
 	notes: string;
 	autoLoop: string;
 	completedAt: string;
+}
+
+function isWorkerOnlyRecordedOutcome(
+	recordedOutcome: RecordedControllerChainOutcome,
+): boolean {
+	const chainMode = recordedOutcome.chainMode || "browser-worker-review";
+	const smokeType = recordedOutcome.smokeType || "";
+	return (
+		chainMode === "worker-only" ||
+		chainMode === "noop-smoke" ||
+		chainMode === "preflight-smoke" ||
+		smokeType === "worker-noop" ||
+		smokeType === "noop-smoke" ||
+		recordedOutcome.workerOnlySmokePassed === "true"
+	);
+}
+
+function formatRecordedOutcomeQaLines(
+	recordedOutcome: RecordedControllerChainOutcome,
+): string {
+	if (isWorkerOnlyRecordedOutcome(recordedOutcome)) {
+		const workerOnlySmokeStatus =
+			recordedOutcome.workerOnlySmokePassed === "true" ||
+			recordedOutcome.chainStatus === "PASS"
+				? "PASS"
+				: "recorded";
+		return [
+			`- status: ${recordedOutcome.chainStatus || "RECORDED"}`,
+			`- Chain mode: ${recordedOutcome.chainMode || "worker-only"}`,
+			recordedOutcome.smokeType
+				? `- Smoke type: ${recordedOutcome.smokeType}`
+			: "",
+			"- Browser AI review: not expected",
+			`- Worker response: ${recordedOutcome.latestWorkerResponseStatus || "未取得"}`,
+			`- Worker-only smoke: ${workerOnlySmokeStatus}`,
+			`- Auto Loop: ${recordedOutcome.autoLoop || "未取得"}`,
+		]
+			.filter(Boolean)
+			.join("\n");
+	}
+	return [
+		`- status: ${recordedOutcome.chainStatus || "RECORDED"}`,
+		`- Chain mode: ${recordedOutcome.chainMode || "browser-worker-review"}`,
+		`- Browser AI review expected: ${recordedOutcome.browserAiReviewExpected || "true"}`,
+		`- Browser AI review: ${recordedOutcome.latestBrowserAiReviewStatus || "未取得"}`,
+		`- Worker response expected: ${recordedOutcome.workerResponseExpected || "true"}`,
+		`- Worker response: ${recordedOutcome.latestWorkerResponseStatus || "未取得"}`,
+		`- Worker response returned to Browser AI: ${recordedOutcome.workerResponseReturnedToBrowserAi || "未取得"}`,
+		`- Worker-only smoke passed: ${recordedOutcome.workerOnlySmokePassed || "false"}`,
+		`- STOP: ${recordedOutcome.hasStopSignal || "false"}`,
+		`- Codex instruction: ${recordedOutcome.hasCodexInstruction || "false"}`,
+		`- Doy confirmation: ${recordedOutcome.hasDoyConfirmationItems || "false"}`,
+		`- Auto Loop: ${recordedOutcome.autoLoop || "未取得"}`,
+	].join("\n");
+}
+
+function formatRecordedOutcomeSection(
+	recordedOutcome: RecordedControllerChainOutcome,
+): string {
+	if (isWorkerOnlyRecordedOutcome(recordedOutcome)) {
+		const workerOnlySmokeStatus =
+			recordedOutcome.workerOnlySmokePassed === "true" ||
+			recordedOutcome.chainStatus === "PASS"
+				? "PASS"
+				: "recorded";
+		return `## 記録済みController Chain Outcome
+- chainStatus: ${recordedOutcome.chainStatus || "RECORDED"}
+- chainMode: ${recordedOutcome.chainMode || "worker-only"}
+${recordedOutcome.smokeType ? `- smokeType: ${recordedOutcome.smokeType}` : ""}
+- Browser AI review: not expected
+- Worker response: ${recordedOutcome.latestWorkerResponseStatus || "未取得"}
+- Worker-only smoke: ${workerOnlySmokeStatus}
+- nextAction: ${recordedOutcome.nextAction || "STOP / 追加Worker指示不要"}
+- recorded worker type: ${recordedOutcome.workerType || "未取得"}
+- recorded workerIdentityOk: ${recordedOutcome.workerIdentityOk || "未取得"}
+- Auto Loop at record time: ${recordedOutcome.autoLoop || "未取得"}
+- completedAt / recordedAt: ${recordedOutcome.completedAt || "未取得"}
+${recordedOutcome.notes ? `- notes: ${recordedOutcome.notes}` : ""}
+`;
+	}
+	return `## 記録済みController Chain Outcome
+- chainStatus: ${recordedOutcome.chainStatus || "RECORDED"}
+- finalDecision: ${recordedOutcome.finalDecision || "記録済み"}
+- nextAction: ${recordedOutcome.nextAction || "未取得"}
+- Chain mode: ${recordedOutcome.chainMode || "browser-worker-review"}
+${recordedOutcome.smokeType ? `- Smoke type: ${recordedOutcome.smokeType}` : ""}
+- Browser AI review expected: ${recordedOutcome.browserAiReviewExpected || "true"}
+- Browser AI review result: ${recordedOutcome.latestBrowserAiReviewStatus || "未取得"}
+- Worker response expected: ${recordedOutcome.workerResponseExpected || "true"}
+- Worker response result: ${recordedOutcome.latestWorkerResponseStatus || "未取得"}
+- Worker response returned to Browser AI: ${recordedOutcome.workerResponseReturnedToBrowserAi || "未取得"}
+- Worker-only smoke passed: ${recordedOutcome.workerOnlySmokePassed || "false"}
+- Browser-AI-only: ${recordedOutcome.browserAiOnly || "false"}
+- STOP / 次のCodex指示不要: ${recordedOutcome.hasStopSignal === "true" ? recordedOutcome.extractedStopSignal || "true" : "false"}
+- Codex instruction: ${recordedOutcome.hasCodexInstruction || "false"}
+- Doy confirmation: ${recordedOutcome.hasDoyConfirmationItems || "false"}
+- recorded Browser provider: ${recordedOutcome.browserAiProvider || "未取得"}
+- recorded worker type: ${recordedOutcome.workerType || "未取得"}
+- recorded workerIdentityOk: ${recordedOutcome.workerIdentityOk || "未取得"}
+- Auto Loop at record time: ${recordedOutcome.autoLoop || "未取得"}
+- completedAt / recordedAt: ${recordedOutcome.completedAt || "未取得"}
+${recordedOutcome.notes ? `- notes: ${recordedOutcome.notes}` : ""}
+`;
 }
 
 function extractLatestControllerChainOutcome(

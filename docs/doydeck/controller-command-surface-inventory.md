@@ -97,6 +97,7 @@ Implemented:
 | Diagnostics | `prepareSupervisorPilotReadiness(input?)` | implemented | Optional Browser AI navigation and existing worker bind. No new worker launch. |
 | Worker | `listRecognizedWorkers(input?)` | implemented | Read-only Codex / Claude worker candidate list with ignored shell/unknown candidates separated. |
 | Worker | `bindWorkerToTab(input?)` | implemented | Binds an existing recognized Codex / Claude worker pane to the active tab. |
+| Worker | `getWorkerInputReadiness(input?)` | implemented | Read-only worker UI/input readiness for bound or paneId-selected Codex / Claude workers. |
 | Worker | `activateTerminalPaneForTab(input?)` | implemented | Activates/focuses existing terminal pane by pane id or bound worker. |
 | Worker | `activateWorkerPane(input?)` | implemented | Alias for `activateTerminalPaneForTab`. |
 | Worker | `focusBoundWorkerPane(input?)` | implemented | Alias for `activateTerminalPaneForTab`. |
@@ -156,7 +157,7 @@ Implemented:
 | Read worker response | implemented | done | `readBoundWorkerLatestResponse()`. |
 | Send worker response to Browser AI | implemented | done | `sendBoundWorkerResponseToBrowserAI()`. |
 | List recognized worker candidates | implemented | done | `listRecognizedWorkers()` returns Codex / Claude candidates and separates shell/unknown as ignored candidates. |
-| Inspect worker UI/input readiness | partially implemented | P1 | Returned inside preflight/readiness. Dedicated read-only command would improve debugging. |
+| Inspect worker UI/input readiness | implemented | done | `getWorkerInputReadiness()` checks bound or paneId-selected worker input state without send/bind/activate side effects. |
 | Launch new worker | should not implement yet | P3 | New worker launch requires Doy confirmation. |
 
 ### D. Outcome / Handoff
@@ -193,9 +194,6 @@ P1 missing or partial:
 - `prepareBrowserAiReady(input?)`
   - Browser-AI-only provider navigation/readiness.
   - Purpose: avoid Supervisor readiness when Worker is not needed.
-- `getWorkerInputReadiness(input?)`
-  - Read-only worker UI/input readiness.
-  - Purpose: debug Claude feedback/recap/input residue before sending.
 - `sendTargetDocsReviewToBrowserAI(input)`
   - Browser-AI-only target docs review with prompt length/scope controls.
   - Purpose: reduce prompt boilerplate and long-context mistakes.
@@ -237,8 +235,6 @@ P0: 日常操作でUI探索が出るもの。
 P1: 実運用で頻繁に使うが回避可能なもの。
 
 - `prepareBrowserAiReady(input?)`
-- `bindWorkerToTab(input)`
-- `getWorkerInputReadiness(input?)`
 - `sendTargetDocsReviewToBrowserAI(input)`
 - `getControllerCommandInventory()`
 
@@ -266,10 +262,10 @@ Candidate 1: `prepareBrowserAiReady(input?)`
 - Worker bindingを要求しない。
 - Browser AI provider navigationを行う場合は明示inputに限定する。
 
-Candidate 2: `getWorkerInputReadiness(input?)`
+Candidate 2: `getTerminalOutputSnapshot(input)`
 
-- Worker送信前状態をread-onlyで確認する。
-- Claude feedback / recap / input residueをsend前に確認する。
+- Worker output / pane状態をread-onlyで確認する。
+- `getWorkerInputReadiness(input?)`で足りないraw evidenceをsafeに補う。
 - shell / unknownはrecognized worker扱いしない。
 
 ## 8. やらないこと
@@ -311,25 +307,25 @@ Visual sanity checkは以下の場合に使う。
    - 種別: readiness / optional provider preparation。
    - リスク: medium-low。
 
-2. `getWorkerInputReadiness(input?)`
-   - 理由: Claude feedback/recap/input residueを送信前にread-onlyで確認できる。
-   - 種別: read-only diagnostics。
-   - リスク: low。
-
-3. `getTerminalOutputSnapshot(input)`
+2. `getTerminalOutputSnapshot(input)`
    - 理由: visual sanity check前のsafeなpane output確認をController pathにする。
    - 種別: read-only diagnostics。
    - リスク: medium-low。
 
-4. `getControllerCommandInventory()`
+3. `getControllerCommandInventory()`
    - 理由: Meta AI / Codexが現在のController surfaceをUI探索なしで把握できる。
    - 種別: read-only diagnostics。
    - リスク: low。
 
-5. `findTabByTitle(input)`
+4. `findTabByTitle(input)`
    - 理由: 日常的な「タスク管理アプリのタブへ戻って」をUI探索なしにする。
    - 種別: read-only tab lookup。
    - リスク: low。
+
+5. `sendTargetDocsReviewToBrowserAI(input)`
+   - 理由: Browser-AI-only target docs reviewを短いpromptで実行しやすくする。
+   - 種別: Browser-AI-only send helper。
+   - リスク: medium-low。
 
 ## 11. 実装順の提案
 
@@ -337,10 +333,10 @@ Recommended S9.9 / S10 entry:
 
 1. `prepareBrowserAiReady(input?)`
    - Browser-AI-only用途でSupervisor readinessを使わずに済む。
-2. `getWorkerInputReadiness(input?)`
-   - Worker送信前状態のread-only確認を切り出す。
-3. `getTerminalOutputSnapshot(input)`
+2. `getTerminalOutputSnapshot(input)`
    - pane output確認をController pathへ寄せる。
+3. `getControllerCommandInventory()`
+   - Controller surfaceの自己発見をread-onlyで可能にする。
 
 Stop before implementation if any candidate expands into:
 
