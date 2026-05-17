@@ -207,6 +207,8 @@ const AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS = 180000;
 const AUTO_LOOP_HARD_MAX_WAIT_MS = 600000;
 const TERMINAL_ENTER_INPUT = "\r";
 const TERMINAL_ENTER_DELAY_MS = 150;
+const TERMINAL_BRACKETED_PASTE_START = "\x1b[200~";
+const TERMINAL_BRACKETED_PASTE_END = "\x1b[201~";
 const DEBUG_AUTO_RELAY_WATCHER = false;
 export type AutoRelayMode = "off" | "preview" | "loop";
 export type AutoLoopMaxTurns = 10 | 25 | 50 | 100;
@@ -747,23 +749,33 @@ function extractAutoLoopWorkerInstructionBlock(text: string): string {
 export async function sendToTerminal(
 	paneId: string,
 	text: string,
-	options?: { submit?: boolean },
+	options?: {
+		submit?: boolean;
+		inputMode?: "plain" | "bracketed-paste";
+		submitDelayMs?: number;
+	},
 ): Promise<boolean> {
 	try {
+		const inputMode = options?.inputMode ?? "plain";
+		const writeData =
+			inputMode === "bracketed-paste"
+				? `${TERMINAL_BRACKETED_PASTE_START}${text}${TERMINAL_BRACKETED_PASTE_END}`
+				: text;
 		console.log("[S5.2] terminal send start", {
 			paneId,
 			submit: !!options?.submit,
 			textLength: text.length,
+			inputMode,
 			method: "terminal.write",
 		});
 		await electronTrpcClient.terminal.write.mutate({
 			paneId,
-			data: text,
+			data: writeData,
 			throwOnError: true,
 		});
 		if (options?.submit) {
 			await new Promise((resolve) =>
-				setTimeout(resolve, TERMINAL_ENTER_DELAY_MS),
+				setTimeout(resolve, options.submitDelayMs ?? TERMINAL_ENTER_DELAY_MS),
 			);
 			await electronTrpcClient.terminal.write.mutate({
 				paneId,

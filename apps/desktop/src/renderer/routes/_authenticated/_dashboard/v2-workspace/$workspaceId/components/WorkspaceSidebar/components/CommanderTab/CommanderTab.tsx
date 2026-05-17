@@ -2039,6 +2039,13 @@ export function CommanderTab({
 			if (!requirePreflight) {
 				warnings.push("preflight blocking is disabled for this request");
 			}
+			const terminalInstruction = prepareBoundWorkerInstructionForTerminal(
+				instruction,
+				workerType,
+			);
+			if (terminalInstruction.warning) {
+				warnings.push(terminalInstruction.warning);
+			}
 
 			const baseResult = {
 				...getCommanderControllerContext(),
@@ -2087,9 +2094,16 @@ export function CommanderTab({
 
 			try {
 				const outputOffsetBeforeSend = getOutputLogOffset(targetPaneId);
-				const ok = await sendToTerminal(targetPaneId, instruction, {
-					submit: true,
-				});
+				const ok = await sendToTerminal(
+					targetPaneId,
+					terminalInstruction.text,
+					{
+						submit: true,
+						inputMode:
+							workerType === "claude" ? "bracketed-paste" : "plain",
+						submitDelayMs: workerType === "claude" ? 300 : undefined,
+					},
+				);
 				if (!ok) {
 					return {
 						ok: false,
@@ -2103,9 +2117,9 @@ export function CommanderTab({
 					paneId: targetPaneId,
 					terminalId: preflight.terminalId,
 					sentAt,
-					instruction,
-					instructionHash: hashControllerText(instruction),
-					instructionPreview: instruction.slice(0, 240),
+					instruction: terminalInstruction.text,
+					instructionHash: hashControllerText(terminalInstruction.text),
+					instructionPreview: terminalInstruction.text.slice(0, 240),
 					instructionLength: instruction.length,
 					outputOffsetBeforeSend,
 				};
@@ -4336,6 +4350,32 @@ function normalizeSendInstructionInput(
 	};
 }
 
+function prepareBoundWorkerInstructionForTerminal(
+	instruction: string,
+	workerType: string,
+): { text: string; warning: string | null } {
+	const normalized = instruction.replace(/\r\n?/g, "\n").trim();
+	if (workerType !== "claude") {
+		return { text: normalized, warning: null };
+	}
+
+	const shouldCompact = normalized.includes("\n") || normalized.length > 700;
+	if (!shouldCompact) {
+		return { text: normalized, warning: null };
+	}
+
+	const compacted = normalized
+		.split("\n")
+		.map((line) => line.replace(/\s+/g, " ").trim())
+		.filter(Boolean)
+		.join(" / ");
+
+	return {
+		text: compacted,
+		warning: "Claude worker instruction compacted for reliable TUI submit",
+	};
+}
+
 function findInstructionSafetyBlockers(instruction: string): string[] {
 	const blockers: string[] = [];
 	const normalized = instruction.trim();
@@ -4678,6 +4718,28 @@ function extractBoundWorkerResponseForAnalysis(params: {
 				waitingReason: "worker output delta contains only progress fragments",
 			};
 		}
+		const residualEchoReason =
+			!focused.responseFocused && lastInstructionMarker
+				? getBoundWorkerPromptEchoResidualReason(
+						focused.text,
+						lastInstructionMarker.instruction,
+					)
+				: null;
+		if (residualEchoReason) {
+			analysisWarnings.push(residualEchoReason);
+			return {
+				deltaText,
+				analyzedResponseText: "",
+				promptEchoRemoved: stripped.promptEchoRemoved,
+				usedLastSendMarker,
+				analysisWarnings,
+				uiNoiseRemoved: focused.uiNoiseRemoved,
+				ignoredUiNoiseLines: focused.ignoredUiNoiseLines,
+				extractedResponseCandidates: focused.extractedResponseCandidates,
+				selectedResponseReason: "prompt-echo-waiting",
+				waitingReason: residualEchoReason,
+			};
+		}
 		return {
 			deltaText,
 			analyzedResponseText: limitWorkerOutputText(focused.text.trim()),
@@ -4740,6 +4802,70 @@ function isBoundWorkerProgressFragmentText(text: string): boolean {
 	});
 }
 
+function getBoundWorkerPromptEchoResidualReason(
+	text: string,
+	instruction: string,
+): string | null {
+	const normalizedText = normalizeWorkerInstructionForComparison(text);
+	const compactText = compactWorkerInstructionForComparison(text);
+	const compactInstruction = compactWorkerInstructionForComparison(instruction);
+	if (!normalizedText || !compactText || compactInstruction.length < 24) {
+		return null;
+	}
+
+	if (
+		compactText.length >= 24 &&
+		(compactInstruction.includes(compactText) ||
+			compactText.includes(
+				compactInstruction.slice(0, Math.min(160, compactInstruction.length)),
+			))
+	) {
+		return "worker output still matches submitted prompt echo";
+	}
+	const compactMarkers = extractWorkerAckMarkersFromInstruction(instruction).map(
+		(marker) => compactWorkerInstructionForComparison(marker),
+	);
+	if (
+		compactMarkers.some(
+			(marker) => marker.length >= 8 && compactText.includes(marker),
+		) &&
+		/(返信してください|返答してください|報告してください|確認してください|変更は不要|please\s+(?:reply|report|check))/i.test(
+			text,
+		)
+	) {
+		return "worker output contains submitted prompt marker with instruction text";
+	}
+
+	const lines = text
+		.split("\n")
+		.map((line) => line.replace(/\s+/g, " ").trim())
+		.filter(Boolean);
+	if (lines.length === 0) return null;
+
+	let instructionLikeLines = 0;
+	let usableLines = 0;
+	for (const line of lines) {
+		if (isBoundWorkerUiNoiseLine(line)) continue;
+		const compactLine = compactWorkerInstructionForComparison(line);
+		if (!compactLine) continue;
+		usableLines += 1;
+		if (
+			compactLine.length >= 8 &&
+			(compactInstruction.includes(compactLine) ||
+				compactLine.includes(
+					compactInstruction.slice(0, Math.min(80, compactInstruction.length)),
+				))
+		) {
+			instructionLikeLines += 1;
+		}
+	}
+	if (usableLines > 0 && instructionLikeLines / usableLines >= 0.8) {
+		return "worker output contains only submitted prompt echo";
+	}
+
+	return null;
+}
+
 function extractVisibleBoundWorkerDeltaText(params: {
 	screenText: string;
 	viewportText: string;
@@ -4751,10 +4877,14 @@ function extractVisibleBoundWorkerDeltaText(params: {
 		.filter((source) => source.trim().length > 0);
 	for (const marker of markers) {
 		for (const source of sources) {
-			const markerIndex = source.lastIndexOf(marker);
+			const markerIndex = findWrappedWorkerMarkerIndex(source, marker);
 			if (markerIndex < 0) continue;
-			const lineStart = source.lastIndexOf("\n", markerIndex);
-			return source.slice(lineStart >= 0 ? lineStart + 1 : markerIndex).trim();
+			const blockStart = findVisibleWorkerAssistantBlockStart(
+				source,
+				markerIndex,
+			);
+			const blockEnd = findVisibleWorkerAssistantBlockEnd(source, markerIndex);
+			return source.slice(blockStart, blockEnd).trim();
 		}
 	}
 	const compactInstruction = compactWorkerInstructionForComparison(
@@ -4784,6 +4914,32 @@ function extractVisibleBoundWorkerDeltaText(params: {
 		}
 	}
 	return "";
+}
+
+function findVisibleWorkerAssistantBlockStart(
+	source: string,
+	markerIndex: number,
+): number {
+	const promptIndex = source.lastIndexOf("\n❯", markerIndex);
+	const assistantIndex = source.lastIndexOf("\n⏺", markerIndex);
+	if (assistantIndex >= 0 && assistantIndex > promptIndex) {
+		return assistantIndex + 1;
+	}
+	const lineStart = source.lastIndexOf("\n", markerIndex);
+	return lineStart >= 0 ? lineStart + 1 : markerIndex;
+}
+
+function findVisibleWorkerAssistantBlockEnd(
+	source: string,
+	markerIndex: number,
+): number {
+	const candidates = [
+		source.indexOf("\n✻", markerIndex),
+		source.indexOf("\n────────────────", markerIndex),
+		source.indexOf("\n❯", markerIndex),
+	].filter((index) => index >= 0);
+	if (candidates.length === 0) return source.length;
+	return Math.min(...candidates);
 }
 
 function extractBoundWorkerResponseCandidates(text: string): {
@@ -4819,6 +4975,9 @@ function extractBoundWorkerResponseCandidates(text: string): {
 		}
 		if (cleanedLine.trim()) usableLines.push(cleanedLine);
 	}
+	const assistantLineIndex = usableLines.findIndex((line) =>
+		/^\s*[⏺●]\s*/.test(line),
+	);
 	const responseCandidates = usableLines
 		.map((line, index) => ({
 			line: line.trim(),
@@ -4827,7 +4986,14 @@ function extractBoundWorkerResponseCandidates(text: string): {
 		}))
 		.filter((candidate) => candidate.line && candidate.score > 0)
 		.sort((a, b) => b.score - a.score || b.index - a.index);
-	const bestCandidate = responseCandidates[0] ?? null;
+	const bestCandidate =
+		assistantLineIndex >= 0
+			? {
+					line: usableLines[assistantLineIndex]?.trim() ?? "",
+					index: assistantLineIndex,
+					score: 100,
+				}
+			: responseCandidates[0] ?? null;
 	const focusedLines = bestCandidate
 		? usableLines.slice(bestCandidate.index).filter((line) => line.trim())
 		: usableLines.filter((line) => line.trim());
@@ -4850,6 +5016,7 @@ function stripInlineBoundWorkerUiNoise(line: string): string {
 		.replace(/[›>]\s*Write tests for @filename.*$/i, "")
 		.replace(/gpt-\d(?:\.\d+)?\s+\w+\s+·\s+~?\/.*$/i, "")
 		.replace(/[•·]?\s*Working\([^)]*(?:interrupt|interupt)[^)]*\).*$/i, "")
+		.replace(/[✢✳✻✶✽·]?\s*(?:Crunching|Garnishing|Churning|Searching)[….\s\S]*$/i, "")
 		.replace(
 			/[•·]?\d*(?:Working|Workin|Worki|Work|Wor|Wo)(?:[•·]?\d*(?:Working|Workin|Worki|Work|Wor|Wo|W|orking|rking|king|ing|ng|g))*.*$/i,
 			"",
@@ -4871,7 +5038,9 @@ function isBoundWorkerUiNoiseLine(line: string): boolean {
 		/^❯\s*$/,
 		/^⏵⏵\s*bypass\s*permissions\s*on/i,
 		/^⏵⏵bypasspermissionson/i,
+		/\bctrl\+g\s+to\s+edit\s+in\s+Vim\b/i,
 		/^✻\s*(?:Cooked|Crunched|Reticulating)\b/i,
+		/^[✢✳✻✶✽·]?\s*(?:Crunching|Garnishing|Churning|Searching)\b/i,
 		/^·\s*Reticulating/i,
 		/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏◐◓◑◒⏳]\s*(?:Working|Thinking|Running)?/i,
 		/^OpenAI Codex\b/i,
@@ -4938,11 +5107,13 @@ function stripBoundWorkerPromptEcho(
 	const keptLines: string[] = [];
 	let inPromptEcho = false;
 	let seenWorkerUiNoiseAfterEcho = false;
+	let seenWorkerResponseLine = false;
 
 	for (const line of text.split("\n")) {
 		if (isBoundWorkerUiNoiseLine(line)) {
 			seenWorkerUiNoiseAfterEcho = true;
 		}
+		const startsWorkerResponseLine = /^[•・⏺●]\s*/.test(line.trim());
 		const comparableLine = normalizeWorkerInstructionForComparison(
 			line.replace(/^\s*[›>]\s*/, ""),
 		);
@@ -4961,7 +5132,10 @@ function stripBoundWorkerPromptEcho(
 				(compactLine.length >= 80 &&
 					compactLine.includes(compactInstruction.slice(0, 80))));
 		const lineLooksLikeWorkerResponse =
-			seenWorkerUiNoiseAfterEcho || /^[•・]\s*/.test(line.trim());
+			seenWorkerResponseLine ||
+			seenWorkerUiNoiseAfterEcho ||
+			startsWorkerResponseLine;
+		if (startsWorkerResponseLine) seenWorkerResponseLine = true;
 
 		if (lineLooksLikeEcho && !lineLooksLikeWorkerResponse) {
 			promptEchoRemoved = true;
@@ -5231,6 +5405,10 @@ function detectBoundWorkerRunningSignal(text: string): {
 		[/\bthinking\b/i, "thinking signal detected"],
 		[/\banalyzing\b/i, "analyzing signal detected"],
 		[/\bexecuting\b/i, "executing signal detected"],
+		[/\bcrunching\b/i, "Claude running signal detected: Crunching"],
+		[/\bgarnishing\b/i, "Claude running signal detected: Garnishing"],
+		[/\bchurning\b/i, "Claude running signal detected: Churning"],
+		[/\bsearching\b/i, "Claude running signal detected: Searching"],
 		[/実行中/, "Japanese running signal detected: 実行中"],
 		[/処理中/, "Japanese running signal detected: 処理中"],
 		[/作業中/, "Japanese running signal detected: 作業中"],
@@ -5459,7 +5637,29 @@ function extractWorkerAckMarkersFromInstruction(instruction: string): string[] {
 
 function includesAckMarker(text: string, marker: string): boolean {
 	if (!text || !marker) return false;
-	return text.includes(marker);
+	return (
+		text.includes(marker) ||
+		compactWorkerInstructionForComparison(text).includes(
+			compactWorkerInstructionForComparison(marker),
+		)
+	);
+}
+
+function findWrappedWorkerMarkerIndex(text: string, marker: string): number {
+	const exactIndex = text.lastIndexOf(marker);
+	if (exactIndex >= 0) return exactIndex;
+	const pattern = new RegExp(
+		marker
+			.split("")
+			.map((char) => escapeRegExp(char))
+			.join("\\s*"),
+		"g",
+	);
+	let lastIndex = -1;
+	for (const match of text.matchAll(pattern)) {
+		if (typeof match.index === "number") lastIndex = match.index;
+	}
+	return lastIndex;
 }
 
 function getBoundWorkerLatestResponseSummary(
