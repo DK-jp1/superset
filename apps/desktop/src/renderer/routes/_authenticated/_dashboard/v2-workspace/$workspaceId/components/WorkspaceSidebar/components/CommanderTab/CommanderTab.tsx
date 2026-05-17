@@ -14,6 +14,10 @@ import {
 } from "renderer/stores/doydeck-worker-bindings";
 import { useTabsStore } from "renderer/stores/tabs/store";
 import {
+	extractPaneIdsFromLayout,
+	getTabDisplayName,
+} from "renderer/stores/tabs/utils";
+import {
 	getOutputLogOffset,
 	getOutputLogSince,
 	getTerminalOutputSnapshot,
@@ -138,6 +142,48 @@ interface CommanderControllerCreateTaskTabResult
 	blockers: string[];
 	warnings: string[];
 	nextRequiredAction: string;
+}
+
+type CommanderControllerTabReadStatus = "READY" | "BLOCKED";
+
+interface CommanderControllerTabPaneSummary {
+	paneId: string;
+	paneType: string;
+	title: string;
+	status: string;
+	isFocused: boolean;
+}
+
+interface CommanderControllerTabSummary {
+	tabId: string;
+	title: string;
+	name: string;
+	userTitle: string | null;
+	workspaceId: string;
+	isActive: boolean;
+	createdAt: number;
+	focusedPaneId: string | null;
+	paneIds: string[];
+	panes: CommanderControllerTabPaneSummary[];
+}
+
+interface CommanderControllerListTabsResult
+	extends CommanderControllerCommandResult {
+	status: "READY";
+	activeTabId: string | null;
+	tabCount: number;
+	tabs: CommanderControllerTabSummary[];
+	warnings: string[];
+	message: string;
+}
+
+interface CommanderControllerGetActiveTabResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerTabReadStatus;
+	activeTabId: string | null;
+	activeTab: CommanderControllerTabSummary | null;
+	warnings: string[];
+	message: string;
 }
 
 type CommanderControllerChainStatus =
@@ -749,6 +795,8 @@ interface CommanderControllerCommands {
 	version: "0.1";
 	workspaceId: string;
 	getActiveTabId: () => string | null;
+	listTabs: () => CommanderControllerListTabsResult;
+	getActiveTab: () => CommanderControllerGetActiveTabResult;
 	createTaskTab: (
 		input?: CommanderControllerCreateTaskTabInput,
 	) => Promise<CommanderControllerCreateTaskTabResult>;
@@ -1009,6 +1057,11 @@ export function CommanderTab({
 		[workspaceId, activeTabId],
 	);
 
+	const getActiveTabIdController = useCallback(
+		() => useTabsStore.getState().activeTabIds[workspaceId] ?? activeTabId ?? null,
+		[activeTabId, workspaceId],
+	);
+
 	const recordBrowserAiSubmissionControllerState = useCallback(
 		(
 			input: Omit<
@@ -1222,6 +1275,82 @@ export function CommanderTab({
 		},
 		[getCommanderControllerContext, handleSessionApplied],
 	);
+
+	const listTabsController =
+		useCallback((): CommanderControllerListTabsResult => {
+			const tabsState = useTabsStore.getState();
+			const resolvedActiveTabId =
+				tabsState.activeTabIds[workspaceId] ?? activeTabId ?? null;
+			const workspaceTabs = tabsState.tabs
+				.filter((tab) => tab.workspaceId === workspaceId)
+				.map((tab) =>
+					buildControllerTabSummary({
+						tab,
+						panes: tabsState.panes,
+						activeTabId: resolvedActiveTabId,
+						focusedPaneId: tabsState.focusedPaneIds[tab.id] ?? null,
+					}),
+				);
+			const warnings =
+				workspaceTabs.length === 0
+					? ["no tabs found for current workspace"]
+					: [];
+			return {
+				ok: true,
+				workspaceId,
+				tabId: resolvedActiveTabId,
+				status: "READY",
+				activeTabId: resolvedActiveTabId,
+				tabCount: workspaceTabs.length,
+				tabs: workspaceTabs,
+				warnings,
+				message:
+					"Tab list read from local tabs store only; Browser AI, worker readiness, and preflight were not run.",
+			};
+		}, [activeTabId, workspaceId]);
+
+	const getActiveTabController =
+		useCallback((): CommanderControllerGetActiveTabResult => {
+			const tabsState = useTabsStore.getState();
+			const resolvedActiveTabId =
+				tabsState.activeTabIds[workspaceId] ?? activeTabId ?? null;
+			const activeTab = resolvedActiveTabId
+				? (tabsState.tabs.find(
+						(tab) =>
+							tab.id === resolvedActiveTabId && tab.workspaceId === workspaceId,
+					) ?? null)
+				: null;
+			if (!activeTab) {
+				return {
+					ok: false,
+					workspaceId,
+					tabId: resolvedActiveTabId,
+					status: "BLOCKED",
+					activeTabId: resolvedActiveTabId,
+					activeTab: null,
+					warnings: ["active tab not found for current workspace"],
+					reason: "active tab not found",
+					message:
+						"Select or create a task tab before reading active tab details.",
+				};
+			}
+			return {
+				ok: true,
+				workspaceId,
+				tabId: activeTab.id,
+				status: "READY",
+				activeTabId: activeTab.id,
+				activeTab: buildControllerTabSummary({
+					tab: activeTab,
+					panes: tabsState.panes,
+					activeTabId: activeTab.id,
+					focusedPaneId: tabsState.focusedPaneIds[activeTab.id] ?? null,
+				}),
+				warnings: [],
+				message:
+					"Active tab read from local tabs store only; Browser AI, worker readiness, and preflight were not run.",
+			};
+		}, [activeTabId, workspaceId]);
 
 	const createTaskTabController = useCallback(
 		async (
@@ -3628,7 +3757,9 @@ export function CommanderTab({
 		const commands: CommanderControllerCommands = {
 			version: "0.1",
 			workspaceId,
-			getActiveTabId: () => activeTabId,
+			getActiveTabId: getActiveTabIdController,
+			listTabs: listTabsController,
+			getActiveTab: getActiveTabController,
 			createTaskTab: createTaskTabController,
 			createWorkspaceTaskTab: createTaskTabController,
 			getCommanderSession: getCommanderSessionControllerResult,
@@ -3670,6 +3801,9 @@ export function CommanderTab({
 	}, [
 		workspaceId,
 		activeTabId,
+		getActiveTabIdController,
+		listTabsController,
+		getActiveTabController,
 		createTaskTabController,
 		getCommanderSessionControllerResult,
 		setCommanderSessionController,
@@ -6959,6 +7093,50 @@ function findSupervisorRecognizedWorkerCandidates({
 		if (codexDelta !== 0) return codexDelta;
 		return a.paneId.localeCompare(b.paneId);
 	});
+}
+
+function buildControllerTabSummary({
+	tab,
+	panes,
+	activeTabId,
+	focusedPaneId,
+}: {
+	tab: Tab;
+	panes: Record<string, Pane>;
+	activeTabId: string | null;
+	focusedPaneId: string | null;
+}): CommanderControllerTabSummary {
+	const paneIds = extractPaneIdsFromLayout(tab.layout);
+	return {
+		tabId: tab.id,
+		title: getTabDisplayName(tab),
+		name: tab.name,
+		userTitle: tab.userTitle?.trim() || null,
+		workspaceId: tab.workspaceId,
+		isActive: tab.id === activeTabId,
+		createdAt: tab.createdAt,
+		focusedPaneId,
+		paneIds,
+		panes: paneIds.map((paneId) => {
+			const pane = panes[paneId];
+			return {
+				paneId,
+				paneType: pane?.type ?? "unknown",
+				title: pane ? getPaneDisplayTitle(pane) : "unknown",
+				status: pane?.status ?? "unknown",
+				isFocused: paneId === focusedPaneId,
+			};
+		}),
+	};
+}
+
+function getPaneDisplayTitle(pane: Pane): string {
+	return (
+		pane.userTitle?.trim() ||
+		getPaneTextField(pane, "name") ||
+		pane.type ||
+		"unknown"
+	);
 }
 
 function getTerminalWorkerEvidenceForPane(pane: Pane): {

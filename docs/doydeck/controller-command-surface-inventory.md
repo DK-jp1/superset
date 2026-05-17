@@ -79,6 +79,8 @@ Implemented:
 | Core | `version` | implemented | Controller surface version. |
 | Core | `workspaceId` | implemented | Current workspace id. |
 | Tab / Workspace | `getActiveTabId()` | implemented | Active tab id only. |
+| Tab / Workspace | `listTabs()` | implemented | Read-only current workspace tab list. Does not run Browser AI / Worker readiness. |
+| Tab / Workspace | `getActiveTab()` | implemented | Read-only active tab summary. Does not run Browser AI / Worker readiness. |
 | Tab / Workspace | `createTaskTab(input?)` | implemented | Fast task tab creation. Skips Browser AI / Worker / Handoff / preflight by design. |
 | Tab / Workspace | `createWorkspaceTaskTab(input?)` | implemented | Alias for `createTaskTab`. |
 | Session | `getCommanderSession()` | implemented | Returns current Commander session. |
@@ -116,8 +118,8 @@ Implemented:
 | --- | --- | --- | --- |
 | Create task tab | implemented | done | `createTaskTab()` / `createWorkspaceTaskTab()`. |
 | Get active tab id | implemented | done | `getActiveTabId()`. |
-| Get active tab details | partially implemented | P0 | Need id, title, pane ids, worker binding summary, Browser AI slot relation. |
-| List tabs | missing | P0 | Needed to avoid UI search when selecting existing task tabs. |
+| Get active tab details | implemented | done | `getActiveTab()` returns title, pane ids, pane summaries, and focused pane. |
+| List tabs | implemented | done | `listTabs()` returns current workspace tabs without UI search. |
 | Select / activate tab by id | missing | P0 | Existing store supports it; no Controller command yet. |
 | Rename tab | missing | P0 | Existing store supports it; no Controller command yet. |
 | Find tab by title | missing | P1 | Useful for "タスク管理アプリのタブへ戻って". |
@@ -180,12 +182,6 @@ Implemented:
 
 P0 missing or partial:
 
-- `listTabs(input?)`
-  - Return tab ids, titles, active flag, pane summaries, workspace id.
-  - Purpose: avoid UI exploration when finding task tabs.
-- `getActiveTab(input?)`
-  - Return active tab detail, not just id.
-  - Purpose: validate task context before sending Browser AI / Worker instructions.
 - `activateTab(input)`
   - Activate by `tabId`; optionally support exact title match in dry-run first.
   - Purpose: return to an existing task tab without UI click exploration.
@@ -243,8 +239,6 @@ P3 / dangerous / should not implement yet:
 
 P0: 日常操作でUI探索が出るもの。
 
-- `listTabs()`
-- `getActiveTab()`
 - `activateTab(input)`
 - `renameTaskTab(input)`
 - `listRecognizedWorkers(input?)`
@@ -273,39 +267,38 @@ P3: 危険または仕様未確定。
 
 ## 7. 実装候補
 
-最初に実装するなら、read-onlyまたはstate-onlyで副作用が小さいものを優先する。
+次に実装するなら、state-onlyで副作用が小さいもの、またはread-only diagnosticsを優先する。
 
-Candidate 1: `listTabs(input?)`
-
-- Read-only。
-- current workspaceのtabsを返す。
-- titleはuserTitle優先。
-- pane summariesを返す。
-- active flagを返す。
-
-Candidate 2: `getActiveTab()`
-
-- Read-only。
-- active tab idだけでなくtitle/panes/bound worker summaryを返す。
-
-Candidate 3: `activateTab(input)`
+Candidate 1: `activateTab(input)`
 
 - Small state mutation。
 - `tabId`指定をprimaryにする。
 - title matchはdry-runで候補確認してから。
 - Browser AI / Worker / Handoff / preflightは実行しない。
 
-Candidate 4: `renameTaskTab(input)`
+Candidate 2: `renameTaskTab(input)`
 
 - Small state mutation。
 - active tabまたは`tabId`指定。
 - 空title、長すぎるtitle、control文字はreject。
 
-Candidate 5: `listRecognizedWorkers(input?)`
+Candidate 3: `listRecognizedWorkers(input?)`
 
 - Read-only。
 - `codex` / `claude`だけをrecognizedにする。
 - shell / unknownは候補に出しても`recognized:false`にする。
+
+Candidate 4: `prepareBrowserAiReady(input?)`
+
+- Browser-AI-only provider readiness。
+- Worker bindingを要求しない。
+- Browser AI provider navigationを行う場合は明示inputに限定する。
+
+Candidate 5: `bindWorkerToTab(input)`
+
+- Existing recognized workerだけをbindする。
+- 新規Worker起動はしない。
+- shell / unknownはBLOCKED。
 
 ## 8. やらないこと
 
@@ -341,46 +334,45 @@ Visual sanity checkは以下の場合に使う。
 
 ## 10. 次に実装すべきcommandトップ5
 
-1. `listTabs(input?)`
-   - 理由: task tab探索のUI依存をなくす。
-   - 種別: read-only。
-   - リスク: low。
-
-2. `getActiveTab()`
-   - 理由: active tab contextをidだけでなく詳細で確認できる。
-   - 種別: read-only。
-   - リスク: low。
-
-3. `activateTab(input)`
+1. `activateTab(input)`
    - 理由: 既存task tabへ戻る操作をController pathにする。
    - 種別: small state mutation。
    - リスク: medium-low。
 
-4. `renameTaskTab(input)`
+2. `renameTaskTab(input)`
    - 理由: 「タブ名をXにする」をUI renameなしで処理する。
    - 種別: small state mutation。
    - リスク: medium-low。
 
-5. `listRecognizedWorkers(input?)`
+3. `listRecognizedWorkers(input?)`
    - 理由: Worker選択をprepare前にread-onlyで確認できる。
    - 種別: read-only diagnostics。
    - リスク: low。
+
+4. `prepareBrowserAiReady(input?)`
+   - 理由: Browser-AI-only用途でSupervisor readinessを使わずに済む。
+   - 種別: readiness / optional provider preparation。
+   - リスク: medium-low。
+
+5. `bindWorkerToTab(input)`
+   - 理由: 既存recognized workerのbindをprepare/focusから分離できる。
+   - 種別: small state mutation。
+   - リスク: medium。
 
 ## 11. 実装順の提案
 
 Recommended S9.9 / S10 entry:
 
-1. `listTabs()` and `getActiveTab()`
-   - read-onlyなので安全。
-   - Meta AIがUI探索へ落ちる頻度をすぐ下げられる。
-2. `activateTab(input)`
+1. `activateTab(input)`
    - task tab復帰をnative path化する。
-3. `renameTaskTab(input)`
+2. `renameTaskTab(input)`
    - task tab setupを完成させる。
-4. `listRecognizedWorkers(input?)`
+3. `listRecognizedWorkers(input?)`
    - Worker選択/復旧のUI探索を減らす。
-5. `prepareBrowserAiReady(input?)`
+4. `prepareBrowserAiReady(input?)`
    - Browser-AI-only用途でSupervisor readinessを使わずに済む。
+5. `bindWorkerToTab(input)`
+   - existing recognized worker bindを明示操作にする。
 
 Stop before implementation if any candidate expands into:
 
