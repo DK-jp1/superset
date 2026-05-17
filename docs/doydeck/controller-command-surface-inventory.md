@@ -98,6 +98,7 @@ Implemented:
 | Worker | `listRecognizedWorkers(input?)` | implemented | Read-only Codex / Claude worker candidate list with ignored shell/unknown candidates separated. |
 | Worker | `bindWorkerToTab(input?)` | implemented | Binds an existing recognized Codex / Claude worker pane to the active tab. |
 | Worker | `getWorkerInputReadiness(input?)` | implemented | Read-only worker UI/input readiness for bound or paneId-selected Codex / Claude workers. |
+| Worker | `getTerminalOutputSnapshot(input?)` | implemented | Read-only terminal screen / viewport / output tail snapshot by pane id or active focused pane. |
 | Worker | `activateTerminalPaneForTab(input?)` | implemented | Activates/focuses existing terminal pane by pane id or bound worker. |
 | Worker | `activateWorkerPane(input?)` | implemented | Alias for `activateTerminalPaneForTab`. |
 | Worker | `focusBoundWorkerPane(input?)` | implemented | Alias for `activateTerminalPaneForTab`. |
@@ -180,7 +181,7 @@ Implemented:
 | Browser AI preflight | implemented | done | `getBrowserAiPreflight()`. |
 | Worker pane activation diagnostics | implemented | done | `activateTerminalPaneForTab()` result includes identity/focus details. |
 | Visual sanity check helper | missing | P2 | Needed for UI state/input residue/pane active judgments. Could be read-only screenshot/visible snapshot helper. |
-| Terminal output snapshot helper | partially implemented | P1 | Internal helpers exist; Controller exposes interpreted worker response, not raw safe snapshot. |
+| Terminal output snapshot helper | implemented | done | `getTerminalOutputSnapshot()` exposes read-only screen / viewport / output tail without activate/send/bind side effects. |
 | Timing / performance marks | partially implemented | P1 | `createTaskTab()` returns timings. Other commands vary. |
 
 ## 5. Missing command一覧
@@ -203,9 +204,6 @@ P1 missing or partial:
 
 P2 missing:
 
-- `getTerminalOutputSnapshot(input)`
-  - Read-only raw-ish terminal snapshot with safe redaction and paneId selection.
-  - Purpose: diagnostics without direct helper imports.
 - `getVisibleStateSnapshot(input?)`
   - Read-only visible snapshot / element summary for visual sanity check.
   - Purpose: avoid Computer Use for basic UI state confirmation.
@@ -240,7 +238,6 @@ P1: 実運用で頻繁に使うが回避可能なもの。
 
 P2: 便利だが後回しでよいもの。
 
-- `getTerminalOutputSnapshot(input)`
 - `getVisibleStateSnapshot(input?)`
 - command timing helper。
 
@@ -262,11 +259,10 @@ Candidate 1: `prepareBrowserAiReady(input?)`
 - Worker bindingを要求しない。
 - Browser AI provider navigationを行う場合は明示inputに限定する。
 
-Candidate 2: `getTerminalOutputSnapshot(input)`
+Candidate 2: `getControllerCommandInventory()`
 
-- Worker output / pane状態をread-onlyで確認する。
-- `getWorkerInputReadiness(input?)`で足りないraw evidenceをsafeに補う。
-- shell / unknownはrecognized worker扱いしない。
+- Meta AI / Codexが現在のController surfaceをread-onlyで把握する。
+- UI探索前に使えるcommand一覧を返す。
 
 ## 8. やらないこと
 
@@ -307,24 +303,24 @@ Visual sanity checkは以下の場合に使う。
    - 種別: readiness / optional provider preparation。
    - リスク: medium-low。
 
-2. `getTerminalOutputSnapshot(input)`
-   - 理由: visual sanity check前のsafeなpane output確認をController pathにする。
-   - 種別: read-only diagnostics。
-   - リスク: medium-low。
-
-3. `getControllerCommandInventory()`
+2. `getControllerCommandInventory()`
    - 理由: Meta AI / Codexが現在のController surfaceをUI探索なしで把握できる。
    - 種別: read-only diagnostics。
    - リスク: low。
 
-4. `findTabByTitle(input)`
+3. `findTabByTitle(input)`
    - 理由: 日常的な「タスク管理アプリのタブへ戻って」をUI探索なしにする。
    - 種別: read-only tab lookup。
    - リスク: low。
 
-5. `sendTargetDocsReviewToBrowserAI(input)`
+4. `sendTargetDocsReviewToBrowserAI(input)`
    - 理由: Browser-AI-only target docs reviewを短いpromptで実行しやすくする。
    - 種別: Browser-AI-only send helper。
+   - リスク: medium-low。
+
+5. `getVisibleStateSnapshot(input?)`
+   - 理由: UI状態判断でtext logと画面表示が矛盾した時のvisual sanity checkをController pathに寄せる。
+   - 種別: read-only diagnostics。
    - リスク: medium-low。
 
 ## 11. 実装順の提案
@@ -333,10 +329,10 @@ Recommended S9.9 / S10 entry:
 
 1. `prepareBrowserAiReady(input?)`
    - Browser-AI-only用途でSupervisor readinessを使わずに済む。
-2. `getTerminalOutputSnapshot(input)`
-   - pane output確認をController pathへ寄せる。
-3. `getControllerCommandInventory()`
+2. `getControllerCommandInventory()`
    - Controller surfaceの自己発見をread-onlyで可能にする。
+3. `findTabByTitle(input)`
+   - tab名から既存tabへ戻るread-only lookupを追加する。
 
 Stop before implementation if any candidate expands into:
 

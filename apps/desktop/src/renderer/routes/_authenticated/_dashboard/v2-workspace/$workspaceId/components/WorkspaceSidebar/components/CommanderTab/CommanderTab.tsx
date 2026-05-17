@@ -559,6 +559,33 @@ interface CommanderControllerWorkerInputReadinessResult
 	message: string;
 }
 
+interface CommanderControllerTerminalOutputSnapshotInput {
+	paneId?: unknown;
+	workerPaneId?: unknown;
+	maxOutputChars?: unknown;
+}
+
+interface CommanderControllerTerminalOutputSnapshotResult
+	extends CommanderControllerCommandResult {
+	status: "READY" | "BLOCKED";
+	activeTabId: string | null;
+	paneId: string | null;
+	terminalId: string | null;
+	tabId: string | null;
+	paneType: string | null;
+	isActivePane: boolean;
+	isVisible: boolean;
+	screenText: string;
+	viewportText: string;
+	outputText: string;
+	outputTextLength: number;
+	outputTextTruncated: boolean;
+	maxOutputChars: number;
+	warnings: string[];
+	blockers: string[];
+	message: string;
+}
+
 interface CommanderControllerActivateWorkerPaneInput {
 	paneId?: unknown;
 	workerPaneId?: unknown;
@@ -976,6 +1003,9 @@ interface CommanderControllerCommands {
 	getWorkerInputReadiness: (
 		input?: CommanderControllerWorkerInputReadinessInput,
 	) => CommanderControllerWorkerInputReadinessResult;
+	getTerminalOutputSnapshot: (
+		input?: CommanderControllerTerminalOutputSnapshotInput,
+	) => CommanderControllerTerminalOutputSnapshotResult;
 	getSupervisorPilotReadiness: () => Promise<CommanderControllerSupervisorPilotReadinessResult>;
 	prepareSupervisorPilotReadiness: (
 		input?: CommanderControllerSupervisorPilotPrepareInput,
@@ -2448,6 +2478,90 @@ export function CommanderTab({
 			workerBinding,
 			workspaceId,
 		],
+	);
+
+	const getTerminalOutputSnapshotController = useCallback(
+		(
+			input?: CommanderControllerTerminalOutputSnapshotInput,
+		): CommanderControllerTerminalOutputSnapshotResult => {
+			const normalizedInput = normalizeTerminalOutputSnapshotInput(input);
+			const blockers: string[] = [];
+			const warnings: string[] = [];
+			const tabsState = useTabsStore.getState();
+			const activeTabIdSnapshot =
+				tabsState.activeTabIds[workspaceId] ?? activeTabId ?? null;
+			const activeFocusedPaneId = activeTabIdSnapshot
+				? tabsState.focusedPaneIds[activeTabIdSnapshot] ?? null
+				: null;
+			const requestedPaneId = normalizedInput.paneId ?? activeFocusedPaneId;
+			const pane = requestedPaneId ? tabsState.panes[requestedPaneId] : null;
+			const tab = pane
+				? tabsState.tabs.find((candidate) => candidate.id === pane.tabId) ??
+					null
+				: null;
+			const isTerminal = pane?.type === "terminal";
+			const terminalId = isTerminal ? getTerminalIdFromPane(pane) : null;
+			const snapshot = isTerminal ? getTerminalOutputSnapshot(pane.id) : null;
+			const rawOutputText = isTerminal ? getOutputLogSince(pane.id, 0) : "";
+			const outputTextLength = rawOutputText.length;
+			const outputTextTruncated =
+				outputTextLength > normalizedInput.maxOutputChars;
+			const outputText = outputTextTruncated
+				? normalizedInput.maxOutputChars > 0
+					? rawOutputText.slice(-normalizedInput.maxOutputChars)
+					: ""
+				: rawOutputText;
+			const screenText = snapshot?.screenText ?? "";
+			const viewportText = snapshot?.viewportText ?? "";
+
+			if (!workspaceId) blockers.push("workspace not found");
+			if (!activeTabIdSnapshot) warnings.push("active tab not found");
+			if (!requestedPaneId) blockers.push("terminal paneId not provided");
+			if (requestedPaneId && !pane) blockers.push("terminal pane not found");
+			if (pane && !isTerminal) blockers.push(`pane is not terminal: ${pane.type}`);
+			if (tab && workspaceId && tab.workspaceId !== workspaceId) {
+				blockers.push("terminal pane belongs to another workspace");
+			}
+			if (isTerminal && !snapshot) {
+				warnings.push("terminal output snapshot unavailable");
+			}
+			if (isTerminal && !screenText && !viewportText) {
+				warnings.push("terminal screen/viewport text is empty");
+			}
+			if (outputTextTruncated) {
+				warnings.push(
+					`terminal output was truncated to last ${normalizedInput.maxOutputChars} chars`,
+				);
+			}
+
+			const status: "READY" | "BLOCKED" =
+				blockers.length > 0 ? "BLOCKED" : "READY";
+			return {
+				ok: blockers.length === 0,
+				...getCommanderControllerContext(),
+				status,
+				activeTabId: activeTabIdSnapshot,
+				paneId: requestedPaneId,
+				terminalId,
+				tabId: pane?.tabId ?? null,
+				paneType: pane?.type ?? null,
+				isActivePane: requestedPaneId === activeFocusedPaneId,
+				isVisible: Boolean(pane && pane.tabId === activeTabIdSnapshot),
+				screenText,
+				viewportText,
+				outputText,
+				outputTextLength,
+				outputTextTruncated,
+				maxOutputChars: normalizedInput.maxOutputChars,
+				warnings,
+				blockers,
+				message:
+					status === "BLOCKED"
+						? `terminal output snapshot blocked: ${blockers[0] ?? "unknown"}`
+						: "terminal output snapshot read from local terminal cache",
+			};
+		},
+		[activeTabId, getCommanderControllerContext, workspaceId],
 	);
 
 	const bindWorkerToTabController = useCallback(
@@ -4605,6 +4719,7 @@ export function CommanderTab({
 			listRecognizedWorkers: listRecognizedWorkersController,
 			bindWorkerToTab: bindWorkerToTabController,
 			getWorkerInputReadiness: getWorkerInputReadinessController,
+			getTerminalOutputSnapshot: getTerminalOutputSnapshotController,
 			getSupervisorPilotReadiness: getSupervisorPilotReadinessController,
 			prepareSupervisorPilotReadiness:
 				prepareSupervisorPilotReadinessController,
@@ -4650,6 +4765,7 @@ export function CommanderTab({
 		listRecognizedWorkersController,
 		bindWorkerToTabController,
 		getWorkerInputReadinessController,
+		getTerminalOutputSnapshotController,
 		getSupervisorPilotReadinessController,
 		prepareSupervisorPilotReadinessController,
 		activateTerminalPaneForTabController,
@@ -8172,6 +8288,28 @@ function normalizeWorkerInputReadinessInput(
 				(record as CommanderControllerWorkerInputReadinessInput)
 					.requireRecognizedWorker,
 			) ?? true,
+	};
+}
+
+function normalizeTerminalOutputSnapshotInput(
+	input?: CommanderControllerTerminalOutputSnapshotInput,
+): {
+	paneId: string | null;
+	maxOutputChars: number;
+} {
+	const record = input && typeof input === "object" ? input : {};
+	const rawPaneId =
+		(record as CommanderControllerTerminalOutputSnapshotInput).paneId ??
+		(record as CommanderControllerTerminalOutputSnapshotInput).workerPaneId;
+	const rawMaxOutputChars = (record as CommanderControllerTerminalOutputSnapshotInput)
+		.maxOutputChars;
+	const maxOutputChars =
+		typeof rawMaxOutputChars === "number" && Number.isFinite(rawMaxOutputChars)
+			? Math.max(0, Math.min(Math.floor(rawMaxOutputChars), 50000))
+			: 12000;
+	return {
+		paneId: typeof rawPaneId === "string" ? rawPaneId.trim() || null : null,
+		maxOutputChars,
 	};
 }
 
