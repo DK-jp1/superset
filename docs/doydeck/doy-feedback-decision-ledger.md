@@ -96,8 +96,9 @@ Decision Ledgerは次回以降の判断ルールである。
 MVPではMarkdownで運用する。
 
 ```md
-## YYYY-MM-DD: short decision title
+## DR-YYYY-MM-DD-001: short decision title
 
+- id: DR-YYYY-MM-DD-001
 - date: YYYY-MM-DD
 - context:
   - task:
@@ -124,6 +125,8 @@ MVPではMarkdownで運用する。
 
 - `date`
   - 判断日。
+- `id`
+  - Handoff Ledgerやpromptから短く参照するためのDecision Record ID。
 - `context`
   - どのtask、Handoff、commit、ファイルに関係するか。
 - `Doy feedback`
@@ -229,7 +232,33 @@ Decision Ledger:
 両者は競合しない。Handoffが「この作業は今どうなっているか」を示し、
 Decision Ledgerが「Doyはこの種の判断をどう扱うか」を示す。
 
-## 10. 次フェーズ
+## 10. HandoffからDecision Recordを短く参照する運用
+
+Handoff Ledgerには、関連するDecision Recordを短く書く。
+
+例:
+
+```md
+Related Decision:
+- DR-2026-05-17-001: DoyDeck本体開発とsafe-dev検証を分離する
+```
+
+運用ルール:
+
+- Handoff本文に毎回長い前提を書きすぎない。
+- Browser AI / Workerへ送るpromptでは、必要な場合だけDecision Recordを短く参照する。
+- Decision Record本文を毎回丸ごとpromptに入れない。
+- Workerに必要なのは、判断全文ではなく、そのtaskで効く短いルールである。
+- 古いDecision Recordは見直し可能として扱う。
+- Decision Recordは最終判断ではなく、Doyの過去判断を再利用するための参照情報である。
+- 現在のtaskに合わないDecision Recordを無条件適用しない。
+
+この運用の最初の対象は、DoyDeck本体開発とsafe-dev検証を分離する判断である。
+Handoffでは `DR-2026-05-17-001` と短く参照し、必要な場合だけ
+「DoyDeck本体開発は外側環境で進め、safe-devは検証対象として扱う」という
+要約を添える。
+
+## 11. 次フェーズ
 
 Priority A: Markdown運用
 
@@ -241,6 +270,7 @@ Priority B: Handoff Ledger連携
 
 - Handoff Ledgerから関連Decisionへの短い参照を入れる。
 - Decision全文ではなく、必要なルールだけをHandoffへ出す。
+- 最初の参照例は `DR-2026-05-17-001` を使う。
 
 Priority C: Controller accessor化
 
@@ -262,7 +292,7 @@ Priority E: Browser AI / Worker promptへの安全な反映
 - Workerへは作業に必要なルールだけ渡す。
 - 全Decisionを毎回promptに入れない。
 
-## 11. 短いまとめ
+## 12. 短いまとめ
 
 Doy Feedback / Decision Ledgerは、Doyの違和感、採用判断、却下理由、次回からの
 ルールを残すための運用台帳である。
@@ -273,8 +303,9 @@ Controller accessor、UI化へ進める。
 
 ## Decision Records
 
-## 2026-05-17: DoyDeck本体開発とsafe-dev検証を分離する
+### DR-2026-05-17-001: DoyDeck本体開発とsafe-dev検証を分離する
 
+- id: DR-2026-05-17-001
 - date: 2026-05-17
 - context:
   - task: S8 safe-dev / Supervisor pilot運用方針

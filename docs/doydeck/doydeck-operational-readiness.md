@@ -113,7 +113,8 @@ pushを含む運用は、まだDoy確認ゲート付きpilot扱い。
   - `READY`判定は実用に近づいたが、completion signalの細部は継続改善余地あり。
 - Doy Feedback / Decision LedgerのHandoff連携
   - Markdown設計と初回Decision Recordは作成済み。
-  - Handoff LedgerからDecision Recordへの短い参照は未運用。
+  - Handoff LedgerからDecision Recordへの短い参照ルールはdocs-onlyで運用開始。
+  - Controller自動反映は未実装。
 
 ## 5. 絶対停止条件
 
@@ -186,6 +187,13 @@ Priority A: Handoff LedgerからDecision Recordへの短い参照を置く運用
 
 - Decision Ledger全文ではなく、関連Decisionの短い要約だけをHandoffへ出す。
 - DoyDeck本体開発とsafe-dev検証分離のDecision Recordを最初の題材にする。
+- 参照例:
+  - `Related Decision:`
+  - `DR-2026-05-17-001: DoyDeck本体開発とsafe-dev検証を分離する`
+- Browser AI / Worker promptへは、必要な場合だけ短いDecision Record参照を入れる。
+- Decision Record本文は毎回丸ごとpromptに入れない。
+- 古いDecision Recordは見直し可能であり、Doyの最終判断を代替しない。
+- この運用はdocs-onlyのルールとして開始し、DB / Controller accessor / UI化は後回しにする。
 
 Priority B: 低リスクdocsタスクをもう1件実運用
 
