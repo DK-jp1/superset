@@ -5152,29 +5152,25 @@ function evaluateBoundWorkerInputReadiness(params: {
 
 	const snapshot = getTerminalOutputSnapshot(paneId);
 	const outputLogText = getOutputLogSince(paneId, 0);
-	const visibleText = normalizeWorkerOutputText(
-		[
-			snapshot?.screenText ?? "",
-			snapshot?.viewportText ?? "",
-			snapshot?.outputText ?? "",
-			snapshot?.text ?? "",
-			outputLogText ? outputLogText.slice(-6000) : "",
-		]
-			.filter(Boolean)
-			.join("\n"),
+	const currentUiText = normalizeWorkerOutputText(
+		snapshot?.viewportText ||
+			snapshot?.screenText ||
+			snapshot?.text ||
+			(outputLogText ? outputLogText.slice(-6000) : ""),
 	);
-	const lines = visibleText
+	const currentUiLines = currentUiText
 		.split("\n")
 		.map((line) => line.replace(/\s+/g, " ").trim())
 		.filter(Boolean);
-	const tailLines = lines.slice(-48);
+	const tailLines = currentUiLines.slice(-48);
+	const bottomLines = tailLines.slice(-12);
 	const tailText = tailLines.join("\n");
 	const workerInputBlockers: string[] = [];
 	const workerInputWarnings: string[] = [];
 	const findTailLine = (pattern: RegExp): string | null =>
-		tailLines.find((line) => pattern.test(line)) ?? null;
+		bottomLines.find((line) => pattern.test(line)) ?? null;
 
-	if (!visibleText) {
+	if (!currentUiText) {
 		workerInputBlockers.push(
 			"claude worker input readiness could not be inspected",
 		);
@@ -5218,15 +5214,24 @@ function evaluateBoundWorkerInputReadiness(params: {
 	}
 
 	const promptResidueLine =
-		tailLines.find(
-			(line) =>
-				/^[❯>]\s+\S/.test(line) ||
-				(/\bS[789]_[A-Za-z0-9_]*\b/.test(line) &&
+		[...tailLines]
+			.reverse()
+			.find((line) => /^[❯>](?:\s|$)/.test(line)) ?? null;
+	const activePromptHasResidue = Boolean(
+		promptResidueLine &&
+			(/^[❯>]\s+\S/.test(promptResidueLine) ||
+				(/\bS[789]_[A-Za-z0-9_]*\b/.test(promptResidueLine) &&
 					/(?:返信してください|返答してください|報告してください|確認してください|含めてください|commit\/push|必要なら|完了したら)/.test(
-						line,
-					)),
-		) ?? null;
-	if (promptResidueLine) {
+						promptResidueLine,
+					))),
+	);
+	const historicalPromptResidueLine =
+		!activePromptHasResidue && promptResidueLine
+			? tailLines
+					.slice(0, Math.max(tailLines.lastIndexOf(promptResidueLine), 0))
+					.find((line) => /^[❯>]\s+\S/.test(line)) ?? null
+			: null;
+	if (activePromptHasResidue && promptResidueLine) {
 		workerInputBlockers.push(
 			"claude input appears to contain unsent prompt residue",
 		);
@@ -5238,18 +5243,27 @@ function evaluateBoundWorkerInputReadiness(params: {
 			workerUiStateReason: `Claude input residue visible: ${promptResidueLine}`,
 		};
 	}
+	if (historicalPromptResidueLine) {
+		workerInputWarnings.push(
+			`historical prompt echo ignored: ${historicalPromptResidueLine}`,
+		);
+	}
 
-	const readyPromptLine = findTailLine(
-		/^(?:❯|>|⏵⏵\s*bypass\s*permissions\s*on\b|⏵⏵bypasspermissionson\b)/i,
-	);
-	const recapLine = findTailLine(/※\s*recap:|\(disable recaps in \/config\)/i);
+	const readyPromptLine =
+		promptResidueLine && /^[❯>]\s*$/.test(promptResidueLine)
+			? promptResidueLine
+			: null;
+	const recapLine =
+		tailLines.find((line) =>
+			/※\s*recap:|\(disable recaps in \/config\)/i.test(line),
+		) ?? null;
 	const visibleAckMarkers = extractWorkerAckMarkersFromInstruction(tailText);
 	if (recapLine) {
 		workerInputWarnings.push(`claude recap is visible: ${recapLine}`);
 	}
 	if (visibleAckMarkers.length > 0) {
 		workerInputWarnings.push(
-			`claude pane contains stale ack marker: ${visibleAckMarkers.at(-1)}`,
+			`claude pane contains historical/stale ack marker outside current input: ${visibleAckMarkers.at(-1)}`,
 		);
 	}
 
@@ -5278,15 +5292,11 @@ function evaluateBoundWorkerInputReadiness(params: {
 	}
 
 	return {
-		workerUiState: recapLine
-			? "recap-visible"
-			: visibleAckMarkers.length > 0
-				? "stale-marker-only"
-				: "ready-for-input",
+		workerUiState: "ready-for-input",
 		workerInputReady: true,
 		workerInputBlockers,
 		workerInputWarnings,
-		workerUiStateReason: `Claude ready prompt visible: ${readyPromptLine}`,
+		workerUiStateReason: `Claude current input line appears empty: ${readyPromptLine}`,
 	};
 }
 
@@ -6484,18 +6494,34 @@ function detectWorkerAckMarker({
 
 function extractWorkerAckMarkersFromInstruction(instruction: string): string[] {
 	const markers = new Set<string>();
+	const candidates = [
+		instruction,
+		instruction.replace(/([A-Za-z0-9])\n\s*(_[A-Za-z0-9])/g, "$1$2"),
+	];
 	const patterns = [
 		/\bS[789]_[A-Za-z0-9_]*\b/g,
 		/\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*(?:SAFE|NOOP)_ACK(?:_[A-Za-z0-9]+)*\b/gi,
 		/\b[A-Za-z0-9]{8,}(?:_[A-Za-z0-9]{3,}){2,}\b/g,
 	];
-	for (const pattern of patterns) {
-		for (const match of instruction.matchAll(pattern)) {
-			const marker = match[0]?.trim();
-			if (marker && marker.length >= 8) markers.add(marker);
+	for (const candidate of candidates) {
+		for (const pattern of patterns) {
+			for (const match of candidate.matchAll(pattern)) {
+				const marker = match[0]?.trim();
+				if (marker && marker.length >= 8) markers.add(marker);
+			}
 		}
 	}
-	return [...markers];
+	const sortedMarkers = [...markers].sort((a, b) => b.length - a.length);
+	return sortedMarkers.filter(
+		(marker, index) =>
+			!sortedMarkers
+				.slice(0, index)
+				.some(
+					(longerMarker) =>
+						longerMarker.length > marker.length &&
+						includesAckMarker(longerMarker, marker),
+				),
+	);
 }
 
 function includesAckMarker(text: string, marker: string): boolean {
@@ -6995,8 +7021,10 @@ function applySupervisorWorkerCandidateToPreflight(
 	const filteredWarnings = preflight.warnings.filter(
 		(warning) =>
 			![
+				"historical prompt echo ignored",
 				"claude recap is visible",
 				"claude pane contains stale ack marker",
+				"claude pane contains historical/stale ack marker",
 			].some((workerWarning) => warning.includes(workerWarning)),
 	);
 	const workerInputReadiness = evaluateBoundWorkerInputReadiness({
