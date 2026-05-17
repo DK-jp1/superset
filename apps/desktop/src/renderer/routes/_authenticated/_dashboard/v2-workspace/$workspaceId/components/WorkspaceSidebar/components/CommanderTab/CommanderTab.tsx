@@ -6191,14 +6191,15 @@ function detectBoundWorkerCompletionSignal(text: string): {
 } {
 	const completionPatterns: Array<[RegExp, string]> = [
 		[/<<<DOYDECK_WORKER_RESPONSE_START>>>/i, "response envelope start detected"],
-		[/^(?:#{1,4}\s*)?完了報告(?:\s|$|[:：])/m, "completion report heading detected"],
-		[/^(?:[-*•・]\s*)?(?:#{1,4}\s*)?実施内容(?:\s|$|[:：])/m, "completion section detected: 実施内容"],
-		[/^(?:[-*•・]\s*)?(?:#{1,4}\s*)?変更ファイル(?:\s|$|[:：])/m, "completion section detected: 変更ファイル"],
-		[/^(?:[-*•・]\s*)?(?:#{1,4}\s*)?確認結果(?:\s|$|[:：])/m, "completion section detected: 確認結果"],
-		[/^(?:[-*•・]\s*)?(?:#{1,4}\s*)?git diff --check\s*(?:結果)?\s*[:：]?\s*(?:PASS|成功|通過)?\b/im, "git diff --check result detected"],
-		[/^(?:[-*•・]\s*)?(?:#{1,4}\s*)?typecheck\s*(?:結果)?\s*[:：]?\s*(?:PASS|成功|通過|未実施)?\b/im, "typecheck result section detected"],
-		[/^(?:[-*•・]\s*)?(?:#{1,4}\s*)?git status --short\b/im, "git status section detected"],
-		[/^(?:[-*•・]\s*)?(?:#{1,4}\s*)?未解決(?:\s*\/\s*次にやるなら)?(?:\s|$|[:：])/m, "unresolved/next section detected"],
+		[/^\s*(?:#{1,4}\s*)?完了報告(?:\s|$|[:：])/m, "completion report heading detected"],
+		[/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?実施内容(?:\s|$|[:：])/m, "completion section detected: 実施内容"],
+		[/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?変更ファイル(?:\s|$|[:：])/m, "completion section detected: 変更ファイル"],
+		[/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?変更有無\s*[:：]\s*(?:なし|無し|none|no changes?)/im, "no-change report section detected: 変更有無"],
+		[/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?確認結果(?:\s|$|[:：])/m, "completion section detected: 確認結果"],
+		[/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?git diff --check\s*(?:結果)?\s*[:：]?\s*(?:PASS|成功|通過)?\b/im, "git diff --check result detected"],
+		[/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?typecheck\s*(?:結果)?\s*[:：]?\s*(?:PASS|成功|通過|未実施)?\b/im, "typecheck result section detected"],
+		[/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?git status --short\b/im, "git status section detected"],
+		[/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?未解決(?:\s*\/\s*次にやるなら)?(?:\s|$|[:：])/m, "unresolved/next section detected"],
 		[/\bWorked for\b.+/i, "Codex worked-for summary detected"],
 		[/docs-only(?:\s+変更|\s+change)?.*(?:完了|completed|done)/i, "docs-only completion detected"],
 		[/commit\/push(?:は|を)?していません/, "commit/push not performed report detected"],
@@ -6253,6 +6254,9 @@ function collectBoundWorkerCompletionEvidence(text: string): {
 	}
 	if (lineMatches(/(?:編集|修正|追加修正|変更)(?:は|を)?(?:していません|なし|無し|不要)/)) {
 		addEvidence("no edit needed", true);
+	}
+	if (lineMatches(/^変更有無\s*[:：]\s*(?:なし|無し|none|no changes?)/i)) {
+		addEvidence("no changes reported", true);
 	}
 	if (lineMatches(/^変更ファイル\s*[:：]\s*(?:なし|無し|none|no changes?)$/i)) {
 		addEvidence("no changed files", true);
