@@ -453,6 +453,7 @@ export function generateWorkSessionLedgerMarkdown({
 - Browser AI review result: ${recordedOutcome.latestBrowserAiReviewStatus || "未取得"}
 - Worker response result: ${recordedOutcome.latestWorkerResponseStatus || "未取得"}
 - Worker response returned to Browser AI: ${recordedOutcome.workerResponseReturnedToBrowserAi || "未取得"}
+- Browser-AI-only: ${recordedOutcome.browserAiOnly || "false"}
 - STOP / 次のCodex指示不要: ${recordedOutcome.hasStopSignal === "true" ? recordedOutcome.extractedStopSignal || "true" : "false"}
 - Codex instruction: ${recordedOutcome.hasCodexInstruction || "false"}
 - Doy confirmation: ${recordedOutcome.hasDoyConfirmationItems || "false"}
@@ -461,6 +462,7 @@ export function generateWorkSessionLedgerMarkdown({
 - recorded workerIdentityOk: ${recordedOutcome.workerIdentityOk || "未取得"}
 - Auto Loop at record time: ${recordedOutcome.autoLoop || "未取得"}
 - completedAt / recordedAt: ${recordedOutcome.completedAt || "未取得"}
+${recordedOutcome.notes ? `- notes: ${recordedOutcome.notes}` : ""}
 `
 		: "";
 	const liveWarnings = [
@@ -627,6 +629,7 @@ function sanitizeHandoffLedgerFileName(value: string): string {
 }
 
 interface RecordedControllerChainOutcome {
+	browserAiOnly: string;
 	browserAiProvider: string;
 	workerType: string;
 	workerIdentityOk: string;
@@ -642,6 +645,7 @@ interface RecordedControllerChainOutcome {
 	extractedStopSignal: string;
 	extractedCodexInstructionSummary: string;
 	extractedDoyConfirmationItems: string;
+	notes: string;
 	autoLoop: string;
 	completedAt: string;
 }
@@ -666,6 +670,7 @@ function extractLatestControllerChainOutcome(
 		return match?.[1]?.trim() ?? "";
 	};
 	return {
+		browserAiOnly: readLine("browserAiOnly"),
 		browserAiProvider: readLine("browserAiProvider"),
 		workerType: readLine("workerType"),
 		workerIdentityOk: readLine("workerIdentityOk"),
@@ -685,6 +690,7 @@ function extractLatestControllerChainOutcome(
 			"extractedCodexInstructionSummary",
 		),
 		extractedDoyConfirmationItems: readLine("extractedDoyConfirmationItems"),
+		notes: readLine("notes"),
 		autoLoop: readLine("autoLoop"),
 		completedAt: readLine("completedAt"),
 	};

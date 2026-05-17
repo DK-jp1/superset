@@ -106,8 +106,10 @@ pushを含む運用は、まだDoy確認ゲート付きpilot扱い。
 - Claude Codeの長文実作業
   - no-op、短いdocs-only、S8.8-Bの小さいdocs pilotは通った。
   - 長文promptや長時間実作業は継続監視。
-- Browser-AI-only lightweight preflight
-  - Worker不要のレビュー/要件整理だけを軽量に回す導線は未整備。
+- Browser-AI-only docs本文レビュー
+  - `getBrowserAiPreflight()`でWorker不要のレビュー/要件整理だけを軽量に確認できるようになった。
+  - S9.1-BではHandoff上の要件整理レビュー、STOP分類、Browser-AI-only outcome記録まで通った。
+  - 対象docs本文をBrowser AIへ渡して内容レビューする運用は次のpilot対象。
 - paneId指定activate accessor
   - 非表示 / 非mount状態のterminal paneを明示activateするController accessorは未実装。
 - completionDetected細部改善
@@ -210,9 +212,16 @@ batch運用でも、commitは意味単位で分け、pushはDoy確認で止め�
 
 ## 8. 次にやるべき最小タスク
 
-Priority A: Handoff LedgerからDecision Recordへの短い参照を置く運用テスト
+Priority A: Target docs attached Browser-AI-only readiness review
 
-- Decision Ledger全文ではなく、関連Decisionの短い要約だけをHandoffへ出す。
+- S9.1-BでBrowser-AI-only Handoffレビューは通った。
+- 次は対象docs本文をBrowser AIに渡したうえで、実運用OK範囲とS9中規模実装pilot入口条件を確認する。
+- Workerは使わず、`getBrowserAiPreflight()`、Handoff送信、latest reply取得、Browser-AI-only outcome記録だけで回す。
+
+Priority B: Handoff LedgerからDecision Recordへの短い参照を置く運用の継続
+
+- S9.1-Bで `DR-2026-05-17-001` の短参照をHandoffに載せ、Outcome記録後のHandoff Ledgerにも残せることを確認した。
+- 今後もDecision Ledger全文ではなく、関連Decisionの短い要約だけをHandoffへ出す。
 - DoyDeck本体開発とsafe-dev検証分離のDecision Recordを最初の題材にする。
 - 参照例:
   - `Related Decision:`
@@ -220,17 +229,12 @@ Priority A: Handoff LedgerからDecision Recordへの短い参照を置く運用
 - Browser AI / Worker promptへは、必要な場合だけ短いDecision Record参照を入れる。
 - Decision Record本文は毎回丸ごとpromptに入れない。
 - 古いDecision Recordは見直し可能であり、Doyの最終判断を代替しない。
-- この運用はdocs-onlyのルールとして開始し、DB / Controller accessor / UI化は後回しにする。
+- この運用はdocs-onlyのルールとして開始済み。DB / Controller accessor / UI化は後回しにする。
 
-Priority B: 低リスクdocsタスクをもう1件実運用
+Priority C: 低リスクdocsタスクをもう1件実運用
 
 - CodexまたはClaude Codeで、小さいdocs整理をもう1件回す。
 - Doy確認事項なし、STOP、Outcome記録まで通るか見る。
-
-Priority C: Browser-AI-only lightweight preflight
-
-- Worker不要のレビュー/壁打ち/要件整理を軽く回す。
-- Browser AI provider、slot、composer、latest reply、last submissionだけを見る。
 
 Priority D: paneId指定activate accessor
 

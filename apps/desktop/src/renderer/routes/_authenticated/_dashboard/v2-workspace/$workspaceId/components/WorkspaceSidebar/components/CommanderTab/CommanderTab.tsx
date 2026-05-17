@@ -116,6 +116,7 @@ type CommanderControllerChainRecordStatus =
 	| "FAILED";
 
 interface CommanderControllerChainOutcomeInput {
+	browserAiOnly?: unknown;
 	chainStatus?: unknown;
 	workerResponseReturnedToBrowserAi?: unknown;
 	finalDecision?: unknown;
@@ -298,6 +299,7 @@ interface CommanderControllerChainSummaryResult
 	extends CommanderControllerCommandResult {
 	status: "READY" | "BLOCKED" | "FAILED";
 	activeTabId: string | null;
+	browserAiOnly: boolean;
 	chainStatus: CommanderControllerChainStatus;
 	browserAiProvider: string;
 	workerType: string;
@@ -2887,40 +2889,55 @@ export function CommanderTab({
 		async (
 			input?: CommanderControllerChainOutcomeInput,
 		): Promise<CommanderControllerChainSummaryResult> => {
+			const browserAiOnly =
+				normalizeControllerBooleanInput(input?.browserAiOnly) ?? false;
 			const completedAt =
 				normalizeControllerIsoDateInput(input?.completedAt) ??
 				new Date().toISOString();
-			const preflight = await getAutoLoopPreflightController();
+			const preflight = browserAiOnly
+				? await getBrowserAiPreflightController()
+				: await getAutoLoopPreflightController();
 			const latestReply = await readBrowserAiLatestReplyController();
-			const workerResponse = await readBoundWorkerLatestResponseController();
+			const workerResponse = browserAiOnly
+				? null
+				: await readBoundWorkerLatestResponseController();
 			const lastSubmission = lastBrowserAiSubmissionRef.current;
 			const blockers: string[] = [];
 			const warnings: string[] = [
 				...preflight.warnings.map((warning) => `preflight: ${warning}`),
 				...latestReply.warnings.map((warning) => `browser ai: ${warning}`),
-				...workerResponse.warnings.map(
+				...(workerResponse?.warnings ?? []).map(
 					(warning) => `worker response: ${warning}`,
 				),
 			];
 
 			if (!preflight.activeTabId) blockers.push("active tab not found");
+			if (browserAiOnly && preflight.status === "BLOCKED") {
+				blockers.push(...preflight.blockers);
+			}
 			if (latestReply.status !== "READY") {
 				blockers.push(`browser ai review reply not ready: ${latestReply.status}`);
 			}
-			if (workerResponse.status !== "READY") {
-				blockers.push(`bound worker response not ready: ${workerResponse.status}`);
-			}
-			if (!workerResponse.workerIdentityOk) {
-				blockers.push("bound worker identity could not be verified");
+			if (!browserAiOnly) {
+				if (workerResponse?.status !== "READY") {
+					blockers.push(
+						`bound worker response not ready: ${workerResponse?.status ?? "FAILED"}`,
+					);
+				}
+				if (!workerResponse?.workerIdentityOk) {
+					blockers.push("bound worker identity could not be verified");
+				}
 			}
 			const requestedWorkerResponseReturned =
 				normalizeControllerBooleanInput(input?.workerResponseReturnedToBrowserAi);
 			const workerResponseReturnedToBrowserAi =
 				requestedWorkerResponseReturned ??
-				(lastSubmission?.type === "worker-response" &&
-					lastSubmission.status === "SENT" &&
-					lastSubmission.injectionResult === "submitted");
-			if (!workerResponseReturnedToBrowserAi) {
+				(browserAiOnly
+					? false
+					: lastSubmission?.type === "worker-response" &&
+						lastSubmission.status === "SENT" &&
+						lastSubmission.injectionResult === "submitted");
+			if (!browserAiOnly && !workerResponseReturnedToBrowserAi) {
 				warnings.push(
 					"latest worker-response submission tracking is unavailable or not SENT",
 				);
@@ -2934,12 +2951,14 @@ export function CommanderTab({
 			}
 
 			const requestedStatus = normalizeControllerChainStatus(input?.chainStatus);
+			const latestWorkerResponseStatus: CommanderControllerBoundWorkerOutputStatus =
+				browserAiOnly ? "READY" : (workerResponse?.status ?? "FAILED");
 			const chainStatus =
 				requestedStatus ??
 				inferControllerChainStatus({
 					blockers,
 					latestReplyStatus: latestReply.status,
-					workerResponseStatus: workerResponse.status,
+					workerResponseStatus: latestWorkerResponseStatus,
 					hasStopSignal: latestReply.hasStopSignal,
 				});
 			const extractedCodexInstructionSummary = summarizeControllerOutcomeText(
@@ -2975,13 +2994,18 @@ export function CommanderTab({
 				...getCommanderControllerContext(),
 				status,
 				activeTabId: preflight.activeTabId,
+				browserAiOnly,
 				chainStatus,
 				browserAiProvider:
 					latestReply.browserAiProvider || preflight.browserAiProvider,
-				workerType: workerResponse.workerType || preflight.workerType,
-				workerIdentityOk: workerResponse.workerIdentityOk,
+				workerType: browserAiOnly
+					? "not-required"
+					: workerResponse?.workerType || "unknown",
+				workerIdentityOk: browserAiOnly
+					? true
+					: (workerResponse?.workerIdentityOk ?? false),
 				latestBrowserAiReviewStatus: latestReply.status,
-				latestWorkerResponseStatus: workerResponse.status,
+				latestWorkerResponseStatus,
 				workerResponseReturnedToBrowserAi,
 				hasStopSignal: latestReply.hasStopSignal,
 				hasCodexInstruction: latestReply.hasCodexInstruction,
@@ -3002,19 +3026,28 @@ export function CommanderTab({
 				preflightWarnings: preflight.warnings,
 				browserAiLatestReplyLength: latestReply.latestReplyLength,
 				browserAiLatestReplyFingerprint: latestReply.latestReplyFingerprint,
-				workerLatestResponseLength: workerResponse.latestResponseLength,
+				workerLatestResponseLength: workerResponse?.latestResponseLength ?? 0,
 				lastSubmissionType: lastSubmission?.type ?? null,
 				lastSubmissionStatus: lastSubmission?.status ?? null,
 				lastSubmissionInjectionResult: lastSubmission?.injectionResult ?? null,
-				autoLoopMode: preflight.autoLoopMode,
-				autoLoopPhase: preflight.autoLoopPhase,
+				autoLoopMode:
+					!browserAiOnly && "autoLoopMode" in preflight
+						? preflight.autoLoopMode
+						: autoRelayMode,
+				autoLoopPhase:
+					!browserAiOnly && "autoLoopPhase" in preflight
+						? preflight.autoLoopPhase
+						: transfer.autoLoopPhase,
 			};
 		},
 		[
+			autoRelayMode,
 			getAutoLoopPreflightController,
+			getBrowserAiPreflightController,
 			getCommanderControllerContext,
 			readBrowserAiLatestReplyController,
 			readBoundWorkerLatestResponseController,
+			transfer.autoLoopPhase,
 		],
 	);
 
@@ -3516,6 +3549,7 @@ function formatControllerChainOutcomeForSession(
 		: "none";
 	return [
 		`- activeTabId: ${summary.activeTabId || "unknown"}`,
+		`- browserAiOnly: ${summary.browserAiOnly}`,
 		`- chainStatus: ${summary.chainStatus}`,
 		`- browserAiProvider: ${summary.browserAiProvider}`,
 		`- workerType: ${summary.workerType}`,

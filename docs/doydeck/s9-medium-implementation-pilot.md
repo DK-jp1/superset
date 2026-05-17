@@ -213,10 +213,11 @@ smokeで確認できなかったことは、完了報告に明記する。
    - 期待効果: 新規Worker起動を避け、既存recognized workerを使いやすくする。
    - 注意: terminal基盤の大改造に広げない。
 
-2. Browser-AI-only lightweight preflight
+2. Browser-AI-only lightweight preflight / docs本文レビュー
    - 目的: Worker不要のレビュー、壁打ち、要件整理だけを軽く確認する。
    - 期待効果: Browser AI ready / slot / composer / latest reply / last submissionの切り分けを簡単にする。
-   - 注意: Auto Loop代替にしない。
+   - 状態: S9.1で `getBrowserAiPreflight()` を追加し、S9.1-BでHandoffレビュー、STOP分類、Browser-AI-only outcome記録まで確認した。
+   - 次の注意: 対象docs本文をBrowser AIに渡した内容レビューは次pilotで確認する。Auto Loop代替にはしない。
 
 3. completionDetected細部改善
    - 目的: Worker responseがREADYでも`completionDetected:false`になる細部を減らす。
@@ -235,15 +236,17 @@ smokeで確認できなかったことは、完了報告に明記する。
 
 ## 11. S9.1で最初にやるべきpilot候補
 
-最初のS9.1候補は、Browser-AI-only lightweight preflightを推奨する。
+S9.1では、Browser-AI-only lightweight preflightを実装し、Worker不要のHandoffレビューpilotを確認した。
 
 理由:
 
 - Worker送信やterminal基盤に触らず、blast radiusが比較的小さい。
-- S8で残っている実用上の切り分け課題に直結する。
 - Browser AI provider、slot、composer、latest reply、last submissionの状態確認に限定できる。
-- Auto Loop本体を改造しなくてよい。
-- smokeが明確で、READY / READY_WITH_NOTES / BLOCKEDを判定しやすい。
+- Auto Loop本体を改造せず、Worker binding requiredをBrowser-AI-only用途のblockerにしない。
+- S9.1-Bでは、Browser AI reply `READY`、`次のWorker指示は不要`、Doy確認事項なし、Browser-AI-only outcome記録まで通った。
+
+S9.2で安全に進める候補は、Target docs attached Browser-AI-only readiness review。
+Handoffだけでなく対象docs本文をBrowser AIに渡し、実運用OK範囲と中規模実装pilotの入口条件を確認する。
 
 次点は、paneId指定で既存terminal paneを表示 / activateするController accessor。
 これはClaude Code chainの運用改善に効くが、terminal pane表示やmount状態に関わるため、
