@@ -104,6 +104,42 @@ interface CommanderControllerHandoffResult
 	session?: CommanderSession;
 }
 
+type CommanderControllerCreateTaskTabStatus =
+	| "CREATED"
+	| "DRY_RUN"
+	| "BLOCKED"
+	| "FAILED";
+
+interface CommanderControllerCreateTaskTabInput {
+	title?: unknown;
+	dryRun?: unknown;
+}
+
+interface CommanderControllerCreateTaskTabResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerCreateTaskTabStatus;
+	requestedTitle: string | null;
+	resolvedTitle: string;
+	activeTabIdBefore: string | null;
+	activeTabIdAfter: string | null;
+	paneId: string | null;
+	tabFound: boolean;
+	tabVisible: boolean;
+	tabCountBefore: number;
+	tabCountAfter: number;
+	timingsMs: {
+		tabObjectCreated: number | null;
+		titleApplied: number | null;
+		stateReflected: number | null;
+		uiVisibleChecked: number | null;
+		total: number;
+	};
+	heavyInitializationSkipped: string[];
+	blockers: string[];
+	warnings: string[];
+	nextRequiredAction: string;
+}
+
 type CommanderControllerChainStatus =
 	| "PASS"
 	| "STOP"
@@ -713,6 +749,12 @@ interface CommanderControllerCommands {
 	version: "0.1";
 	workspaceId: string;
 	getActiveTabId: () => string | null;
+	createTaskTab: (
+		input?: CommanderControllerCreateTaskTabInput,
+	) => Promise<CommanderControllerCreateTaskTabResult>;
+	createWorkspaceTaskTab: (
+		input?: CommanderControllerCreateTaskTabInput,
+	) => Promise<CommanderControllerCreateTaskTabResult>;
 	getCommanderSession: () => CommanderControllerSessionResult;
 	setCommanderSession: (
 		input: CommanderControllerSessionInput,
@@ -1179,6 +1221,142 @@ export function CommanderTab({
 			};
 		},
 		[getCommanderControllerContext, handleSessionApplied],
+	);
+
+	const createTaskTabController = useCallback(
+		async (
+			input: CommanderControllerCreateTaskTabInput = {},
+		): Promise<CommanderControllerCreateTaskTabResult> => {
+			const startedAt = performance.now();
+			const mark = () => Number((performance.now() - startedAt).toFixed(1));
+			const timingsMs: CommanderControllerCreateTaskTabResult["timingsMs"] = {
+				tabObjectCreated: null,
+				titleApplied: null,
+				stateReflected: null,
+				uiVisibleChecked: null,
+				total: 0,
+			};
+			const heavyInitializationSkipped = [
+				"browser-ai-slot-readiness",
+				"worker-candidate-scan",
+				"worker-binding",
+				"handoff-ledger-build",
+				"auto-loop-preflight",
+			];
+			const tabsStateBefore = useTabsStore.getState();
+			const activeTabIdBefore =
+				tabsStateBefore.activeTabIds[workspaceId] ?? activeTabId ?? null;
+			const tabCountBefore = tabsStateBefore.tabs.length;
+			const rawTitle = typeof input?.title === "string" ? input.title.trim() : "";
+			const resolvedTitle = rawTitle || "New Task";
+			const dryRun = input?.dryRun === true;
+			if (dryRun) {
+				timingsMs.total = mark();
+				return {
+					ok: true,
+					workspaceId,
+					tabId: activeTabIdBefore,
+					status: "DRY_RUN",
+					requestedTitle: rawTitle || null,
+					resolvedTitle,
+					activeTabIdBefore,
+					activeTabIdAfter: activeTabIdBefore,
+					paneId: null,
+					tabFound: false,
+					tabVisible: false,
+					tabCountBefore,
+					tabCountAfter: tabCountBefore,
+					timingsMs,
+					heavyInitializationSkipped,
+					blockers: [],
+					warnings: [
+						"dryRun:true; no tab was created",
+						"surrounding initialization is intentionally excluded from tab creation",
+					],
+					nextRequiredAction:
+						"Call createTaskTab({ dryRun:false }) to create and show the tab. Run Browser AI or worker readiness separately if needed.",
+				};
+			}
+
+			try {
+				const created = tabsStateBefore.addTab(workspaceId);
+				timingsMs.tabObjectCreated = mark();
+				tabsStateBefore.renameTab(created.tabId, resolvedTitle);
+				timingsMs.titleApplied = mark();
+				tabsStateBefore.setActiveTab(workspaceId, created.tabId);
+				await delay(0);
+				timingsMs.stateReflected = mark();
+
+				const tabsStateAfter = useTabsStore.getState();
+				const createdTab = tabsStateAfter.tabs.find(
+					(tab) => tab.id === created.tabId,
+				);
+				const activeTabIdAfter =
+					tabsStateAfter.activeTabIds[workspaceId] ?? null;
+				const visibleText = document.body?.innerText ?? "";
+				const tabVisible =
+					visibleText.includes(resolvedTitle) ||
+					(createdTab?.name ? visibleText.includes(createdTab.name) : false);
+				timingsMs.uiVisibleChecked = mark();
+				timingsMs.total = mark();
+
+				const warnings: string[] = [
+					"surrounding initialization skipped; Browser AI, worker binding, Handoff Ledger, and Auto Loop preflight remain explicit follow-up steps",
+				];
+				if (!tabVisible) {
+					warnings.push(
+						"created tab was not found in the visible document text during the immediate UI check",
+					);
+				}
+
+				return {
+					ok: true,
+					workspaceId,
+					tabId: created.tabId,
+					status: "CREATED",
+					requestedTitle: rawTitle || null,
+					resolvedTitle,
+					activeTabIdBefore,
+					activeTabIdAfter,
+					paneId: created.paneId,
+					tabFound: Boolean(createdTab),
+					tabVisible,
+					tabCountBefore,
+					tabCountAfter: tabsStateAfter.tabs.length,
+					timingsMs,
+					heavyInitializationSkipped,
+					blockers: [],
+					warnings,
+					nextRequiredAction:
+						"Tab is visible/active. Run getBrowserAiPreflight(), getSupervisorPilotReadiness(), or buildHandoffLedger() only when the task needs those surrounding systems.",
+				};
+			} catch (error) {
+				timingsMs.total = mark();
+				return {
+					ok: false,
+					workspaceId,
+					tabId: activeTabIdBefore,
+					status: "FAILED",
+					requestedTitle: rawTitle || null,
+					resolvedTitle,
+					activeTabIdBefore,
+					activeTabIdAfter: useTabsStore.getState().activeTabIds[workspaceId] ?? null,
+					paneId: null,
+					tabFound: false,
+					tabVisible: false,
+					tabCountBefore,
+					tabCountAfter: useTabsStore.getState().tabs.length,
+					timingsMs,
+					heavyInitializationSkipped,
+					blockers: ["tab creation failed"],
+					warnings: [],
+					reason: error instanceof Error ? error.message : String(error),
+					nextRequiredAction:
+						"Inspect the tabs store and UI state before retrying tab creation.",
+				};
+			}
+		},
+		[activeTabId, workspaceId],
 	);
 
 	const buildHandoffLedgerController =
@@ -3451,6 +3629,8 @@ export function CommanderTab({
 			version: "0.1",
 			workspaceId,
 			getActiveTabId: () => activeTabId,
+			createTaskTab: createTaskTabController,
+			createWorkspaceTaskTab: createTaskTabController,
 			getCommanderSession: getCommanderSessionControllerResult,
 			setCommanderSession: setCommanderSessionController,
 			buildHandoffLedger: buildHandoffLedgerController,
@@ -3490,6 +3670,7 @@ export function CommanderTab({
 	}, [
 		workspaceId,
 		activeTabId,
+		createTaskTabController,
 		getCommanderSessionControllerResult,
 		setCommanderSessionController,
 		buildHandoffLedgerController,
