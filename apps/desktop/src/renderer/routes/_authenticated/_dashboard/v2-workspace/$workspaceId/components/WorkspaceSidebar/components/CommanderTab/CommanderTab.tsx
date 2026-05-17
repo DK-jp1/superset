@@ -4392,7 +4392,7 @@ function findInstructionSafetyBlockers(instruction: string): string[] {
 
 function isNegativeInstructionSafetySectionHeading(line: string): boolean {
 	const normalized = line.replace(/^[#>*•・\-\d.)\s]+/, "").trim();
-	return /^(やらないこと|禁止|対象外|触らないこと|避けること|not allowed|forbidden|do not|don't|avoid)\s*[:：]?$/i.test(
+	return /^(やらないこと|禁止(?:事項)?|対象外|触らないこと|避けること|not allowed|forbidden|do not|don't|avoid)\s*[:：]?$/i.test(
 		normalized,
 	);
 }
@@ -4409,8 +4409,11 @@ function isNegatedInstructionSafetyLine(line: string): boolean {
 		/しないでください/,
 		/しないこと/,
 		/していません/,
+		/していない/,
 		/なし/,
 		/無し/,
+		/未実施/,
+		/未実行/,
 		/触らない/,
 		/使わない/,
 		/行わない/,
