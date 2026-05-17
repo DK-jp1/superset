@@ -95,6 +95,7 @@ Implemented:
 | Diagnostics | `runAutoLoopPreflight()` | implemented | Alias for `getAutoLoopPreflight`. |
 | Diagnostics | `getSupervisorPilotReadiness()` | implemented | Supervisor pilot readiness snapshot. |
 | Diagnostics | `prepareSupervisorPilotReadiness(input?)` | implemented | Optional Browser AI navigation and existing worker bind. No new worker launch. |
+| Worker | `listRecognizedWorkers(input?)` | implemented | Read-only Codex / Claude worker candidate list with ignored shell/unknown candidates separated. |
 | Worker | `activateTerminalPaneForTab(input?)` | implemented | Activates/focuses existing terminal pane by pane id or bound worker. |
 | Worker | `activateWorkerPane(input?)` | implemented | Alias for `activateTerminalPaneForTab`. |
 | Worker | `focusBoundWorkerPane(input?)` | implemented | Alias for `activateTerminalPaneForTab`. |
@@ -153,7 +154,7 @@ Implemented:
 | Send instruction to bound worker | implemented | done | `sendInstructionToBoundWorker()`. |
 | Read worker response | implemented | done | `readBoundWorkerLatestResponse()`. |
 | Send worker response to Browser AI | implemented | done | `sendBoundWorkerResponseToBrowserAI()`. |
-| List recognized worker candidates | partially implemented | P0 | Returned in readiness/prepare results, but no read-only `listRecognizedWorkers()` command. |
+| List recognized worker candidates | implemented | done | `listRecognizedWorkers()` returns Codex / Claude candidates and separates shell/unknown as ignored candidates. |
 | Inspect worker UI/input readiness | partially implemented | P1 | Returned inside preflight/readiness. Dedicated read-only command would improve debugging. |
 | Launch new worker | should not implement yet | P3 | New worker launch requires Doy confirmation. |
 
@@ -184,9 +185,7 @@ Implemented:
 
 P0 missing or partial:
 
-- `listRecognizedWorkers(input?)`
-  - Read-only list of Codex / Claude candidates with paneId, terminalId, tabId, identity evidence.
-  - Purpose: choose existing worker without running full prepare.
+- None at the current inventory level.
 
 P1 missing or partial:
 
@@ -235,7 +234,7 @@ P3 / dangerous / should not implement yet:
 
 P0: 日常操作でUI探索が出るもの。
 
-- `listRecognizedWorkers(input?)`
+- None currently listed. Add new P0 items only when a daily operation still requires UI exploration.
 
 P1: 実運用で頻繁に使うが回避可能なもの。
 
@@ -263,19 +262,13 @@ P3: 危険または仕様未確定。
 
 次に実装するなら、state-onlyで副作用が小さいもの、またはread-only diagnosticsを優先する。
 
-Candidate 1: `listRecognizedWorkers(input?)`
-
-- Read-only。
-- `codex` / `claude`だけをrecognizedにする。
-- shell / unknownは候補に出しても`recognized:false`にする。
-
-Candidate 2: `prepareBrowserAiReady(input?)`
+Candidate 1: `prepareBrowserAiReady(input?)`
 
 - Browser-AI-only provider readiness。
 - Worker bindingを要求しない。
 - Browser AI provider navigationを行う場合は明示inputに限定する。
 
-Candidate 3: `bindWorkerToTab(input)`
+Candidate 2: `bindWorkerToTab(input)`
 
 - Existing recognized workerだけをbindする。
 - 新規Worker起動はしない。
@@ -315,41 +308,41 @@ Visual sanity checkは以下の場合に使う。
 
 ## 10. 次に実装すべきcommandトップ5
 
-1. `listRecognizedWorkers(input?)`
-   - 理由: Worker選択をprepare前にread-onlyで確認できる。
-   - 種別: read-only diagnostics。
-   - リスク: low。
-
-2. `prepareBrowserAiReady(input?)`
+1. `prepareBrowserAiReady(input?)`
    - 理由: Browser-AI-only用途でSupervisor readinessを使わずに済む。
    - 種別: readiness / optional provider preparation。
    - リスク: medium-low。
 
-3. `bindWorkerToTab(input)`
+2. `bindWorkerToTab(input)`
    - 理由: 既存recognized workerのbindをprepare/focusから分離できる。
    - 種別: small state mutation。
    - リスク: medium。
 
-4. `getWorkerInputReadiness(input?)`
+3. `getWorkerInputReadiness(input?)`
    - 理由: Claude feedback/recap/input residueを送信前にread-onlyで確認できる。
    - 種別: read-only diagnostics。
    - リスク: low。
 
-5. `getTerminalOutputSnapshot(input)`
+4. `getTerminalOutputSnapshot(input)`
    - 理由: visual sanity check前のsafeなpane output確認をController pathにする。
    - 種別: read-only diagnostics。
    - リスク: medium-low。
+
+5. `getControllerCommandInventory()`
+   - 理由: Meta AI / Codexが現在のController surfaceをUI探索なしで把握できる。
+   - 種別: read-only diagnostics。
+   - リスク: low。
 
 ## 11. 実装順の提案
 
 Recommended S9.9 / S10 entry:
 
-1. `listRecognizedWorkers(input?)`
-   - Worker選択/復旧のUI探索を減らす。
-2. `prepareBrowserAiReady(input?)`
+1. `prepareBrowserAiReady(input?)`
    - Browser-AI-only用途でSupervisor readinessを使わずに済む。
-3. `bindWorkerToTab(input)`
+2. `bindWorkerToTab(input)`
    - existing recognized worker bindを明示操作にする。
+3. `getWorkerInputReadiness(input?)`
+   - Worker送信前状態のread-only確認を切り出す。
 
 Stop before implementation if any candidate expands into:
 

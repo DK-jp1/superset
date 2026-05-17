@@ -394,6 +394,45 @@ interface CommanderControllerRecognizedWorkerCandidate {
 	evidenceSummary: string;
 }
 
+interface CommanderControllerRecognizedWorkerListItem
+	extends CommanderControllerRecognizedWorkerCandidate {
+	tabTitle: string | null;
+	paneTitle: string;
+	isBoundToActiveTab: boolean;
+	isInActiveTab: boolean;
+	isActivePane: boolean;
+	isVisible: boolean;
+	source: string;
+	reason: string;
+	warnings: string[];
+}
+
+interface CommanderControllerIgnoredWorkerCandidate {
+	paneId: string;
+	terminalId: string | null;
+	tabId: string | null;
+	tabTitle: string | null;
+	paneTitle: string;
+	paneType: string;
+	workerType: DoyDeckWorkerType;
+	workerIdentityOk: boolean;
+	workerIdentityStatus: DoyDeckWorkerIdentityStatus;
+	reason: string;
+	evidenceSummary: string;
+	warnings: string[];
+}
+
+interface CommanderControllerListRecognizedWorkersResult
+	extends CommanderControllerCommandResult {
+	status: "READY";
+	activeTabId: string | null;
+	workerCount: number;
+	workers: CommanderControllerRecognizedWorkerListItem[];
+	ignoredCandidates: CommanderControllerIgnoredWorkerCandidate[];
+	warnings: string[];
+	message: string;
+}
+
 interface CommanderControllerSupervisorPilotReadinessResult
 	extends CommanderControllerCommandResult {
 	status: CommanderControllerSupervisorPilotReadinessStatus;
@@ -858,6 +897,7 @@ interface CommanderControllerCommands {
 	getBrowserAiSendReadiness: () => Promise<CommanderControllerBrowserAiPreflightResult>;
 	getAutoLoopPreflight: () => Promise<CommanderControllerAutoLoopPreflightResult>;
 	runAutoLoopPreflight: () => Promise<CommanderControllerAutoLoopPreflightResult>;
+	listRecognizedWorkers: (input?: unknown) => CommanderControllerListRecognizedWorkersResult;
 	getSupervisorPilotReadiness: () => Promise<CommanderControllerSupervisorPilotReadinessResult>;
 	prepareSupervisorPilotReadiness: (
 		input?: CommanderControllerSupervisorPilotPrepareInput,
@@ -2070,6 +2110,120 @@ export function CommanderTab({
 			}),
 		[activeTabId, panes, tabs, workspaceId],
 	);
+
+	const listRecognizedWorkersController =
+		useCallback((_input?: unknown): CommanderControllerListRecognizedWorkersResult => {
+			const tabsState = useTabsStore.getState();
+			const activeTabIdSnapshot =
+				tabsState.activeTabIds[workspaceId] ?? activeTabId ?? null;
+			const tabById = new Map(tabsState.tabs.map((tab) => [tab.id, tab]));
+			const activeFocusedPaneId = activeTabIdSnapshot
+				? tabsState.focusedPaneIds[activeTabIdSnapshot] ?? null
+				: null;
+			const workers: CommanderControllerRecognizedWorkerListItem[] = [];
+			const ignoredCandidates: CommanderControllerIgnoredWorkerCandidate[] = [];
+
+			for (const pane of Object.values(tabsState.panes)) {
+				const tab = tabById.get(pane.tabId) ?? null;
+				if (tab?.workspaceId !== workspaceId) continue;
+				if (pane.type !== "terminal") continue;
+
+				const evidence = getTerminalWorkerEvidenceForPane(pane);
+				const evidenceSummary = buildSupervisorWorkerEvidenceSummary({
+					workerType: evidence.workerType,
+					outputText: evidence.outputText,
+					screenText: evidence.screenText,
+					viewportText: evidence.viewportText,
+				});
+				const tabTitle = tab ? getTabDisplayName(tab) : null;
+				const paneTitle = getPaneDisplayTitle(pane);
+				const baseWarnings =
+					pane.tabId === activeTabIdSnapshot
+						? []
+						: ["worker pane is not in the active tab"];
+
+				if (evidence.workerIdentity.workerIdentityOk) {
+					workers.push({
+						paneId: pane.id,
+						terminalId: evidence.terminalId,
+						tabId: pane.tabId,
+						workerType: evidence.workerType,
+						workerIdentityOk: true,
+						workerIdentityStatus: evidence.workerIdentity.workerIdentityStatus,
+						workerIdentityBlockers: [],
+						evidenceSummary,
+						tabTitle,
+						paneTitle,
+						isBoundToActiveTab:
+							workerBinding.bindingStatus === "bound" &&
+							workerBinding.workerPaneId === pane.id &&
+							pane.tabId === activeTabIdSnapshot,
+						isInActiveTab: pane.tabId === activeTabIdSnapshot,
+						isActivePane: pane.id === activeFocusedPaneId,
+						isVisible: pane.tabId === activeTabIdSnapshot,
+						source: "terminal-output-snapshot",
+						reason: evidenceSummary,
+						warnings: baseWarnings,
+					});
+					continue;
+				}
+
+				const reason =
+					evidence.workerType === "shell"
+						? "shell"
+						: evidence.workerType === "unknown"
+							? "unknown"
+							: (evidence.workerIdentity.workerIdentityBlockers[0] ??
+								"not recognized");
+				ignoredCandidates.push({
+					paneId: pane.id,
+					terminalId: evidence.terminalId,
+					tabId: pane.tabId,
+					tabTitle,
+					paneTitle,
+					paneType: pane.type,
+					workerType: evidence.workerType,
+					workerIdentityOk: false,
+					workerIdentityStatus: evidence.workerIdentity.workerIdentityStatus,
+					reason,
+					evidenceSummary,
+					warnings: evidence.workerIdentity.workerIdentityBlockers,
+				});
+			}
+
+			workers.sort((a, b) => {
+				const boundDelta =
+					Number(b.isBoundToActiveTab) - Number(a.isBoundToActiveTab);
+				if (boundDelta !== 0) return boundDelta;
+				const activePaneDelta = Number(b.isActivePane) - Number(a.isActivePane);
+				if (activePaneDelta !== 0) return activePaneDelta;
+				const activeTabDelta =
+					Number(b.isInActiveTab) - Number(a.isInActiveTab);
+				if (activeTabDelta !== 0) return activeTabDelta;
+				const codexDelta =
+					Number(b.workerType === "codex") - Number(a.workerType === "codex");
+				if (codexDelta !== 0) return codexDelta;
+				return a.paneId.localeCompare(b.paneId);
+			});
+
+			const warnings =
+				workers.length === 0
+					? ["recognized Codex or Claude worker terminal not found"]
+					: [];
+			return {
+				ok: true,
+				workspaceId,
+				tabId: activeTabIdSnapshot,
+				status: "READY",
+				activeTabId: activeTabIdSnapshot,
+				workerCount: workers.length,
+				workers,
+				ignoredCandidates,
+				warnings,
+				message:
+					"Recognized workers read from local terminal panes only; bind, activate, send, and readiness preflight were not run.",
+			};
+		}, [activeTabId, workerBinding, workspaceId]);
 
 	const buildSupervisorPilotReadinessResult = useCallback(
 		(
@@ -4009,6 +4163,7 @@ export function CommanderTab({
 			getBrowserAiSendReadiness: getBrowserAiPreflightController,
 			getAutoLoopPreflight: getAutoLoopPreflightController,
 			runAutoLoopPreflight: getAutoLoopPreflightController,
+			listRecognizedWorkers: listRecognizedWorkersController,
 			getSupervisorPilotReadiness: getSupervisorPilotReadinessController,
 			prepareSupervisorPilotReadiness:
 				prepareSupervisorPilotReadinessController,
@@ -4051,6 +4206,7 @@ export function CommanderTab({
 		buildHandoffLedgerController,
 		getBrowserAiPreflightController,
 		getAutoLoopPreflightController,
+		listRecognizedWorkersController,
 		getSupervisorPilotReadinessController,
 		prepareSupervisorPilotReadinessController,
 		activateTerminalPaneForTabController,
