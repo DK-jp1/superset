@@ -968,9 +968,598 @@ type CommanderControllerBrowserAiSubmissionResult =
 			ok: boolean;
 		};
 
+type CommanderControllerCommandInventoryCategoryName =
+	| "Tab / Workspace"
+	| "Browser AI"
+	| "Worker"
+	| "Outcome / Handoff"
+	| "Diagnostics"
+	| "Decision Ledger"
+	| "Dangerous / intentionally missing";
+
+type CommanderControllerCommandInventoryAccess =
+	| "read-only"
+	| "write"
+	| "diagnostic"
+	| "dangerous";
+
+type CommanderControllerCommandInventoryRiskLevel =
+	| "low"
+	| "medium"
+	| "high";
+
+interface CommanderControllerCommandInventoryCommand {
+	name: string;
+	category: CommanderControllerCommandInventoryCategoryName;
+	access: CommanderControllerCommandInventoryAccess;
+	implemented: true;
+	description: string;
+	typicalUse: string;
+	requiresDoyConfirmation: boolean;
+	riskLevel: CommanderControllerCommandInventoryRiskLevel;
+	notes: string[];
+}
+
+interface CommanderControllerCommandInventoryMissingCommand {
+	name: string;
+	category: CommanderControllerCommandInventoryCategoryName;
+	priority: "P1" | "P2" | "P3";
+	reason: string;
+	requiresDoyConfirmation: boolean;
+	riskLevel: CommanderControllerCommandInventoryRiskLevel;
+	notes: string[];
+}
+
+interface CommanderControllerCommandInventoryCategory {
+	name: CommanderControllerCommandInventoryCategoryName;
+	commands: string[];
+}
+
+interface CommanderControllerCommandInventoryResult
+	extends CommanderControllerCommandResult {
+	status: "READY";
+	generatedAt: string;
+	commandCount: number;
+	categories: CommanderControllerCommandInventoryCategory[];
+	commands: CommanderControllerCommandInventoryCommand[];
+	missingCommands: CommanderControllerCommandInventoryMissingCommand[];
+	warnings: string[];
+	message: string;
+}
+
+const COMMANDER_CONTROLLER_COMMAND_INVENTORY_CATEGORIES: CommanderControllerCommandInventoryCategoryName[] =
+	[
+		"Tab / Workspace",
+		"Browser AI",
+		"Worker",
+		"Outcome / Handoff",
+		"Diagnostics",
+		"Decision Ledger",
+		"Dangerous / intentionally missing",
+	];
+
+const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventoryCommand[] =
+	[
+		{
+			name: "getActiveTabId",
+			category: "Tab / Workspace",
+			access: "read-only",
+			implemented: true,
+			description: "Return the active workspace tab id.",
+			typicalUse: "Find the current tab before tab-specific controller work.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Does not inspect Browser AI or worker readiness."],
+		},
+		{
+			name: "listTabs",
+			category: "Tab / Workspace",
+			access: "read-only",
+			implemented: true,
+			description: "Return current workspace tabs and lightweight pane summaries.",
+			typicalUse: "Choose an existing task tab without UI exploration.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["No tab creation, activation, readiness scan, or send side effects."],
+		},
+		{
+			name: "getActiveTab",
+			category: "Tab / Workspace",
+			access: "read-only",
+			implemented: true,
+			description: "Return the active tab summary.",
+			typicalUse: "Confirm the current DoyDeck task context.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["No Browser AI or worker readiness scan."],
+		},
+		{
+			name: "createTaskTab",
+			category: "Tab / Workspace",
+			access: "write",
+			implemented: true,
+			description: "Create and activate a lightweight task tab.",
+			typicalUse: "Start a new task context without UI button exploration.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Skips Browser AI, worker, Handoff, and preflight initialization."],
+		},
+		{
+			name: "createWorkspaceTaskTab",
+			category: "Tab / Workspace",
+			access: "write",
+			implemented: true,
+			description: "Alias for createTaskTab.",
+			typicalUse: "Compatibility alias for task tab creation.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Same behavior and safety scope as createTaskTab."],
+		},
+		{
+			name: "activateTab",
+			category: "Tab / Workspace",
+			access: "write",
+			implemented: true,
+			description: "Activate an existing workspace tab by tab id.",
+			typicalUse: "Return to a known task tab without UI exploration.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Missing tab ids are blocked; no close/delete behavior."],
+		},
+		{
+			name: "renameTaskTab",
+			category: "Tab / Workspace",
+			access: "write",
+			implemented: true,
+			description: "Rename an existing workspace tab by tab id.",
+			typicalUse: "Set a human-readable task tab title.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["No close/delete behavior."],
+		},
+		{
+			name: "getBrowserAiPreflight",
+			category: "Browser AI",
+			access: "diagnostic",
+			implemented: true,
+			description: "Return Browser-AI-only readiness without requiring worker binding.",
+			typicalUse: "Check whether Handoff or Browser AI review can be sent.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Does not send prompts."],
+		},
+		{
+			name: "getBrowserAiSendReadiness",
+			category: "Browser AI",
+			access: "diagnostic",
+			implemented: true,
+			description: "Alias for getBrowserAiPreflight.",
+			typicalUse: "Compatibility alias for Browser AI send readiness.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Does not send prompts."],
+		},
+		{
+			name: "sendHandoffToBrowserAI",
+			category: "Browser AI",
+			access: "write",
+			implemented: true,
+			description: "Send the current Handoff prompt to Browser AI.",
+			typicalUse: "Ask Browser AI for requirements review or next action.",
+			requiresDoyConfirmation: false,
+			riskLevel: "medium",
+			notes: ["Uses Browser AI composer injection; preflight should be checked first."],
+		},
+		{
+			name: "readBrowserAiLatestReply",
+			category: "Browser AI",
+			access: "read-only",
+			implemented: true,
+			description: "Read and classify the latest Browser AI assistant reply.",
+			typicalUse: "Extract Worker instruction, STOP, and Doy confirmation state.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Alias getBrowserAiLatestReply is also available."],
+		},
+		{
+			name: "getBrowserAiLatestReply",
+			category: "Browser AI",
+			access: "read-only",
+			implemented: true,
+			description: "Alias for readBrowserAiLatestReply.",
+			typicalUse: "Read latest Browser AI reply with classification fields.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["No prompt send side effects."],
+		},
+		{
+			name: "getBrowserAiLastSubmission",
+			category: "Browser AI",
+			access: "read-only",
+			implemented: true,
+			description: "Return the last Browser AI submission state.",
+			typicalUse: "Inspect the previous Handoff or worker-response send result.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Alias getBrowserAiSubmissionState is also available."],
+		},
+		{
+			name: "getBrowserAiSubmissionState",
+			category: "Browser AI",
+			access: "read-only",
+			implemented: true,
+			description: "Alias for getBrowserAiLastSubmission.",
+			typicalUse: "Inspect last Browser AI submission diagnostics.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["No prompt send side effects."],
+		},
+		{
+			name: "sendBoundWorkerResponseToBrowserAI",
+			category: "Browser AI",
+			access: "write",
+			implemented: true,
+			description: "Send the bound worker response back to Browser AI for review.",
+			typicalUse: "Complete Browser AI -> Worker -> Browser AI review chains.",
+			requiresDoyConfirmation: false,
+			riskLevel: "medium",
+			notes: ["Uses Browser AI composer injection; alias sendWorkerResponseToBrowserAI is also available."],
+		},
+		{
+			name: "sendWorkerResponseToBrowserAI",
+			category: "Browser AI",
+			access: "write",
+			implemented: true,
+			description: "Alias for sendBoundWorkerResponseToBrowserAI.",
+			typicalUse: "Compatibility alias for worker-response review send.",
+			requiresDoyConfirmation: false,
+			riskLevel: "medium",
+			notes: ["Uses Browser AI composer injection."],
+		},
+		{
+			name: "listRecognizedWorkers",
+			category: "Worker",
+			access: "read-only",
+			implemented: true,
+			description: "List recognized Codex and Claude worker candidates.",
+			typicalUse: "Find bindable worker panes without UI exploration.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Shell and unknown panes are separated as ignored candidates."],
+		},
+		{
+			name: "bindWorkerToTab",
+			category: "Worker",
+			access: "write",
+			implemented: true,
+			description: "Bind an existing recognized worker pane to the active tab.",
+			typicalUse: "Connect a Codex or Claude worker to the current task tab.",
+			requiresDoyConfirmation: false,
+			riskLevel: "medium",
+			notes: ["Does not launch workers; shell and unknown panes are blocked."],
+		},
+		{
+			name: "getWorkerInputReadiness",
+			category: "Worker",
+			access: "read-only",
+			implemented: true,
+			description: "Inspect whether a selected worker pane can receive input.",
+			typicalUse: "Check Codex or Claude input state before sending instructions.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["No bind, activate, send, clear, or launch side effects."],
+		},
+		{
+			name: "getTerminalOutputSnapshot",
+			category: "Worker",
+			access: "read-only",
+			implemented: true,
+			description: "Return terminal screen, viewport, and output text by pane id.",
+			typicalUse: "Debug worker UI state without visual UI exploration.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["No activate, bind, send, clear, or launch side effects."],
+		},
+		{
+			name: "activateTerminalPaneForTab",
+			category: "Worker",
+			access: "write",
+			implemented: true,
+			description: "Activate an existing terminal pane by pane id or bound worker.",
+			typicalUse: "Recover non-mounted worker pane output capture.",
+			requiresDoyConfirmation: false,
+			riskLevel: "medium",
+			notes: ["Does not launch workers; aliases activateWorkerPane and focusBoundWorkerPane are also available."],
+		},
+		{
+			name: "activateWorkerPane",
+			category: "Worker",
+			access: "write",
+			implemented: true,
+			description: "Alias for activateTerminalPaneForTab.",
+			typicalUse: "Activate an existing bound or paneId-selected worker pane.",
+			requiresDoyConfirmation: false,
+			riskLevel: "medium",
+			notes: ["No worker launch side effect."],
+		},
+		{
+			name: "focusBoundWorkerPane",
+			category: "Worker",
+			access: "write",
+			implemented: true,
+			description: "Alias for activateTerminalPaneForTab.",
+			typicalUse: "Focus the currently bound worker pane.",
+			requiresDoyConfirmation: false,
+			riskLevel: "medium",
+			notes: ["No worker launch side effect."],
+		},
+		{
+			name: "sendInstructionToBoundWorker",
+			category: "Worker",
+			access: "write",
+			implemented: true,
+			description: "Send an instruction to the bound Codex or Claude worker.",
+			typicalUse: "Dispatch reviewed Worker tasks with preflight and safety guards.",
+			requiresDoyConfirmation: false,
+			riskLevel: "medium",
+			notes: ["requirePreflight defaults should be used; dangerous content is blocked or gated."],
+		},
+		{
+			name: "readBoundWorkerLatestResponse",
+			category: "Worker",
+			access: "read-only",
+			implemented: true,
+			description: "Read and classify the latest bound worker response.",
+			typicalUse: "Detect ACK, completion, error, file-change, and git-operation signals.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Alias getBoundWorkerLatestOutput is also available."],
+		},
+		{
+			name: "getBoundWorkerLatestOutput",
+			category: "Worker",
+			access: "read-only",
+			implemented: true,
+			description: "Alias for readBoundWorkerLatestResponse.",
+			typicalUse: "Compatibility alias for latest worker output reads.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["No send side effects."],
+		},
+		{
+			name: "getCommanderSession",
+			category: "Outcome / Handoff",
+			access: "read-only",
+			implemented: true,
+			description: "Return current Commander session fields.",
+			typicalUse: "Inspect current task, plan, and notes before building Handoff.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["No session mutation."],
+		},
+		{
+			name: "setCommanderSession",
+			category: "Outcome / Handoff",
+			access: "write",
+			implemented: true,
+			description: "Update supported Commander session fields.",
+			typicalUse: "Set task goal, plan, risks, and notes for a pilot run.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Only updates Commander session fields."],
+		},
+		{
+			name: "buildHandoffLedger",
+			category: "Outcome / Handoff",
+			access: "read-only",
+			implemented: true,
+			description: "Build the current Handoff Ledger text.",
+			typicalUse: "Review task state before Browser AI or Worker handoff.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Alias getHandoffLedger is also available."],
+		},
+		{
+			name: "getHandoffLedger",
+			category: "Outcome / Handoff",
+			access: "read-only",
+			implemented: true,
+			description: "Alias for buildHandoffLedger.",
+			typicalUse: "Read the current Handoff Ledger.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["No ledger mutation."],
+		},
+		{
+			name: "getControllerChainSummary",
+			category: "Outcome / Handoff",
+			access: "read-only",
+			implemented: true,
+			description: "Summarize current Browser AI, Worker, and outcome chain state.",
+			typicalUse: "Classify PASS, STOP, BLOCKED, or pending state before recording.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Supports browser-ai-only and worker-only chain modes."],
+		},
+		{
+			name: "recordControllerChainOutcome",
+			category: "Outcome / Handoff",
+			access: "write",
+			implemented: true,
+			description: "Record a Controller chain outcome into the Commander session.",
+			typicalUse: "Persist pilot smoke or handoff results in the Handoff Ledger.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Alias updateHandoffLedgerWithControllerOutcome is also available."],
+		},
+		{
+			name: "updateHandoffLedgerWithControllerOutcome",
+			category: "Outcome / Handoff",
+			access: "write",
+			implemented: true,
+			description: "Alias for recordControllerChainOutcome.",
+			typicalUse: "Compatibility alias for outcome recording.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Records outcome in session state."],
+		},
+		{
+			name: "getControllerCommandInventory",
+			category: "Diagnostics",
+			access: "read-only",
+			implemented: true,
+			description: "Return the current Controller command surface inventory.",
+			typicalUse: "Let Meta AI, Codex, or Browser AI discover available commands before UI exploration.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["This accessor is static/read-only and does not execute listed commands."],
+		},
+		{
+			name: "getAutoLoopPreflight",
+			category: "Diagnostics",
+			access: "diagnostic",
+			implemented: true,
+			description: "Run full Auto Loop preflight without starting Auto Loop.",
+			typicalUse: "Check Browser AI, Worker, Handoff, and safety readiness.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Alias runAutoLoopPreflight is also available."],
+		},
+		{
+			name: "runAutoLoopPreflight",
+			category: "Diagnostics",
+			access: "diagnostic",
+			implemented: true,
+			description: "Alias for getAutoLoopPreflight.",
+			typicalUse: "Compatibility alias for full preflight checks.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Does not start Auto Loop."],
+		},
+		{
+			name: "getSupervisorPilotReadiness",
+			category: "Diagnostics",
+			access: "diagnostic",
+			implemented: true,
+			description: "Return Supervisor pilot readiness for Browser AI and Worker state.",
+			typicalUse: "Inspect current pilot readiness before prepare or send.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Does not navigate or bind by itself."],
+		},
+		{
+			name: "prepareSupervisorPilotReadiness",
+			category: "Diagnostics",
+			access: "write",
+			implemented: true,
+			description: "Prepare Browser AI readiness and optionally bind an existing worker.",
+			typicalUse: "Recover a pilot-ready state without launching new workers.",
+			requiresDoyConfirmation: false,
+			riskLevel: "medium",
+			notes: ["May navigate Browser AI provider and bind existing workers; does not start Auto Loop."],
+		},
+	];
+
+const COMMANDER_CONTROLLER_MISSING_COMMANDS: CommanderControllerCommandInventoryMissingCommand[] =
+	[
+		{
+			name: "prepareBrowserAiReady",
+			category: "Browser AI",
+			priority: "P1",
+			reason: "Browser-AI-only provider preparation should not require Supervisor readiness.",
+			requiresDoyConfirmation: false,
+			riskLevel: "medium",
+			notes: ["Would likely navigate or initialize Browser AI provider state."],
+		},
+		{
+			name: "sendTargetDocsReviewToBrowserAI",
+			category: "Browser AI",
+			priority: "P1",
+			reason: "Target-doc Browser AI reviews still need prompt boilerplate today.",
+			requiresDoyConfirmation: false,
+			riskLevel: "medium",
+			notes: ["Should keep prompt length and scope controls explicit."],
+		},
+		{
+			name: "getVisibleStateSnapshot",
+			category: "Diagnostics",
+			priority: "P2",
+			reason: "Visual sanity checks still need a read-only visible snapshot helper.",
+			requiresDoyConfirmation: false,
+			riskLevel: "medium",
+			notes: ["Should avoid making Computer Use the primary operation path."],
+		},
+		{
+			name: "getDecisionRecord",
+			category: "Decision Ledger",
+			priority: "P1",
+			reason: "Decision Records are documented but not exposed through Controller accessors.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Should return short DR-ID references rather than long prompt payloads."],
+		},
+		{
+			name: "listDecisionRecords",
+			category: "Decision Ledger",
+			priority: "P1",
+			reason: "Decision Ledger lookup is still docs/manual driven.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Should remain read-only until a storage design is explicit."],
+		},
+		{
+			name: "closeTab",
+			category: "Dangerous / intentionally missing",
+			priority: "P3",
+			reason: "Closing a tab can kill terminal/session state.",
+			requiresDoyConfirmation: true,
+			riskLevel: "high",
+			notes: ["Needs dry-run, dirty-state guard, and explicit Doy confirmation before implementation."],
+		},
+		{
+			name: "clearWorkerInput",
+			category: "Dangerous / intentionally missing",
+			priority: "P3",
+			reason: "Clearing input can destroy unsent worker instructions.",
+			requiresDoyConfirmation: true,
+			riskLevel: "high",
+			notes: ["Input clear/delete is intentionally outside normal Controller automation."],
+		},
+		{
+			name: "launchWorker",
+			category: "Dangerous / intentionally missing",
+			priority: "P3",
+			reason: "Launching new Codex or Claude workers is Doy confirmation scope.",
+			requiresDoyConfirmation: true,
+			riskLevel: "high",
+			notes: ["Current safe path binds existing recognized workers only."],
+		},
+		{
+			name: "pushChanges",
+			category: "Dangerous / intentionally missing",
+			priority: "P3",
+			reason: "Push is always Doy confirmation scope.",
+			requiresDoyConfirmation: true,
+			riskLevel: "high",
+			notes: ["Checkpoint commits may be created, but push remains explicit."],
+		},
+		{
+			name: "deployChanges",
+			category: "Dangerous / intentionally missing",
+			priority: "P3",
+			reason: "Deploy/public release is outside safe Controller automation.",
+			requiresDoyConfirmation: true,
+			riskLevel: "high",
+			notes: ["Requires explicit operational approval and environment handling."],
+		},
+	];
+
 interface CommanderControllerCommands {
 	version: "0.1";
 	workspaceId: string;
+	getControllerCommandInventory: (
+		input?: unknown,
+	) => CommanderControllerCommandInventoryResult;
 	getActiveTabId: () => string | null;
 	listTabs: () => CommanderControllerListTabsResult;
 	getActiveTab: () => CommanderControllerGetActiveTabResult;
@@ -1248,6 +1837,44 @@ export function CommanderTab({
 			tabId: activeTabId,
 		}),
 		[workspaceId, activeTabId],
+	);
+
+	const getControllerCommandInventoryController = useCallback(
+		(_input?: unknown): CommanderControllerCommandInventoryResult => {
+			const commands = COMMANDER_CONTROLLER_COMMAND_INVENTORY.map((command) => ({
+				...command,
+				notes: [...command.notes],
+			}));
+			const missingCommands = COMMANDER_CONTROLLER_MISSING_COMMANDS.map(
+				(command) => ({
+					...command,
+					notes: [...command.notes],
+				}),
+			);
+			const categories = COMMANDER_CONTROLLER_COMMAND_INVENTORY_CATEGORIES.map(
+				(name) => ({
+					name,
+					commands: commands
+						.filter((command) => command.category === name)
+						.map((command) => command.name),
+				}),
+			);
+
+			return {
+				...getCommanderControllerContext(),
+				ok: true,
+				status: "READY",
+				generatedAt: new Date().toISOString(),
+				commandCount: commands.length,
+				categories,
+				commands,
+				missingCommands,
+				warnings: [],
+				message:
+					"Controller command inventory is read-only; no commands were executed.",
+			};
+		},
+		[getCommanderControllerContext],
 	);
 
 	const getActiveTabIdController = useCallback(
@@ -4701,6 +5328,7 @@ export function CommanderTab({
 		const commands: CommanderControllerCommands = {
 			version: "0.1",
 			workspaceId,
+			getControllerCommandInventory: getControllerCommandInventoryController,
 			getActiveTabId: getActiveTabIdController,
 			listTabs: listTabsController,
 			getActiveTab: getActiveTabController,
@@ -4751,6 +5379,7 @@ export function CommanderTab({
 	}, [
 		workspaceId,
 		activeTabId,
+		getControllerCommandInventoryController,
 		getActiveTabIdController,
 		listTabsController,
 		getActiveTabController,

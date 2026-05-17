@@ -95,6 +95,7 @@ Implemented:
 | Diagnostics | `runAutoLoopPreflight()` | implemented | Alias for `getAutoLoopPreflight`. |
 | Diagnostics | `getSupervisorPilotReadiness()` | implemented | Supervisor pilot readiness snapshot. |
 | Diagnostics | `prepareSupervisorPilotReadiness(input?)` | implemented | Optional Browser AI navigation and existing worker bind. No new worker launch. |
+| Diagnostics | `getControllerCommandInventory(input?)` | implemented | Read-only Controller command surface inventory for Meta AI / Codex / Browser AI self-discovery. |
 | Worker | `listRecognizedWorkers(input?)` | implemented | Read-only Codex / Claude worker candidate list with ignored shell/unknown candidates separated. |
 | Worker | `bindWorkerToTab(input?)` | implemented | Binds an existing recognized Codex / Claude worker pane to the active tab. |
 | Worker | `getWorkerInputReadiness(input?)` | implemented | Read-only worker UI/input readiness for bound or paneId-selected Codex / Claude workers. |
@@ -198,9 +199,9 @@ P1 missing or partial:
 - `sendTargetDocsReviewToBrowserAI(input)`
   - Browser-AI-only target docs review with prompt length/scope controls.
   - Purpose: reduce prompt boilerplate and long-context mistakes.
-- `getControllerCommandInventory()`
-  - Return available command names/version.
-  - Purpose: Meta AI can self-discover capabilities before falling back.
+- Decision Record accessor
+  - Return DR-ID references and short summaries for Handoff prompts.
+  - Purpose: avoid pasting full Decision Record text into every prompt.
 
 P2 missing:
 
@@ -234,7 +235,7 @@ P1: 実運用で頻繁に使うが回避可能なもの。
 
 - `prepareBrowserAiReady(input?)`
 - `sendTargetDocsReviewToBrowserAI(input)`
-- `getControllerCommandInventory()`
+- Decision Record accessor
 
 P2: 便利だが後回しでよいもの。
 
@@ -259,10 +260,10 @@ Candidate 1: `prepareBrowserAiReady(input?)`
 - Worker bindingを要求しない。
 - Browser AI provider navigationを行う場合は明示inputに限定する。
 
-Candidate 2: `getControllerCommandInventory()`
+Candidate 2: Decision Record accessor
 
-- Meta AI / Codexが現在のController surfaceをread-onlyで把握する。
-- UI探索前に使えるcommand一覧を返す。
+- HandoffからDR-ID短参照を使いやすくする。
+- Decision Record本文を毎回promptに入れず、必要な短い前提だけを扱う。
 
 ## 8. やらないこと
 
@@ -303,20 +304,20 @@ Visual sanity checkは以下の場合に使う。
    - 種別: readiness / optional provider preparation。
    - リスク: medium-low。
 
-2. `getControllerCommandInventory()`
-   - 理由: Meta AI / Codexが現在のController surfaceをUI探索なしで把握できる。
-   - 種別: read-only diagnostics。
-   - リスク: low。
-
-3. `findTabByTitle(input)`
+2. `findTabByTitle(input)`
    - 理由: 日常的な「タスク管理アプリのタブへ戻って」をUI探索なしにする。
    - 種別: read-only tab lookup。
    - リスク: low。
 
-4. `sendTargetDocsReviewToBrowserAI(input)`
+3. `sendTargetDocsReviewToBrowserAI(input)`
    - 理由: Browser-AI-only target docs reviewを短いpromptで実行しやすくする。
    - 種別: Browser-AI-only send helper。
    - リスク: medium-low。
+
+4. Decision Record accessor
+   - 理由: Handoff LedgerからDR-ID短参照をController pathで扱えるようにする。
+   - 種別: read-only Decision Ledger lookup。
+   - リスク: low。
 
 5. `getVisibleStateSnapshot(input?)`
    - 理由: UI状態判断でtext logと画面表示が矛盾した時のvisual sanity checkをController pathに寄せる。
@@ -329,10 +330,10 @@ Recommended S9.9 / S10 entry:
 
 1. `prepareBrowserAiReady(input?)`
    - Browser-AI-only用途でSupervisor readinessを使わずに済む。
-2. `getControllerCommandInventory()`
-   - Controller surfaceの自己発見をread-onlyで可能にする。
-3. `findTabByTitle(input)`
+2. `findTabByTitle(input)`
    - tab名から既存tabへ戻るread-only lookupを追加する。
+3. Decision Record accessor
+   - HandoffからDecision Record短参照を使いやすくする。
 
 Stop before implementation if any candidate expands into:
 
