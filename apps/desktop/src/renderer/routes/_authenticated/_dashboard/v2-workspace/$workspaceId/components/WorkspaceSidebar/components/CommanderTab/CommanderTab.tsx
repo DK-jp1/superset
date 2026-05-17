@@ -187,6 +187,33 @@ interface CommanderControllerGetActiveTabResult
 	message: string;
 }
 
+type CommanderControllerTabFindMatchMode =
+	| "exact"
+	| "contains"
+	| "startsWith";
+
+interface CommanderControllerFindTabByTitleInput {
+	query?: unknown;
+	title?: unknown;
+	matchMode?: unknown;
+	caseSensitive?: unknown;
+	limit?: unknown;
+}
+
+interface CommanderControllerFindTabByTitleResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerTabReadStatus;
+	query: string | null;
+	matchMode: CommanderControllerTabFindMatchMode;
+	caseSensitive: boolean;
+	activeTabId: string | null;
+	matchCount: number;
+	matches: CommanderControllerTabSummary[];
+	warnings: string[];
+	blockers: string[];
+	message: string;
+}
+
 type CommanderControllerActivateTabStatus = "ACTIVATED" | "BLOCKED";
 
 interface CommanderControllerActivateTabInput {
@@ -389,6 +416,52 @@ interface CommanderControllerBrowserAiPreflightResult
 	blockers: string[];
 	warnings: string[];
 	nextRequiredAction: string;
+}
+
+type CommanderControllerBrowserAiPrepareProvider =
+	| "ChatGPT"
+	| "Claude"
+	| "Gemini";
+
+interface CommanderControllerBrowserAiPrepareInput {
+	provider?: unknown;
+	browserProvider?: unknown;
+	dryRun?: unknown;
+	navigateIfNeeded?: unknown;
+	waitForReady?: unknown;
+}
+
+interface CommanderControllerBrowserAiPrepareResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerPreflightStatus;
+	activeTabId: string | null;
+	dryRun: boolean;
+	navigateIfNeeded: boolean;
+	waitForReady: boolean;
+	requestedProvider: CommanderControllerBrowserAiPrepareProvider;
+	requestedBrowserProvider: BrowserProvider;
+	navigationTargetUrl: string;
+	browserAiProvider: string;
+	browserAiReady: boolean;
+	browserAiSlotOk: boolean;
+	browserAiUrl: string;
+	browserAiSlotKey: string | null;
+	expectedBrowserAiSlotKey: string | null;
+	browserAiComposer: CommanderControllerBrowserAiReadiness;
+	composerReady: boolean;
+	composerInjectionReady: boolean;
+	submitTargetReady: boolean;
+	composerSelectorStatus: string;
+	submitSelectorStatus: string;
+	injectionTargetStatus: string;
+	injectionBlockers: string[];
+	attemptedActions: string[];
+	performedActions: string[];
+	skippedActions: string[];
+	blockers: string[];
+	warnings: string[];
+	nextRequiredAction: string;
+	message: string;
 }
 
 type CommanderControllerSupervisorPilotReadinessStatus =
@@ -1074,6 +1147,17 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			notes: ["No Browser AI or worker readiness scan."],
 		},
 		{
+			name: "findTabByTitle",
+			category: "Tab / Workspace",
+			access: "read-only",
+			implemented: true,
+			description: "Find workspace tabs by title/name without activating them.",
+			typicalUse: "Locate a task tab before calling activateTab.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["Read-only lookup; does not create, activate, rename, or close tabs."],
+		},
+		{
 			name: "createTaskTab",
 			category: "Tab / Workspace",
 			access: "write",
@@ -1116,6 +1200,17 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
 			notes: ["No close/delete behavior."],
+		},
+		{
+			name: "prepareBrowserAiReady",
+			category: "Browser AI",
+			access: "write",
+			implemented: true,
+			description: "Prepare the Browser AI slot for a requested provider without requiring worker binding.",
+			typicalUse: "Navigate from about:blank or unsupported provider to ChatGPT, Claude, or Gemini and verify composer injection readiness.",
+			requiresDoyConfirmation: false,
+			riskLevel: "medium",
+			notes: ["Does not send Handoff, send Worker instructions, bind workers, or start Auto Loop."],
 		},
 		{
 			name: "getBrowserAiPreflight",
@@ -1463,15 +1558,6 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 const COMMANDER_CONTROLLER_MISSING_COMMANDS: CommanderControllerCommandInventoryMissingCommand[] =
 	[
 		{
-			name: "prepareBrowserAiReady",
-			category: "Browser AI",
-			priority: "P1",
-			reason: "Browser-AI-only provider preparation should not require Supervisor readiness.",
-			requiresDoyConfirmation: false,
-			riskLevel: "medium",
-			notes: ["Would likely navigate or initialize Browser AI provider state."],
-		},
-		{
 			name: "sendTargetDocsReviewToBrowserAI",
 			category: "Browser AI",
 			priority: "P1",
@@ -1563,6 +1649,9 @@ interface CommanderControllerCommands {
 	getActiveTabId: () => string | null;
 	listTabs: () => CommanderControllerListTabsResult;
 	getActiveTab: () => CommanderControllerGetActiveTabResult;
+	findTabByTitle: (
+		input?: CommanderControllerFindTabByTitleInput,
+	) => CommanderControllerFindTabByTitleResult;
 	activateTab: (
 		input?: CommanderControllerActivateTabInput,
 	) => Promise<CommanderControllerActivateTabResult>;
@@ -1581,6 +1670,9 @@ interface CommanderControllerCommands {
 	) => CommanderControllerSessionResult;
 	buildHandoffLedger: () => CommanderControllerHandoffResult;
 	getHandoffLedger: () => CommanderControllerHandoffResult;
+	prepareBrowserAiReady: (
+		input?: CommanderControllerBrowserAiPrepareInput,
+	) => Promise<CommanderControllerBrowserAiPrepareResult>;
 	getBrowserAiPreflight: () => Promise<CommanderControllerBrowserAiPreflightResult>;
 	getBrowserAiSendReadiness: () => Promise<CommanderControllerBrowserAiPreflightResult>;
 	getAutoLoopPreflight: () => Promise<CommanderControllerAutoLoopPreflightResult>;
@@ -2171,6 +2263,68 @@ export function CommanderTab({
 					"Active tab read from local tabs store only; Browser AI, worker readiness, and preflight were not run.",
 			};
 		}, [activeTabId, workspaceId]);
+
+	const findTabByTitleController = useCallback(
+		(
+			input?: CommanderControllerFindTabByTitleInput,
+		): CommanderControllerFindTabByTitleResult => {
+			const normalizedInput = normalizeFindTabByTitleInput(input);
+			const blockers: string[] = [];
+			const warnings: string[] = [];
+			const tabsState = useTabsStore.getState();
+			const activeTabIdSnapshot =
+				tabsState.activeTabIds[workspaceId] ?? activeTabId ?? null;
+
+			if (!workspaceId) blockers.push("workspace not found");
+			if (!normalizedInput.query) blockers.push("query is required");
+
+			const matches =
+				blockers.length > 0
+					? []
+					: tabsState.tabs
+							.filter((tab) => tab.workspaceId === workspaceId)
+							.filter((tab) =>
+								controllerTabMatchesTitleQuery({
+									tab,
+									query: normalizedInput.query,
+									matchMode: normalizedInput.matchMode,
+									caseSensitive: normalizedInput.caseSensitive,
+								}),
+							)
+							.slice(0, normalizedInput.limit)
+							.map((tab) =>
+								buildControllerTabSummary({
+									tab,
+									panes: tabsState.panes,
+									activeTabId: activeTabIdSnapshot,
+									focusedPaneId: tabsState.focusedPaneIds[tab.id] ?? null,
+								}),
+							);
+			if (blockers.length === 0 && matches.length === 0) {
+				warnings.push("no matching tabs found");
+			}
+
+			return {
+				ok: blockers.length === 0,
+				workspaceId,
+				tabId: activeTabIdSnapshot,
+				status: blockers.length > 0 ? "BLOCKED" : "READY",
+				query: normalizedInput.query,
+				matchMode: normalizedInput.matchMode,
+				caseSensitive: normalizedInput.caseSensitive,
+				activeTabId: activeTabIdSnapshot,
+				matchCount: matches.length,
+				matches,
+				warnings,
+				blockers,
+				message:
+					blockers.length > 0
+						? `findTabByTitle blocked: ${blockers[0] ?? "unknown reason"}`
+						: "Tab lookup read from local tabs store only; no tab was activated.",
+			};
+		},
+		[activeTabId, workspaceId],
+	);
 
 	const activateTabController = useCallback(
 		async (
@@ -2834,6 +2988,175 @@ export function CommanderTab({
 			webview.injectIntoPage,
 			workspaceId,
 		]);
+
+	const prepareBrowserAiReadyController = useCallback(
+		async (
+			input?: CommanderControllerBrowserAiPrepareInput,
+		): Promise<CommanderControllerBrowserAiPrepareResult> => {
+			const normalizedInput = normalizeBrowserAiPrepareInput(input);
+			const attemptedActions: string[] = [];
+			const performedActions: string[] = [];
+			const skippedActions: string[] = [];
+			let preflight = await getBrowserAiPreflightController();
+			let liveUrl =
+				webview.getLiveUrl() ||
+				webview.currentUrl ||
+				webview.getRuntimeSnapshot().currentUrl;
+			let provider = detectProvider(liveUrl);
+			const requestedBrowserProvider = browserAiPrepareProviderToBrowserProvider(
+				normalizedInput.provider,
+			);
+			const navigationTargetUrl = getBrowserAiPrepareProviderUrl(
+				normalizedInput.provider,
+			);
+			const providerMatchesRequest = provider === requestedBrowserProvider;
+			const needsNavigation =
+				!providerMatchesRequest ||
+				(!preflight.browserAiReady && !provider);
+
+			if (preflight.browserAiReady && providerMatchesRequest) {
+				skippedActions.push(
+					`Browser AI already ready for ${normalizedInput.provider}`,
+				);
+			} else if (needsNavigation) {
+				attemptedActions.push(
+					`prepare Browser AI slot for ${normalizedInput.provider}`,
+				);
+				if (normalizedInput.dryRun) {
+					skippedActions.push(
+						`dryRun: would navigate Browser AI to ${navigationTargetUrl}`,
+					);
+				} else if (!normalizedInput.navigateIfNeeded) {
+					skippedActions.push("navigateIfNeeded is false");
+				} else {
+					webview.navigateTo(navigationTargetUrl);
+					performedActions.push(`navigated Browser AI to ${navigationTargetUrl}`);
+					if (normalizedInput.waitForReady) {
+						const readinessAfterNavigation =
+							await waitForBrowserAiProviderReadiness({
+								getRuntimeSnapshot: webview.getRuntimeSnapshot,
+								getLiveUrl: webview.getLiveUrl,
+								currentUrl: webview.currentUrl,
+								injectIntoPage: webview.injectIntoPage,
+								expectedProvider: requestedBrowserProvider,
+								expectedProviderLabel: normalizedInput.provider,
+							});
+						if (!readinessAfterNavigation.ready) {
+							skippedActions.push(readinessAfterNavigation.reason);
+						}
+					} else {
+						skippedActions.push("waitForReady is false");
+					}
+				}
+			} else if (!preflight.browserAiReady) {
+				attemptedActions.push(
+					`wait for ${normalizedInput.provider} composer readiness`,
+				);
+				if (normalizedInput.dryRun) {
+					skippedActions.push("dryRun: would wait for Browser AI composer");
+				} else if (normalizedInput.waitForReady) {
+					const readinessAfterWait = await waitForBrowserAiProviderReadiness({
+						getRuntimeSnapshot: webview.getRuntimeSnapshot,
+						getLiveUrl: webview.getLiveUrl,
+						currentUrl: webview.currentUrl,
+						injectIntoPage: webview.injectIntoPage,
+						expectedProvider: requestedBrowserProvider,
+						expectedProviderLabel: normalizedInput.provider,
+					});
+					if (!readinessAfterWait.ready) {
+						skippedActions.push(readinessAfterWait.reason);
+					}
+				} else {
+					skippedActions.push("waitForReady is false");
+				}
+			}
+
+			if (!normalizedInput.dryRun) {
+				await delay(0);
+				preflight = await getBrowserAiPreflightController();
+			}
+
+			liveUrl =
+				webview.getLiveUrl() ||
+				webview.currentUrl ||
+				webview.getRuntimeSnapshot().currentUrl;
+			provider = detectProvider(liveUrl);
+			const blockers = [...preflight.blockers];
+			const warnings = [...preflight.warnings];
+			if (provider !== requestedBrowserProvider) {
+				blockers.push(
+					`Browser AI is not on requested provider: ${normalizedInput.provider}`,
+				);
+			}
+			if (
+				!normalizedInput.dryRun &&
+				provider === requestedBrowserProvider &&
+				!preflight.browserAiReady
+			) {
+				blockers.push(`${normalizedInput.provider} composer is not ready`);
+			}
+			const browserAiReady =
+				provider === requestedBrowserProvider && preflight.browserAiReady;
+			const status: CommanderControllerPreflightStatus =
+				blockers.length > 0
+					? "BLOCKED"
+					: warnings.length > 0
+						? "READY_WITH_NOTES"
+						: "READY";
+
+			return {
+				ok: blockers.length === 0,
+				...getCommanderControllerContext(),
+				status,
+				activeTabId: preflight.activeTabId,
+				dryRun: normalizedInput.dryRun,
+				navigateIfNeeded: normalizedInput.navigateIfNeeded,
+				waitForReady: normalizedInput.waitForReady,
+				requestedProvider: normalizedInput.provider,
+				requestedBrowserProvider,
+				navigationTargetUrl,
+				browserAiProvider: preflight.browserAiProvider,
+				browserAiReady,
+				browserAiSlotOk: preflight.browserAiSlotOk,
+				browserAiUrl: liveUrl || preflight.browserAiUrl,
+				browserAiSlotKey: preflight.browserAiSlotKey,
+				expectedBrowserAiSlotKey: preflight.expectedBrowserAiSlotKey,
+				browserAiComposer: preflight.browserAiComposer,
+				composerReady: preflight.composerReady,
+				composerInjectionReady: preflight.composerInjectionReady,
+				submitTargetReady: preflight.submitTargetReady,
+				composerSelectorStatus: preflight.composerSelectorStatus,
+				submitSelectorStatus: preflight.submitSelectorStatus,
+				injectionTargetStatus: preflight.injectionTargetStatus,
+				injectionBlockers: preflight.injectionBlockers,
+				attemptedActions,
+				performedActions,
+				skippedActions,
+				blockers,
+				warnings,
+				nextRequiredAction: getBrowserAiPrepareNextAction(
+					blockers,
+					warnings,
+					normalizedInput,
+				),
+				message:
+					status === "BLOCKED"
+						? `Browser AI ready preparation blocked: ${blockers[0] ?? "unknown reason"}`
+						: status === "READY_WITH_NOTES"
+							? "Browser AI is ready with notes; no Worker binding was required."
+							: "Browser AI is ready; no Worker binding was required.",
+			};
+		},
+		[
+			getBrowserAiPreflightController,
+			getCommanderControllerContext,
+			webview.currentUrl,
+			webview.getLiveUrl,
+			webview.getRuntimeSnapshot,
+			webview.injectIntoPage,
+			webview.navigateTo,
+		],
+	);
 
 	const getRecognizedWorkerCandidatesController = useCallback(
 		(): CommanderControllerRecognizedWorkerCandidate[] =>
@@ -5332,6 +5655,7 @@ export function CommanderTab({
 			getActiveTabId: getActiveTabIdController,
 			listTabs: listTabsController,
 			getActiveTab: getActiveTabController,
+			findTabByTitle: findTabByTitleController,
 			activateTab: activateTabController,
 			renameTaskTab: renameTaskTabController,
 			createTaskTab: createTaskTabController,
@@ -5340,6 +5664,7 @@ export function CommanderTab({
 			setCommanderSession: setCommanderSessionController,
 			buildHandoffLedger: buildHandoffLedgerController,
 			getHandoffLedger: buildHandoffLedgerController,
+			prepareBrowserAiReady: prepareBrowserAiReadyController,
 			getBrowserAiPreflight: getBrowserAiPreflightController,
 			getBrowserAiSendReadiness: getBrowserAiPreflightController,
 			getAutoLoopPreflight: getAutoLoopPreflightController,
@@ -5383,12 +5708,14 @@ export function CommanderTab({
 		getActiveTabIdController,
 		listTabsController,
 		getActiveTabController,
+		findTabByTitleController,
 		activateTabController,
 		renameTaskTabController,
 		createTaskTabController,
 		getCommanderSessionControllerResult,
 		setCommanderSessionController,
 		buildHandoffLedgerController,
+		prepareBrowserAiReadyController,
 		getBrowserAiPreflightController,
 		getAutoLoopPreflightController,
 		listRecognizedWorkersController,
@@ -8942,6 +9269,125 @@ function normalizeTerminalOutputSnapshotInput(
 	};
 }
 
+function normalizeFindTabByTitleInput(
+	input?: CommanderControllerFindTabByTitleInput,
+): {
+	query: string | null;
+	matchMode: CommanderControllerTabFindMatchMode;
+	caseSensitive: boolean;
+	limit: number;
+} {
+	const record = input && typeof input === "object" ? input : {};
+	const rawQuery =
+		(record as CommanderControllerFindTabByTitleInput).query ??
+		(record as CommanderControllerFindTabByTitleInput).title;
+	const query =
+		typeof rawQuery === "string" ? rawQuery.trim() || null : null;
+	const rawMatchMode = (record as CommanderControllerFindTabByTitleInput)
+		.matchMode;
+	const normalizedMatchMode =
+		typeof rawMatchMode === "string" ? rawMatchMode.trim().toLowerCase() : "";
+	const matchMode: CommanderControllerTabFindMatchMode =
+		normalizedMatchMode === "exact"
+			? "exact"
+			: normalizedMatchMode === "startswith" ||
+					normalizedMatchMode === "starts-with"
+				? "startsWith"
+				: "contains";
+	const rawLimit = (record as CommanderControllerFindTabByTitleInput).limit;
+	const limit =
+		typeof rawLimit === "number" && Number.isFinite(rawLimit)
+			? Math.max(1, Math.min(Math.floor(rawLimit), 50))
+			: 20;
+	return {
+		query,
+		matchMode,
+		caseSensitive:
+			(record as CommanderControllerFindTabByTitleInput).caseSensitive === true,
+		limit,
+	};
+}
+
+function controllerTabMatchesTitleQuery({
+	tab,
+	query,
+	matchMode,
+	caseSensitive,
+}: {
+	tab: Tab;
+	query: string | null;
+	matchMode: CommanderControllerTabFindMatchMode;
+	caseSensitive: boolean;
+}): boolean {
+	if (!query) return false;
+	const normalize = (value: string) =>
+		caseSensitive ? value.trim() : value.trim().toLowerCase();
+	const normalizedQuery = normalize(query);
+	const candidates = [
+		getTabDisplayName(tab),
+		tab.name,
+		tab.userTitle ?? "",
+		tab.id,
+	].map(normalize);
+	return candidates.some((candidate) => {
+		if (!candidate) return false;
+		if (matchMode === "exact") return candidate === normalizedQuery;
+		if (matchMode === "startsWith") return candidate.startsWith(normalizedQuery);
+		return candidate.includes(normalizedQuery);
+	});
+}
+
+function normalizeBrowserAiPrepareInput(
+	input?: CommanderControllerBrowserAiPrepareInput,
+): {
+	provider: CommanderControllerBrowserAiPrepareProvider;
+	dryRun: boolean;
+	navigateIfNeeded: boolean;
+	waitForReady: boolean;
+} {
+	const record = input && typeof input === "object" ? input : {};
+	const rawProvider =
+		(record as CommanderControllerBrowserAiPrepareInput).provider ??
+		(record as CommanderControllerBrowserAiPrepareInput).browserProvider;
+	return {
+		provider: normalizeBrowserAiPrepareProvider(rawProvider),
+		dryRun: (record as CommanderControllerBrowserAiPrepareInput).dryRun !== false,
+		navigateIfNeeded:
+			(record as CommanderControllerBrowserAiPrepareInput)
+				.navigateIfNeeded === true,
+		waitForReady:
+			(record as CommanderControllerBrowserAiPrepareInput).waitForReady !==
+			false,
+	};
+}
+
+function normalizeBrowserAiPrepareProvider(
+	value: unknown,
+): CommanderControllerBrowserAiPrepareProvider {
+	if (typeof value === "string") {
+		const normalized = value.trim().toLowerCase();
+		if (normalized === "claude" || normalized === "anthropic") return "Claude";
+		if (normalized === "gemini" || normalized === "google") return "Gemini";
+	}
+	return "ChatGPT";
+}
+
+function browserAiPrepareProviderToBrowserProvider(
+	provider: CommanderControllerBrowserAiPrepareProvider,
+): BrowserProvider {
+	if (provider === "Claude") return "claude";
+	if (provider === "Gemini") return "gemini";
+	return "chatgpt";
+}
+
+function getBrowserAiPrepareProviderUrl(
+	provider: CommanderControllerBrowserAiPrepareProvider,
+): string {
+	if (provider === "Claude") return "https://claude.ai/";
+	if (provider === "Gemini") return "https://gemini.google.com/app";
+	return "https://chatgpt.com/";
+}
+
 function normalizeSupervisorPilotPrepareInput(
 	input?: CommanderControllerSupervisorPilotPrepareInput,
 ): {
@@ -9046,6 +9492,74 @@ async function waitForSupervisorBrowserReadiness({
 		lastReason = composerReadiness.reason;
 	}
 	return { ready: false, reason: lastReason };
+}
+
+async function waitForBrowserAiProviderReadiness({
+	getRuntimeSnapshot,
+	getLiveUrl,
+	currentUrl,
+	injectIntoPage,
+	expectedProvider,
+	expectedProviderLabel,
+}: {
+	getRuntimeSnapshot: () => { status: string; bridgeAvailable: boolean; currentUrl: string };
+	getLiveUrl: () => string;
+	currentUrl: string;
+	injectIntoPage: (script: string) => Promise<unknown>;
+	expectedProvider: BrowserProvider;
+	expectedProviderLabel: CommanderControllerBrowserAiPrepareProvider;
+}): Promise<{ ready: boolean; reason: string }> {
+	const deadline = Date.now() + 10000;
+	let lastReason = "Browser AI did not become ready before timeout";
+	while (Date.now() < deadline) {
+		await delay(500);
+		const runtime = getRuntimeSnapshot();
+		const liveUrl = getLiveUrl() || currentUrl || runtime.currentUrl;
+		const provider = detectProvider(liveUrl);
+		if (provider !== expectedProvider) {
+			lastReason = `Browser AI is not on ${expectedProviderLabel}: ${liveUrl || "(blank)"}`;
+			continue;
+		}
+		const composerReadiness = await readBrowserAiComposerReadiness({
+			provider,
+			injectIntoPage,
+		});
+		if (
+			runtime.status === "available" &&
+			runtime.bridgeAvailable &&
+			composerReadiness.composerInjectionReady
+		) {
+			return {
+				ready: true,
+				reason: `${expectedProviderLabel} composer is ready`,
+			};
+		}
+		lastReason = composerReadiness.reason;
+	}
+	return { ready: false, reason: lastReason };
+}
+
+function getBrowserAiPrepareNextAction(
+	blockers: string[],
+	warnings: string[],
+	input: ReturnType<typeof normalizeBrowserAiPrepareInput>,
+): string {
+	const firstBlocker = blockers[0];
+	if (firstBlocker) {
+		if (firstBlocker.includes("requested provider")) {
+			return input.navigateIfNeeded
+				? `Navigate Browser AI to ${input.provider}, then rerun prepareBrowserAiReady.`
+				: `Rerun prepareBrowserAiReady({ provider: "${input.provider}", dryRun:false, navigateIfNeeded:true }) if navigation is allowed.`;
+		}
+		if (firstBlocker.includes("composer")) {
+			return `Wait for the ${input.provider} composer to become ready, then rerun prepareBrowserAiReady.`;
+		}
+		return getBrowserAiPreflightNextAction(blockers, warnings);
+	}
+	if (warnings.length > 0) {
+		return "Browser AI is usable with notes; review warnings before sending.";
+	}
+	return "Browser AI is ready; Worker binding was not required.";
 }
 
 function getSupervisorPilotReadinessNextAction(

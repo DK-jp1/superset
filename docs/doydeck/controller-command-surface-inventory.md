@@ -81,6 +81,7 @@ Implemented:
 | Tab / Workspace | `getActiveTabId()` | implemented | Active tab id only. |
 | Tab / Workspace | `listTabs()` | implemented | Read-only current workspace tab list. Does not run Browser AI / Worker readiness. |
 | Tab / Workspace | `getActiveTab()` | implemented | Read-only active tab summary. Does not run Browser AI / Worker readiness. |
+| Tab / Workspace | `findTabByTitle(input?)` | implemented | Read-only title/name lookup. Does not activate, create, rename, or close tabs. |
 | Tab / Workspace | `createTaskTab(input?)` | implemented | Fast task tab creation. Skips Browser AI / Worker / Handoff / preflight by design. |
 | Tab / Workspace | `createWorkspaceTaskTab(input?)` | implemented | Alias for `createTaskTab`. |
 | Tab / Workspace | `activateTab(input)` | implemented | Activates an existing workspace tab by `tabId`; no Browser AI / Worker readiness scan. |
@@ -89,6 +90,7 @@ Implemented:
 | Session | `setCommanderSession(input)` | implemented | Updates supported Commander session fields. |
 | Handoff | `buildHandoffLedger()` | implemented | Builds Handoff Ledger from current session/context. |
 | Handoff | `getHandoffLedger()` | implemented | Alias for `buildHandoffLedger`. |
+| Browser AI | `prepareBrowserAiReady(input?)` | implemented | Browser-AI-only provider preparation. Can navigate to ChatGPT / Claude / Gemini when explicitly requested; does not require worker binding. |
 | Browser AI | `getBrowserAiPreflight()` | implemented | Browser-AI-only readiness. Does not require worker binding. |
 | Browser AI | `getBrowserAiSendReadiness()` | implemented | Alias for `getBrowserAiPreflight`. |
 | Diagnostics | `getAutoLoopPreflight()` | implemented | Full Auto Loop / worker readiness preflight. |
@@ -127,9 +129,9 @@ Implemented:
 | Get active tab id | implemented | done | `getActiveTabId()`. |
 | Get active tab details | implemented | done | `getActiveTab()` returns title, pane ids, pane summaries, and focused pane. |
 | List tabs | implemented | done | `listTabs()` returns current workspace tabs without UI search. |
+| Find tab by title | implemented | done | `findTabByTitle({ query })` returns matching tabs without activation side effects. |
 | Select / activate tab by id | implemented | done | `activateTab({ tabId })` updates active tab without UI click exploration. |
 | Rename tab | implemented | done | `renameTaskTab({ tabId, title })` updates user tab title without close/delete behavior. |
-| Find tab by title | missing | P1 | Useful for "タスク管理アプリのタブへ戻って". |
 | Close tab | should not implement yet | P3 | Closing can kill terminal/session state. Requires Doy confirmation or strict dry-run/gate. |
 | Create Browser AI slot tab | missing / unclear | P2 | Browser AI lives in Commander side slot today; clarify before adding. |
 | Create task tab + optional readiness setup | partially implemented | P1 | `createTaskTab()` and `prepareSupervisorPilotReadiness()` are separate. A composed command may be useful but should keep phases explicit. |
@@ -140,10 +142,10 @@ Implemented:
 | --- | --- | --- | --- |
 | Browser AI preflight | implemented | done | `getBrowserAiPreflight()`. |
 | Browser AI readiness alias | implemented | done | `getBrowserAiSendReadiness()`. |
+| Prepare Browser AI provider only | implemented | done | `prepareBrowserAiReady({ provider, dryRun, navigateIfNeeded })` readies ChatGPT / Claude / Gemini without worker binding. |
 | Send Handoff | implemented | done | `sendHandoffToBrowserAI()`. |
 | Read latest reply | implemented | done | `getBrowserAiLatestReply()` / `readBrowserAiLatestReply()`. |
 | Get last submission | implemented | done | `getBrowserAiLastSubmission()`. |
-| Prepare Browser AI provider only | partially implemented | P1 | `prepareSupervisorPilotReadiness()` can navigate provider but is Supervisor-oriented. Browser-AI-only prepare would avoid worker assumptions. |
 | Send target-doc Browser AI review | partially implemented | P1 | S9.2 support exists in prompt flow, but a narrower command could reduce prompt boilerplate. |
 | Reset / clear Browser AI thread | dangerous | P3 | Could lose context or require provider-specific UI. Doy confirmation required. |
 
@@ -193,9 +195,6 @@ P0 missing or partial:
 
 P1 missing or partial:
 
-- `prepareBrowserAiReady(input?)`
-  - Browser-AI-only provider navigation/readiness.
-  - Purpose: avoid Supervisor readiness when Worker is not needed.
 - `sendTargetDocsReviewToBrowserAI(input)`
   - Browser-AI-only target docs review with prompt length/scope controls.
   - Purpose: reduce prompt boilerplate and long-context mistakes.
@@ -233,7 +232,6 @@ P0: 日常操作でUI探索が出るもの。
 
 P1: 実運用で頻繁に使うが回避可能なもの。
 
-- `prepareBrowserAiReady(input?)`
 - `sendTargetDocsReviewToBrowserAI(input)`
 - Decision Record accessor
 
@@ -254,16 +252,15 @@ P3: 危険または仕様未確定。
 
 次に実装するなら、state-onlyで副作用が小さいもの、またはread-only diagnosticsを優先する。
 
-Candidate 1: `prepareBrowserAiReady(input?)`
-
-- Browser-AI-only provider readiness。
-- Worker bindingを要求しない。
-- Browser AI provider navigationを行う場合は明示inputに限定する。
-
-Candidate 2: Decision Record accessor
+Candidate 1: Decision Record accessor
 
 - HandoffからDR-ID短参照を使いやすくする。
 - Decision Record本文を毎回promptに入れず、必要な短い前提だけを扱う。
+
+Candidate 2: `sendTargetDocsReviewToBrowserAI(input)`
+
+- Browser-AI-only target docs reviewを短いpromptで実行しやすくする。
+- 対象docs本文を必要な時だけ渡し、固定ルールの過剰投入を避ける。
 
 ## 8. やらないこと
 
@@ -299,41 +296,41 @@ Visual sanity checkは以下の場合に使う。
 
 ## 10. 次に実装すべきcommandトップ5
 
-1. `prepareBrowserAiReady(input?)`
-   - 理由: Browser-AI-only用途でSupervisor readinessを使わずに済む。
-   - 種別: readiness / optional provider preparation。
-   - リスク: medium-low。
-
-2. `findTabByTitle(input)`
-   - 理由: 日常的な「タスク管理アプリのタブへ戻って」をUI探索なしにする。
-   - 種別: read-only tab lookup。
-   - リスク: low。
-
-3. `sendTargetDocsReviewToBrowserAI(input)`
+1. `sendTargetDocsReviewToBrowserAI(input)`
    - 理由: Browser-AI-only target docs reviewを短いpromptで実行しやすくする。
    - 種別: Browser-AI-only send helper。
    - リスク: medium-low。
 
-4. Decision Record accessor
+2. Decision Record accessor
    - 理由: Handoff LedgerからDR-ID短参照をController pathで扱えるようにする。
    - 種別: read-only Decision Ledger lookup。
    - リスク: low。
 
-5. `getVisibleStateSnapshot(input?)`
+3. `getVisibleStateSnapshot(input?)`
    - 理由: UI状態判断でtext logと画面表示が矛盾した時のvisual sanity checkをController pathに寄せる。
    - 種別: read-only diagnostics。
    - リスク: medium-low。
+
+4. command timing helper
+   - 理由: slow operation reportsをController pathで切り分けやすくする。
+   - 種別: read-only/diagnostic wrapper。
+   - リスク: medium-low。
+
+5. `closeTab(input)` dry-run design
+   - 理由: 実装はまだしないが、危険操作としてのguard設計が必要。
+   - 種別: design only。
+   - リスク: high。
 
 ## 11. 実装順の提案
 
 Recommended S9.9 / S10 entry:
 
-1. `prepareBrowserAiReady(input?)`
-   - Browser-AI-only用途でSupervisor readinessを使わずに済む。
-2. `findTabByTitle(input)`
-   - tab名から既存tabへ戻るread-only lookupを追加する。
-3. Decision Record accessor
+1. `sendTargetDocsReviewToBrowserAI(input)`
+   - Browser-AI-only target docs reviewを短く安全に実行する。
+2. Decision Record accessor
    - HandoffからDecision Record短参照を使いやすくする。
+3. `getVisibleStateSnapshot(input?)`
+   - UI状態判断のvisual sanity checkをController pathに寄せる。
 
 Stop before implementation if any candidate expands into:
 
