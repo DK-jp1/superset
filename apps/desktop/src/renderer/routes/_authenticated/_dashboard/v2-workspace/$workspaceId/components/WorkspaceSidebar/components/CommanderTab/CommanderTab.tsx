@@ -245,6 +245,8 @@ interface CommanderControllerSupervisorPilotPrepareInput {
 	browserProvider?: unknown;
 	bindExistingWorker?: unknown;
 	dryRun?: unknown;
+	workerPaneId?: unknown;
+	workerType?: unknown;
 }
 
 interface CommanderControllerSupervisorPilotPrepareResult
@@ -253,6 +255,8 @@ interface CommanderControllerSupervisorPilotPrepareResult
 	requestedBrowserProvider: CommanderControllerSupervisorPilotProvider;
 	navigationTargetUrl: string;
 	bindExistingWorker: boolean;
+	requestedWorkerPaneId: string | null;
+	requestedWorkerType: CommanderControllerAllowedWorkerType | null;
 	attemptedActions: string[];
 	performedActions: string[];
 	skippedActions: string[];
@@ -1358,9 +1362,30 @@ export function CommanderTab({
 				}
 			}
 
-			if (!preflight.workerBound || !preflight.workerIdentityOk) {
+			const requestedWorkerMismatch =
+				(normalizedInput.workerPaneId &&
+					preflight.workerPaneId !== normalizedInput.workerPaneId) ||
+				(normalizedInput.workerType &&
+					preflight.workerType !== normalizedInput.workerType);
+			if (
+				!preflight.workerBound ||
+				!preflight.workerIdentityOk ||
+				requestedWorkerMismatch
+			) {
 				attemptedActions.push("bind existing recognized worker to active tab");
-				selectedWorkerCandidate = candidates[0] ?? null;
+				selectedWorkerCandidate =
+					candidates.find(
+						(candidate) =>
+							normalizedInput.workerPaneId &&
+							candidate.paneId === normalizedInput.workerPaneId,
+					) ??
+					candidates.find(
+						(candidate) =>
+							normalizedInput.workerType &&
+							candidate.workerType === normalizedInput.workerType,
+					) ??
+					candidates[0] ??
+					null;
 				if (!normalizedInput.bindExistingWorker) {
 					skippedActions.push("bindExistingWorker is false");
 				} else if (!selectedWorkerCandidate) {
@@ -1413,6 +1438,8 @@ export function CommanderTab({
 				requestedBrowserProvider: normalizedInput.browserProvider,
 				navigationTargetUrl,
 				bindExistingWorker: normalizedInput.bindExistingWorker,
+				requestedWorkerPaneId: normalizedInput.workerPaneId,
+				requestedWorkerType: normalizedInput.workerType,
 				attemptedActions,
 				performedActions,
 				skippedActions,
@@ -2195,8 +2222,11 @@ export function CommanderTab({
 				};
 			}
 
+			const outputLogText = normalizeWorkerOutputText(
+				getOutputLogSince(targetPaneId, 0),
+			);
 			const snapshot = getTerminalOutputSnapshot(targetPaneId);
-			if (!snapshot) {
+			if (!snapshot && !outputLogText) {
 				return {
 					ok: false,
 					...baseResult,
@@ -2222,10 +2252,14 @@ export function CommanderTab({
 				};
 			}
 
-			const rawOutputText = normalizeWorkerOutputText(snapshot.text);
-			const outputText = normalizeWorkerOutputText(snapshot.outputText);
-			const screenText = normalizeWorkerOutputText(snapshot.screenText);
-			const viewportText = normalizeWorkerOutputText(snapshot.viewportText);
+			const rawOutputText = normalizeWorkerOutputText(
+				snapshot?.text ?? outputLogText,
+			);
+			const outputText = normalizeWorkerOutputText(
+				snapshot?.outputText ?? outputLogText,
+			);
+			const screenText = normalizeWorkerOutputText(snapshot?.screenText ?? "");
+			const viewportText = normalizeWorkerOutputText(snapshot?.viewportText ?? "");
 			const extractedResponse = extractBoundWorkerResponseForAnalysis({
 				outputText,
 				screenText,
@@ -5507,8 +5541,17 @@ function normalizeSupervisorPilotPrepareInput(
 	browserProvider: CommanderControllerSupervisorPilotProvider;
 	bindExistingWorker: boolean;
 	dryRun: boolean;
+	workerPaneId: string | null;
+	workerType: CommanderControllerAllowedWorkerType | null;
 } {
 	const record = input && typeof input === "object" ? input : {};
+	const rawWorkerPaneId = (
+		record as CommanderControllerSupervisorPilotPrepareInput
+	).workerPaneId;
+	const workerPaneId =
+		typeof rawWorkerPaneId === "string"
+			? rawWorkerPaneId.trim() || null
+			: null;
 	return {
 		browserProvider: normalizeSupervisorPilotProvider(
 			(record as CommanderControllerSupervisorPilotPrepareInput).browserProvider,
@@ -5518,7 +5561,21 @@ function normalizeSupervisorPilotPrepareInput(
 				.bindExistingWorker !== false,
 		dryRun:
 			(record as CommanderControllerSupervisorPilotPrepareInput).dryRun !== false,
+		workerPaneId,
+		workerType: normalizeSupervisorPilotWorkerType(
+			(record as CommanderControllerSupervisorPilotPrepareInput).workerType,
+		),
 	};
+}
+
+function normalizeSupervisorPilotWorkerType(
+	value: unknown,
+): CommanderControllerAllowedWorkerType | null {
+	if (typeof value !== "string") return null;
+	const normalized = value.trim().toLowerCase();
+	return normalized === "codex" || normalized === "claude"
+		? normalized
+		: null;
 }
 
 function normalizeSupervisorPilotProvider(
