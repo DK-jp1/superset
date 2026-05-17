@@ -76,7 +76,8 @@ pushを含む運用は、まだDoy確認ゲート付きpilot扱い。
 - `workerType: codex`または`workerType: claude`。
 - `workerIdentityOk:true`。
 - `getAutoLoopPreflight()`が`READY`または`READY_WITH_NOTES`。
-- 指示がdocs-only、調査、低リスク修正の範囲。
+- 指示がdocs-only、調査、またはDoy確認済みの低リスク修正の範囲。
+  code変更は別途pilot / gate判定する。
 - commit / pushを含まない。
 - destructive操作を含まない。
 - cookie / token / private API / local DB直接操作を含まない。
@@ -141,7 +142,7 @@ pushを含む運用は、まだDoy確認ゲート付きpilot扱い。
 
 1. Doyが目的を渡す。
 2. Meta AI / Browser AIが要件整理する。
-3. Worker AIが実装または調査する。
+3. Worker AIがdocs-only作業、調査、またはDoy確認済みの実装を行う。
 4. Worker AIがセルフレビューする。
 5. Browser AI / 別文脈AIがレビューする。
 6. STOP / 次指示 / Doy確認事項を分類する。

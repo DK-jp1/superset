@@ -247,6 +247,8 @@ Related Decision:
 
 - Handoff本文に毎回長い前提を書きすぎない。
 - Browser AI / Workerへ送るpromptでは、必要な場合だけDecision Recordを短く参照する。
+- Handoffでは `DR-ID: title` を基本形にし、Worker / Browser promptに直接効く場合だけ
+  `rule: <そのtaskで守る1行ルール>` を1行で添える。
 - Decision Record本文を毎回丸ごとpromptに入れない。
 - Workerに必要なのは、判断全文ではなく、そのtaskで効く短いルールである。
 - 古いDecision Recordは見直し可能として扱う。
