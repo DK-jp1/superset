@@ -211,7 +211,9 @@ smokeで確認できなかったことは、完了報告に明記する。
 1. paneId指定で既存terminal paneを表示 / activateするController accessor
    - 目的: 非表示 / 非mount状態の既存Claude Code paneを安全に復旧しやすくする。
    - 期待効果: 新規Worker起動を避け、既存recognized workerを使いやすくする。
-   - 注意: terminal基盤の大改造に広げない。
+   - 状態: S9.3で `activateTerminalPaneForTab()` / `activateWorkerPane()` / `focusBoundWorkerPane()` を追加した。
+   - 確認: 既存Codex / Claude Code候補を検出し、paneId指定dry-runと既存Claude paneのactivate / restoreを確認した。
+   - 注意: terminal基盤の大改造に広げない。shell / unknownはrecognized worker扱いしない。
 
 2. Browser-AI-only lightweight preflight / docs本文レビュー
    - 目的: Worker不要のレビュー、壁打ち、要件整理だけを軽く確認する。
@@ -223,6 +225,7 @@ smokeで確認できなかったことは、完了報告に明記する。
 3. completionDetected細部改善
    - 目的: Worker responseがREADYでも`completionDetected:false`になる細部を減らす。
    - 期待効果: Supervisor pilotの完了判定が安定する。
+   - 状態: S9.3でWorker response summaryにcompletion / running / file-change / git-operationの理由を出す小改善を入れた。
    - 注意: Working中の出力をREADY扱いしない。
 
 4. Handoff LedgerからDecision Record参照の実運用smoke
@@ -250,9 +253,13 @@ S9.2では、Target docs attached Browser-AI-only readiness reviewを確認し�
 Handoffだけでなく対象docs本文をBrowser AIに渡し、低リスクdocs / 調査 / Browser AIレビュー用途は
 実運用OK、中規模実装pilotへ進行可能という判断を得た。Worker指示は不要、Doy確認事項なし。
 
-次に安全な中規模実装pilot候補は、paneId指定で既存terminal paneを表示 / activateするController accessor。
-これはClaude Code chainの運用改善に効くが、terminal pane表示やmount状態に関わるため、
-小さいsliceに限定し、terminal基盤の大改造へ広げない。
+S9.3では、paneId指定で既存terminal paneを表示 / activateするController accessorを追加した。
+新規Worker起動はせず、recognized Codex / Claude Code terminalだけを対象にする。
+既存Claude paneのactivate / restoreまで確認し、Auto Loopは開始していない。
+
+次に安全な中規模実装pilot候補は、非表示pane output captureの追加安定化、または
+completionDetected / Worker response summaryの追加サンプル検証。
+どちらも小さいsliceに限定し、terminal基盤の大改造へ広げない。
 
 ## 12. 完了報告形式
 

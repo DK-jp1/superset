@@ -357,8 +357,9 @@ Browser AIへHandoff送信
 - 2ターン以上の自動周回は未整理。
 - Auto Loop本体との統合/監視UIは未完成。
 - Doy Feedback / Decision LedgerはMarkdown MVPと初回Decision Recordまで作成済み。
-- 作業側CC / Claude Code実機smokeは必要なら別途。
+- 作業側CC / Claude Codeはno-opと小さいdocs pilotまで通過済み。長文実作業は継続監視。
 - Browser-AI-only軽量preflightは実装済み。Worker不要の要件整理/壁打ち/対象docsレビューで使える。
+- paneId指定activate accessorは実装済み。既存recognized worker paneの復旧に使える。
 - ChatGPT submit target warningは継続監視。
 - Controller Chain Outcomeの長期的な履歴/永続化は未設計。
 - 最新Superset追従は優先度を下げ、safe-devで体験を固める方針。
@@ -405,9 +406,9 @@ AI作業を安全に進めるための状態管理と受け渡しの環境です
    - Browser AIがSTOPではなく次Codex指示を返すケースを実機で確認。
    - 2ターン目でもtab、Browser AI slot、Worker bindingが混ざらないか見る。
 
-3. paneId指定activate accessor
-   - 非表示/非mount状態の既存terminal paneを安全に表示/activateする。
-   - 新規Worker起動を避け、既存recognized workerを復旧しやすくする。
+3. 非表示pane output capture安定化
+   - paneId指定activate accessorは実装済み。
+   - 次は非表示/非mount状態でもWorker response snapshotを安定して読めるか追加確認する。
 
 4. Doy Feedback / Decision Ledger
    - Doyの承認、違和感、却下理由、最終判断をHandoffとは別粒度で残す。
@@ -415,8 +416,9 @@ AI作業を安全に進めるための状態管理と受け渡しの環境です
 5. Auto Loop監視UI / stop reason表示
    - Controller chainで見えているblocker/warningをDoyがUI上で即読めるようにする。
 
-6. 作業側CC smoke
-   - Claude Codeをrecognized workerとしてbindし、Codexと同じchainが通るか確認。
+6. 作業側CCの長文docs実作業pilot
+   - Claude Code chainのno-op / 小さいdocs pilotは通った。
+   - 長文promptや長時間実作業でもecho/recapを誤読しないか継続確認する。
 
 ## 11. 差分トップ10
 

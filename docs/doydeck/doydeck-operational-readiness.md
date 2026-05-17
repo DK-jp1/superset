@@ -112,9 +112,11 @@ pushを含む運用は、まだDoy確認ゲート付きpilot扱い。
   - S9.2では対象docs本文をBrowser AIへ渡し、実運用OK範囲とS9中規模pilot入口条件をレビューできた。
   - 今後は対象docs本文が長い場合のprompt分割/要約運用を継続監視する。
 - paneId指定activate accessor
-  - 非表示 / 非mount状態のterminal paneを明示activateするController accessorは未実装。
+  - S9.3で既存terminal paneをpaneId指定で表示 / focusできるController accessorを追加した。
+  - 新規Worker起動はせず、recognized Codex / Claude Code workerだけを対象にする。
 - completionDetected細部改善
   - `READY`判定は実用に近づいたが、completion signalの細部は継続改善余地あり。
+  - S9.3でWorker response summaryにcompletion / running / file-change / git-operation理由を出すようにした。
 - Doy Feedback / Decision LedgerのHandoff連携
   - Markdown設計と初回Decision Recordは作成済み。
   - Handoff LedgerからDecision Recordへの短い参照ルールはdocs-onlyで運用開始。
@@ -216,9 +218,10 @@ batch運用でも、commitは意味単位で分け、pushはDoy確認で止め�
 Priority A: paneId指定activate accessor
 
 - S9.2のBrowser-AI-only docs本文レビューは通った。
-- 次に中規模実装pilotへ進むなら、既存terminal paneをpaneIdで表示/activateできるController accessorが第一候補。
-- 新規Worker起動ではなく、既存paneの安全な復旧に限定する。
-- terminal基盤の大改造へ広げない。
+- S9.3で `activateTerminalPaneForTab()` / `activateWorkerPane()` / `focusBoundWorkerPane()` を追加した。
+- 既存recognized Codex / Claude Code terminal paneだけを対象にし、新規Worker起動はしない。
+- shell / unknownはrecognized worker扱いしない。
+- 今後は非表示 / 非mount状態のpane復旧で継続利用する。
 
 Priority B: Handoff LedgerからDecision Recordへの短い参照を置く運用の継続
 
