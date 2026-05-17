@@ -257,9 +257,17 @@ S9.3では、paneId指定で既存terminal paneを表示 / activateするControl
 新規Worker起動はせず、recognized Codex / Claude Code terminalだけを対象にする。
 既存Claude paneのactivate / restoreまで確認し、Auto Loopは開始していない。
 
-次に安全な中規模実装pilot候補は、非表示pane output captureの追加安定化、または
-completionDetected / Worker response summaryの追加サンプル検証。
-どちらも小さいsliceに限定し、terminal基盤の大改造へ広げない。
+S9.4では、paneId指定activate後のoutput captureとWorker response readを追加確認した。
+既存Codex pane / Claude Code paneは、いずれもrecognized workerとしてactivateでき、
+screenText / viewportText / outputText / output logを取得できた。Claude Codeでは、
+TUIのprogress断片やfeedback promptが実返答扱いされる余地があったため、
+prompt echo / UI noise判定を小さく補強した。修正後は、Claude no-op ACKを`READY`
+かつ`receivedInstructionAck:true`で取得でき、Codex側のdocs確認完了出力も
+`completionDetected:true`で読めた。
+
+残る注意点として、Codex paneに古い入力欄テキストが残っている場合は、no-op再送信で
+誤って古い入力をsubmitしないようにする。Claude Code長文docs pilotは、短文ACKと
+response captureが安定してから、別sliceで再確認する。
 
 ## 12. 完了報告形式
 
