@@ -4962,7 +4962,23 @@ function extractBoundWorkerResponseCandidates(text: string): {
 	const lines = trimmed.split("\n");
 	const ignoredUiNoiseLines: string[] = [];
 	const usableLines: string[] = [];
+	let inRecapBlock = false;
 	for (const line of lines) {
+		if (inRecapBlock) {
+			if (/^\s*[⏺●]\s*/.test(line)) {
+				inRecapBlock = false;
+			} else {
+				const normalizedLine = line.replace(/\s+/g, " ").trim();
+				if (normalizedLine) ignoredUiNoiseLines.push(normalizedLine);
+				continue;
+			}
+		}
+		if (/※\s*recap:/i.test(line)) {
+			inRecapBlock = true;
+			const normalizedLine = line.replace(/\s+/g, " ").trim();
+			if (normalizedLine) ignoredUiNoiseLines.push(normalizedLine);
+			continue;
+		}
 		if (isBoundWorkerUiNoiseLine(line)) {
 			const normalizedLine = line.replace(/\s+/g, " ").trim();
 			if (normalizedLine) ignoredUiNoiseLines.push(normalizedLine);
@@ -5013,6 +5029,8 @@ function extractBoundWorkerResponseCandidates(text: string): {
 
 function stripInlineBoundWorkerUiNoise(line: string): string {
 	return line
+		.replace(/※\s*recap:.*$/i, "")
+		.replace(/\(disable recaps in \/config\).*$/i, "")
 		.replace(/[›>]\s*Write tests for @filename.*$/i, "")
 		.replace(/gpt-\d(?:\.\d+)?\s+\w+\s+·\s+~?\/.*$/i, "")
 		.replace(/[•·]?\s*Working\([^)]*(?:interrupt|interupt)[^)]*\).*$/i, "")
@@ -5050,12 +5068,15 @@ function isBoundWorkerUiNoiseLine(line: string): boolean {
 		/^\/(?:help|status|new)\b/i,
 		/^gpt-\d(?:\.\d+)?\s+\w+\s+·\s+~?\/[^\n]+/i,
 		/^›\s*Write tests for @filename/i,
+		/^※\s*recap:/i,
+		/\(disable recaps in \/config\)/i,
 	].some((pattern) => pattern.test(withoutBox));
 }
 
 function scoreBoundWorkerResponseCandidate(line: string): number {
 	const normalized = line.replace(/\s+/g, " ").trim();
 	if (!normalized || isBoundWorkerUiNoiseLine(normalized)) return 0;
+	if (/※\s*recap:|\(disable recaps in \/config\)/i.test(normalized)) return 0;
 	if (/返信してください|返答してください|reply\s+with/i.test(normalized)) return 0;
 	const scoredPatterns: Array<[RegExp, number]> = [
 		[/\bS[78]_[A-Za-z0-9_]*\b/, 130],
@@ -5527,6 +5548,7 @@ function detectBoundWorkerGitOperationSignal(text: string): {
 		/\bno git operations?\b/i,
 		/\bdo not use git\b/i,
 		/commit\/push(?:は|を)?していません/i,
+		/commit\s*\/\s*push.{0,120}(?:なし|無し|不要|未実施|していません)/i,
 		/commit\s*\/\s*push\s*(?:なし|無し|不要|未実施|していません)/i,
 		/commit(?:は|を)?(?:なし|無し|不要|未実施)/i,
 		/push(?:は|を)?(?:なし|無し|不要|未実施)/i,
@@ -5537,10 +5559,16 @@ function detectBoundWorkerGitOperationSignal(text: string): {
 		/コミット\s*\/\s*プッシュ\s*(?:なし|無し|不要|未実施|していません)/,
 	];
 	let safeReason: string | null = null;
-	for (const line of text.split("\n")) {
+	const lines = text.split("\n");
+	for (let index = 0; index < lines.length; index += 1) {
+		const line = lines[index] ?? "";
 		if (!line.trim()) continue;
+		const lineContext = [line, lines[index + 1] ?? ""]
+			.join(" ")
+			.replace(/\s+/g, " ")
+			.trim();
 		const writeNegated = negativeWritePatterns.some((pattern) =>
-			pattern.test(line),
+			pattern.test(lineContext),
 		);
 		if (!writeNegated) {
 			for (const [pattern, reason] of writeGitPatterns) {
