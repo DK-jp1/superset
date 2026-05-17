@@ -302,6 +302,16 @@ preflight再実行までに限定する。
 ready-for-inputかつ`workerInputReady:true`が確認できた場合だけ、no-opまたはdocs-onlyの
 短いsliceを送信する。
 
+S9.6Dでは、Claude paneの過去ログに残った`❯ docs/...`を現在入力欄の
+prompt residueと誤判定した。
+UI状態、入力欄、pane active、submit可否は、terminal text / viewportText / raw outputだけで
+確定しない。input residueを検出した場合は、DoyDeck-nativeのexposed QA function、
+CDP / Playwright / Electron screenshot、またはvisible snapshotでvisual sanity checkを行う。
+
+raw outputと画面表示が矛盾する場合は、画面確認を優先して仮説を立て直す。
+visual確認できない場合は推測で修正を積まず、「visual確認不可」として報告する。
+Computer Useはprimary操作経路にせず、必要な場合もvisual second opinionに留める。
+
 ## 12. 完了報告形式
 
 S9 pilotの完了報告には以下を含める。

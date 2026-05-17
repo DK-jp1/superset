@@ -140,6 +140,21 @@ pushを含む運用は、まだDoy確認ゲート付きpilot扱い。
 - `workerIdentityOk:false`。
 - active tab / Browser AI slot mismatch。
 - preflight `BLOCKED`。
+- UI状態、入力欄、pane active、submit可否について、text logと画面表示が矛盾している。
+
+### UI状態判断のvisual sanity check
+
+UI状態、入力欄、pane active、submit可否は、terminal text log / viewportText / raw outputだけで
+確定しない。特にinput residueやfeedback promptの判定では、以下のいずれかで
+visual sanity checkを行う。
+
+- DoyDeck-nativeのexposed QA function / Controller accessor。
+- CDP / Playwright / Electron側のscreenshotまたは画面状態確認。
+- Browser AI / Worker paneのvisible snapshot。
+
+raw outputと画面表示が矛盾する場合は、画面確認を優先して仮説を立て直す。
+visual確認できない場合は、推測で追加修正を積まず「visual確認不可」と報告する。
+Computer Useはprimary操作経路にせず、必要な場合もvisual second opinionとして扱う。
 
 ## 6. 実運用時の標準フロー
 
@@ -201,6 +216,8 @@ batch運用でも、commitは意味単位で分け、pushはDoy確認で止め�
 - Auto Loopが`off / idle`、または明示的に管理されている。
 - `git status`がclean、または変更範囲が明確。
 - Doy確認条件なし。
+- input residue / feedback prompt / submit可能状態など、UI状態判断が絡む場合は
+  visual sanity check済み。
 - Handoff Ledger生成OK。
 - active tab / Browser AI slot mismatchなし。
 
