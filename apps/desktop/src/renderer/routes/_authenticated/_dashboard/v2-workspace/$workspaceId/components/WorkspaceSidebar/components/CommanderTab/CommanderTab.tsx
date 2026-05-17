@@ -4841,7 +4841,7 @@ function prepareBoundWorkerInstructionForTerminal(
 		.split("\n")
 		.map((line) => line.replace(/\s+/g, " ").trim())
 		.filter(Boolean)
-		.join(" / ");
+		.join("。 ");
 
 	return {
 		text: compacted,
@@ -5126,6 +5126,32 @@ function extractBoundWorkerResponseForAnalysis(params: {
 					visibleStripped.text,
 				);
 				if (visibleFocused.responseFocused) {
+					const staleMarkerReason =
+						getBoundWorkerStaleAckMarkerReason(
+							visibleFocused.text,
+							lastInstructionMarker.instruction,
+						);
+					if (staleMarkerReason) {
+						analysisWarnings.push(staleMarkerReason);
+						return {
+							deltaText: visibleDeltaText,
+							analyzedResponseText: "",
+							promptEchoRemoved:
+								stripped.promptEchoRemoved || visibleStripped.promptEchoRemoved,
+							usedLastSendMarker,
+							analysisWarnings,
+							uiNoiseRemoved:
+								focused.uiNoiseRemoved || visibleFocused.uiNoiseRemoved,
+							ignoredUiNoiseLines: truncateIgnoredUiNoiseLines([
+								...focused.ignoredUiNoiseLines,
+								...visibleFocused.ignoredUiNoiseLines,
+							]),
+							extractedResponseCandidates:
+								visibleFocused.extractedResponseCandidates,
+							selectedResponseReason: "stale-marker-waiting",
+							waitingReason: staleMarkerReason,
+						};
+					}
 					analysisWarnings.push(
 						"worker visible output used after raw delta lacked response",
 					);
@@ -5164,6 +5190,27 @@ function extractBoundWorkerResponseForAnalysis(params: {
 		}
 		if (!focused.text.trim()) {
 			analysisWarnings.push("worker output delta contains no response after prompt echo removal");
+		}
+		const staleMarkerReason = lastInstructionMarker
+			? getBoundWorkerStaleAckMarkerReason(
+					focused.text,
+					lastInstructionMarker.instruction,
+				)
+			: null;
+		if (staleMarkerReason) {
+			analysisWarnings.push(staleMarkerReason);
+			return {
+				deltaText,
+				analyzedResponseText: "",
+				promptEchoRemoved: stripped.promptEchoRemoved,
+				usedLastSendMarker,
+				analysisWarnings,
+				uiNoiseRemoved: focused.uiNoiseRemoved,
+				ignoredUiNoiseLines: focused.ignoredUiNoiseLines,
+				extractedResponseCandidates: focused.extractedResponseCandidates,
+				selectedResponseReason: "stale-marker-waiting",
+				waitingReason: staleMarkerReason,
+			};
 		}
 		if (
 			!focused.responseFocused &&
@@ -5265,12 +5312,12 @@ function isBoundWorkerProgressFragmentText(text: string): boolean {
 	const lines = text
 		.split("\n")
 		.map((line) => line.replace(/\s+/g, " ").trim())
-		.filter(Boolean);
+		.filter((line) => line && !/^[⏺●]$/.test(line));
 	if (lines.length === 0) return false;
 	return lines.every((line) => {
 		const compact = line.replace(/[^\p{L}\p{N}]+/gu, "");
 		return (
-			compact.length > 0 && compact.length <= 4 && /^[a-z]+$/i.test(compact)
+			compact.length > 0 && compact.length <= 4 && /^[a-z0-9]+$/i.test(compact)
 		);
 	});
 }
@@ -5312,7 +5359,7 @@ function getBoundWorkerPromptEchoResidualReason(
 		compactMarkers.some(
 			(marker) => marker.length >= 8 && compactText.includes(marker),
 		) &&
-		/(返信してください|返答してください|報告してください|確認してください|変更は不要|please\s+(?:reply|report|check))/i.test(
+		/(返信してください|返答してください|報告してください|確認してください|含めてください|変更は不要|please\s+(?:reply|report|check)|include\s+(?:this\s+)?marker)/i.test(
 			text,
 		)
 	) {
@@ -5346,6 +5393,38 @@ function getBoundWorkerPromptEchoResidualReason(
 		return "worker output contains only submitted prompt echo";
 	}
 
+	return null;
+}
+
+function getBoundWorkerStaleAckMarkerReason(
+	text: string,
+	instruction: string,
+): string | null {
+	const responseMarkers = extractWorkerAckMarkersFromInstruction(text);
+	if (responseMarkers.length === 0) return null;
+	const instructionMarkers = extractWorkerAckMarkersFromInstruction(instruction);
+	const staleMarkers = responseMarkers.filter(
+		(responseMarker) =>
+			!instructionMarkers.some((instructionMarker) =>
+				includesAckMarker(responseMarker, instructionMarker),
+			),
+	);
+	if (staleMarkers.length === 0) return null;
+	let residualText = text;
+	for (const marker of responseMarkers) {
+		residualText = residualText.replaceAll(marker, " ");
+	}
+	const residualCompact = residualText
+		.replace(/[^\p{L}\p{N}]+/gu, "")
+		.trim();
+	if (
+		residualCompact.length <= 40 ||
+		/(含めてください|返信してください|返答してください|報告してください)/.test(
+			text,
+		)
+	) {
+		return "worker output contains stale ack marker not found in last instruction";
+	}
 	return null;
 }
 
@@ -5474,14 +5553,24 @@ function extractBoundWorkerResponseCandidates(text: string): {
 		}
 		if (cleanedLine.trim()) usableLines.push(cleanedLine);
 	}
-	const assistantLineIndex = usableLines.findIndex((line) =>
-		/^\s*[⏺●]\s*/.test(line),
-	);
+	const assistantLineIndex = usableLines.findIndex((line) => {
+		const assistantText = line.replace(/^\s*[⏺●]\s*/, "").trim();
+		return (
+			/^\s*[⏺●]\s*/.test(line) &&
+			assistantText.length >= 3 &&
+			!isBoundWorkerProgressFragmentText(assistantText)
+		);
+	});
 	const responseCandidates = usableLines
 		.map((line, index) => ({
 			line: line.trim(),
 			index,
-			score: scoreBoundWorkerResponseCandidate(line),
+			score: isBoundWorkerPromptEchoTailCandidate(
+				line,
+				usableLines[index + 1] ?? "",
+			)
+				? 0
+				: scoreBoundWorkerResponseCandidate(line),
 		}))
 		.filter((candidate) => candidate.line && candidate.score > 0)
 		.sort((a, b) => b.score - a.score || b.index - a.index);
@@ -5518,7 +5607,7 @@ function stripInlineBoundWorkerUiNoise(line: string): string {
 		.replace(/gpt-\d(?:\.\d+)?\s+\w+\s+·\s+~?\/.*$/i, "")
 		.replace(/[•·]?\s*Working\([^)]*(?:interrupt|interupt)[^)]*\).*$/i, "")
 		.replace(/[✢✳✻✶✽·]\s*Worked for\b.*$/i, "")
-		.replace(/[✢✳✻✶✽·]?\s*(?:Baked|Baking|Crunching|Garnishing|Churning|Searching)[….\s\S]*$/i, "")
+		.replace(/[✢✳✻✶✽·]?\s*(?:Baked|Baking|Brewed|Brewing|Crunching|Garnishing|Churning|Searching)[….\s\S]*$/i, "")
 		.replace(
 			/[•·]?\d*(?:Working|Workin|Worki|Work|Wor|Wo)(?:[•·]?\d*(?:Working|Workin|Worki|Work|Wor|Wo|W|orking|rking|king|ing|ng|g))*.*$/i,
 			"",
@@ -5544,8 +5633,8 @@ function isBoundWorkerUiNoiseLine(line: string): boolean {
 		/^●?\s*How is Claude doing this session\?/i,
 		/^\d+\s*:\s*Bad\s*\d+\s*:\s*Fine\s*\d+\s*:\s*Good\s*\d+\s*:\s*Dismiss/i,
 		/^✻\s*Worked for\b/i,
-		/^✻\s*(?:Baked|Baking|Cooked|Crunched|Reticulating)\b/i,
-		/^[✢✳✻✶✽·]?\s*(?:Baked|Baking|Crunching|Garnishing|Churning|Searching)\b/i,
+		/^✻\s*(?:Baked|Baking|Brewed|Brewing|Cooked|Crunched|Reticulating)\b/i,
+		/^[✢✳✻✶✽·]?\s*(?:Baked|Baking|Brewed|Brewing|Crunching|Garnishing|Churning|Searching)\b/i,
 		/^·\s*Reticulating/i,
 		/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏◐◓◑◒⏳]\s*(?:Working|Thinking|Running)?/i,
 		/^OpenAI Codex\b/i,
@@ -5564,7 +5653,7 @@ function scoreBoundWorkerResponseCandidate(line: string): number {
 	const normalized = line.replace(/\s+/g, " ").trim();
 	if (!normalized || isBoundWorkerUiNoiseLine(normalized)) return 0;
 	if (/※\s*recap:|\(disable recaps in \/config\)/i.test(normalized)) return 0;
-	if (/返信してください|返答してください|reply\s+with/i.test(normalized)) return 0;
+	if (/返信してください|返答してください|含めてください|reply\s+with|include\s+(?:this\s+)?marker/i.test(normalized)) return 0;
 	const scoredPatterns: Array<[RegExp, number]> = [
 		[/\bS[789]_[A-Za-z0-9_]*\b/, 130],
 		[/\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*(?:SAFE|NOOP)_ACK(?:_[A-Za-z0-9]+)*\b/i, 130],
@@ -5595,6 +5684,18 @@ function scoreBoundWorkerResponseCandidate(line: string): number {
 			pattern.test(normalized) ? Math.max(best, score) : best,
 		0,
 	);
+}
+
+function isBoundWorkerPromptEchoTailCandidate(
+	line: string,
+	nextLine: string,
+): boolean {
+	const normalized = [line, nextLine].join(" ").replace(/\s+/g, " ").trim();
+	if (!normalized) return false;
+	if (!/\bS[789]_[A-Za-z0-9_]*\b|\b[A-Za-z0-9_]*(?:SAFE|NOOP)_ACK[A-Za-z0-9_]*\b/i.test(normalized)) {
+		return false;
+	}
+	return /含めてください|返信してください|返答してください|報告してください|reply\s+with|include\s+(?:this\s+)?marker/i.test(normalized);
 }
 
 function truncateIgnoredUiNoiseLines(lines: string[], maxLines = 12): string[] {
@@ -6119,7 +6220,20 @@ function detectWorkerAckMarker({
 			ackDetectionReason: "ack marker detected in analyzed worker response",
 		};
 	}
-	const markerInDelta = markers.find((marker) => includesAckMarker(delta, marker));
+	const markerInDelta = markers.find(
+		(marker) =>
+			includesAckMarker(delta, marker) &&
+			hasAnyWorkerOutputSignal(delta, [
+				/受信確認/,
+				/受け取りました/,
+				/確認しました/,
+				/了解しました/,
+				/\backnowledged\b/i,
+				/\breceived\b/i,
+				/現在待機中です/,
+				/待機中です/,
+			]),
+	);
 	if (markerInDelta) {
 		return {
 			receivedInstructionAckByMarker: true,
