@@ -4595,8 +4595,85 @@ function extractBoundWorkerResponseForAnalysis(params: {
 		if (focused.uiNoiseRemoved) {
 			analysisWarnings.push("worker UI noise removed from response analysis");
 		}
+		if (!focused.responseFocused) {
+			const visibleDeltaText = extractVisibleBoundWorkerDeltaText({
+				screenText,
+				viewportText,
+				instruction: lastInstructionMarker.instruction,
+			});
+			if (visibleDeltaText) {
+				const visibleStripped = stripBoundWorkerPromptEcho(
+					visibleDeltaText,
+					lastInstructionMarker.instruction,
+				);
+				const visibleFocused = extractBoundWorkerResponseCandidates(
+					visibleStripped.text,
+				);
+				if (visibleFocused.responseFocused) {
+					analysisWarnings.push(
+						"worker visible output used after raw delta lacked response",
+					);
+					if (visibleStripped.promptEchoRemoved) {
+						analysisWarnings.push(
+							"prompt echo removed from visible worker output analysis",
+						);
+					}
+					if (visibleFocused.uiNoiseRemoved) {
+						analysisWarnings.push(
+							"worker UI noise removed from visible response analysis",
+						);
+					}
+					return {
+						deltaText: visibleDeltaText,
+						analyzedResponseText: limitWorkerOutputText(
+							visibleFocused.text.trim(),
+						),
+						promptEchoRemoved:
+							stripped.promptEchoRemoved || visibleStripped.promptEchoRemoved,
+						usedLastSendMarker,
+						analysisWarnings,
+						uiNoiseRemoved:
+							focused.uiNoiseRemoved || visibleFocused.uiNoiseRemoved,
+						ignoredUiNoiseLines: truncateIgnoredUiNoiseLines([
+							...focused.ignoredUiNoiseLines,
+							...visibleFocused.ignoredUiNoiseLines,
+						]),
+						extractedResponseCandidates:
+							visibleFocused.extractedResponseCandidates,
+						selectedResponseReason: "visible-delta-response-candidate",
+						waitingReason: null,
+					};
+				}
+			}
+		}
 		if (!focused.text.trim()) {
 			analysisWarnings.push("worker output delta contains no response after prompt echo removal");
+		}
+		if (
+			!focused.responseFocused &&
+			isBoundWorkerProgressFragmentText(focused.text)
+		) {
+			analysisWarnings.push(
+				"worker output delta contains only progress fragments",
+			);
+			return {
+				deltaText,
+				analyzedResponseText: "",
+				promptEchoRemoved: stripped.promptEchoRemoved,
+				usedLastSendMarker,
+				analysisWarnings,
+				uiNoiseRemoved: true,
+				ignoredUiNoiseLines: truncateIgnoredUiNoiseLines([
+					...focused.ignoredUiNoiseLines,
+					...focused.text
+						.split("\n")
+						.map((line) => line.replace(/\s+/g, " ").trim())
+						.filter(Boolean),
+				]),
+				extractedResponseCandidates: focused.extractedResponseCandidates,
+				selectedResponseReason: "progress-fragment-waiting",
+				waitingReason: "worker output delta contains only progress fragments",
+			};
 		}
 		return {
 			deltaText,
@@ -4644,6 +4721,66 @@ function extractBoundWorkerResponseForAnalysis(params: {
 			? null
 			: "no response candidate found in visible output",
 	};
+}
+
+function isBoundWorkerProgressFragmentText(text: string): boolean {
+	const lines = text
+		.split("\n")
+		.map((line) => line.replace(/\s+/g, " ").trim())
+		.filter(Boolean);
+	if (lines.length === 0) return false;
+	return lines.every((line) => {
+		const compact = line.replace(/[^\p{L}\p{N}]+/gu, "");
+		return (
+			compact.length > 0 && compact.length <= 4 && /^[a-z]+$/i.test(compact)
+		);
+	});
+}
+
+function extractVisibleBoundWorkerDeltaText(params: {
+	screenText: string;
+	viewportText: string;
+	instruction: string;
+}): string {
+	const markers = extractWorkerAckMarkersFromInstruction(params.instruction);
+	const sources = [params.viewportText, params.screenText]
+		.map((source) => normalizeWorkerOutputText(source))
+		.filter((source) => source.trim().length > 0);
+	for (const marker of markers) {
+		for (const source of sources) {
+			const markerIndex = source.lastIndexOf(marker);
+			if (markerIndex < 0) continue;
+			const lineStart = source.lastIndexOf("\n", markerIndex);
+			return source.slice(lineStart >= 0 ? lineStart + 1 : markerIndex).trim();
+		}
+	}
+	const compactInstruction = compactWorkerInstructionForComparison(
+		params.instruction,
+	);
+	if (compactInstruction.length < 24) return "";
+	for (const source of sources) {
+		const lines = source.split("\n");
+		const compactLines = lines.map((line) =>
+			compactWorkerInstructionForComparison(line),
+		);
+		let lastEchoIndex = -1;
+		for (let index = 0; index < compactLines.length; index += 1) {
+			const compactLine = compactLines[index];
+			if (
+				compactLine.length >= 8 &&
+				(compactInstruction.includes(compactLine) ||
+					compactLine.includes(
+						compactInstruction.slice(0, Math.min(80, compactInstruction.length)),
+					))
+			) {
+				lastEchoIndex = index;
+			}
+		}
+		if (lastEchoIndex >= 0) {
+			return lines.slice(lastEchoIndex).join("\n").trim();
+		}
+	}
+	return "";
 }
 
 function extractBoundWorkerResponseCandidates(text: string): {
@@ -4728,8 +4865,14 @@ function isBoundWorkerUiNoiseLine(line: string): boolean {
 		/\besc to interrupt\b/i,
 		/^\(?\s*esc\s+to\s+interrupt\s*\)?$/i,
 		/^›\s*/,
+		/^❯\s*$/,
+		/^⏵⏵\s*bypass\s*permissions\s*on/i,
+		/^⏵⏵bypasspermissionson/i,
+		/^✻\s*(?:Cooked|Crunched|Reticulating)\b/i,
+		/^·\s*Reticulating/i,
 		/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏◐◓◑◒⏳]\s*(?:Working|Thinking|Running)?/i,
 		/^OpenAI Codex\b/i,
+		/^Claude Code\b/i,
 		/^model:\s*gpt-/i,
 		/^permissions:\s*YOLO mode/i,
 		/^\/(?:help|status|new)\b/i,
