@@ -198,6 +198,37 @@ interface CommanderControllerAutoLoopPreflightResult
 	handoffMissingFields: string[];
 }
 
+interface CommanderControllerBrowserAiPreflightResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerPreflightStatus;
+	activeTabId: string | null;
+	browserAiProvider: string;
+	browserAiReady: boolean;
+	browserAiSlotOk: boolean;
+	browserAiUrl: string;
+	browserAiSlotKey: string | null;
+	expectedBrowserAiSlotKey: string | null;
+	browserAiComposer: CommanderControllerBrowserAiReadiness;
+	composerReady: boolean;
+	composerInjectionReady: boolean;
+	submitTargetReady: boolean;
+	composerSelectorStatus: string;
+	submitSelectorStatus: string;
+	injectionTargetStatus: string;
+	injectionBlockers: string[];
+	latestAssistantReplyStatus: CommanderControllerLatestReplyStatus | null;
+	latestAssistantReplyLength: number | null;
+	latestAssistantReplyFingerprint: string | null;
+	assistantCount: number | null;
+	isResponding: boolean;
+	lastSubmissionType: CommanderControllerBrowserAiSubmissionType | null;
+	lastSubmissionStatus: CommanderControllerBrowserAiSubmissionRecordStatus | null;
+	lastSubmissionInjectionResult: string | null;
+	blockers: string[];
+	warnings: string[];
+	nextRequiredAction: string;
+}
+
 type CommanderControllerSupervisorPilotReadinessStatus =
 	CommanderControllerPreflightStatus;
 type CommanderControllerSupervisorPilotProvider = "ChatGPT" | "Claude";
@@ -604,6 +635,8 @@ interface CommanderControllerCommands {
 	) => CommanderControllerSessionResult;
 	buildHandoffLedger: () => CommanderControllerHandoffResult;
 	getHandoffLedger: () => CommanderControllerHandoffResult;
+	getBrowserAiPreflight: () => Promise<CommanderControllerBrowserAiPreflightResult>;
+	getBrowserAiSendReadiness: () => Promise<CommanderControllerBrowserAiPreflightResult>;
 	getAutoLoopPreflight: () => Promise<CommanderControllerAutoLoopPreflightResult>;
 	runAutoLoopPreflight: () => Promise<CommanderControllerAutoLoopPreflightResult>;
 	getSupervisorPilotReadiness: () => Promise<CommanderControllerSupervisorPilotReadinessResult>;
@@ -1239,6 +1272,131 @@ export function CommanderTab({
 			webview.getRuntimeSnapshot,
 			webview.injectIntoPage,
 			workerBinding,
+			workspaceId,
+		]);
+
+	const getBrowserAiPreflightController =
+		useCallback(async (): Promise<CommanderControllerBrowserAiPreflightResult> => {
+			const blockers: string[] = [];
+			const warnings: string[] = [];
+			const activeTabIdSnapshot = activeTabId;
+			const runtime = webview.getRuntimeSnapshot();
+			const liveUrl = webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
+			const provider = detectProvider(liveUrl);
+			const expectedBrowserAiSlotKey = buildCommanderBrowserSlotKey({
+				workspaceId,
+				activeTabId: activeTabIdSnapshot,
+			});
+			const browserAiSlotOk =
+				Boolean(activeTabIdSnapshot) &&
+				runtime.browserSlotKey === expectedBrowserAiSlotKey &&
+				runtime.activeTabId === activeTabIdSnapshot;
+			const composerReadiness = await readBrowserAiComposerReadiness({
+				provider,
+				injectIntoPage: webview.injectIntoPage,
+			});
+			const composerDiagnostics =
+				getBrowserAiComposerDiagnosticFields(composerReadiness);
+			const browserAiReady =
+				Boolean(provider) &&
+				runtime.status === "available" &&
+				runtime.bridgeAvailable &&
+				composerReadiness.composerInjectionReady;
+			let latestAssistantReplyStatus: CommanderControllerLatestReplyStatus | null =
+				null;
+			let latestAssistantReplyLength: number | null = null;
+			let latestAssistantReplyFingerprint: string | null = null;
+			let assistantCount: number | null = null;
+			let isResponding = false;
+
+			if (!activeTabIdSnapshot) blockers.push("active tab not found");
+			if (!provider) blockers.push("browser ai provider not ready");
+			if (runtime.status !== "available") {
+				blockers.push("browser ai runtime unavailable");
+			}
+			if (!runtime.bridgeAvailable) {
+				blockers.push("browser ai bridge unavailable");
+			}
+			const composerBlocker = getBrowserAiComposerBlocker(composerReadiness);
+			if (provider && composerBlocker) {
+				blockers.push(composerBlocker);
+			}
+			if (!browserAiSlotOk) blockers.push("browser ai slot mismatch");
+
+			if (provider && runtime.status === "available" && runtime.bridgeAvailable) {
+				try {
+					const latestState = normalizeBrowserAiLatestReplyState(
+						await webview.injectIntoPage(buildLatestReplyStateScript(provider)),
+					);
+					latestAssistantReplyLength = latestState.latestText.length;
+					latestAssistantReplyFingerprint = latestState.latestFingerprint;
+					assistantCount = latestState.assistantCount;
+					isResponding = latestState.isResponding;
+					latestAssistantReplyStatus = latestState.isResponding
+						? "WAITING"
+						: latestState.latestText.trim()
+							? "READY"
+							: "WAITING";
+				} catch (error) {
+					latestAssistantReplyStatus = "FAILED";
+					latestAssistantReplyLength = null;
+					warnings.push(
+						error instanceof Error
+							? `browser ai latest reply state unavailable: ${error.message}`
+							: "browser ai latest reply state unavailable",
+					);
+				}
+			}
+
+			if (runtime.visualStatus === "NEEDS_FIX") {
+				warnings.push(`browser ai visual status needs fix: ${runtime.visualReason}`);
+			}
+			if (runtime.status === "available" && runtime.webContentsId === null) {
+				warnings.push("browser ai webContentsId is unavailable");
+			}
+			const submitWarning = getBrowserAiSubmitWarning(composerReadiness);
+			if (submitWarning) warnings.push(submitWarning);
+
+			const lastSubmission = lastBrowserAiSubmissionRef.current;
+			const status: CommanderControllerPreflightStatus =
+				blockers.length > 0
+					? "BLOCKED"
+					: warnings.length > 0
+						? "READY_WITH_NOTES"
+						: "READY";
+
+			return {
+				ok: blockers.length === 0,
+				...getCommanderControllerContext(),
+				status,
+				activeTabId: activeTabIdSnapshot,
+				browserAiProvider: runtime.providerLabel || getProviderLabel(provider),
+				browserAiReady,
+				browserAiSlotOk,
+				browserAiUrl: liveUrl,
+				browserAiSlotKey: runtime.browserSlotKey,
+				expectedBrowserAiSlotKey,
+				browserAiComposer: composerReadiness,
+				...composerDiagnostics,
+				latestAssistantReplyStatus,
+				latestAssistantReplyLength,
+				latestAssistantReplyFingerprint,
+				assistantCount,
+				isResponding,
+				lastSubmissionType: lastSubmission?.type ?? null,
+				lastSubmissionStatus: lastSubmission?.status ?? null,
+				lastSubmissionInjectionResult: lastSubmission?.injectionResult ?? null,
+				blockers,
+				warnings,
+				nextRequiredAction: getBrowserAiPreflightNextAction(blockers, warnings),
+			};
+		}, [
+			activeTabId,
+			getCommanderControllerContext,
+			webview.currentUrl,
+			webview.getLiveUrl,
+			webview.getRuntimeSnapshot,
+			webview.injectIntoPage,
 			workspaceId,
 		]);
 
@@ -2967,6 +3125,8 @@ export function CommanderTab({
 			setCommanderSession: setCommanderSessionController,
 			buildHandoffLedger: buildHandoffLedgerController,
 			getHandoffLedger: buildHandoffLedgerController,
+			getBrowserAiPreflight: getBrowserAiPreflightController,
+			getBrowserAiSendReadiness: getBrowserAiPreflightController,
 			getAutoLoopPreflight: getAutoLoopPreflightController,
 			runAutoLoopPreflight: getAutoLoopPreflightController,
 			getSupervisorPilotReadiness: getSupervisorPilotReadinessController,
@@ -3000,6 +3160,7 @@ export function CommanderTab({
 		getCommanderSessionControllerResult,
 		setCommanderSessionController,
 		buildHandoffLedgerController,
+		getBrowserAiPreflightController,
 		getAutoLoopPreflightController,
 		getSupervisorPilotReadinessController,
 		prepareSupervisorPilotReadinessController,
@@ -6036,6 +6197,38 @@ function getSupervisorPilotReadinessNextAction(
 		return "Start or select a Codex or Claude Code terminal before preparing supervisor pilot readiness.";
 	}
 	return getAutoLoopPreflightNextAction(blockers, warnings);
+}
+
+function getBrowserAiPreflightNextAction(
+	blockers: string[],
+	warnings: string[],
+): string {
+	const firstBlocker = blockers[0];
+	if (firstBlocker) {
+		if (firstBlocker.includes("active tab")) {
+			return "Open or select a DoyDeck tab, then rerun Browser AI preflight.";
+		}
+		if (firstBlocker.includes("browser ai provider")) {
+			return "Select ChatGPT or Claude and wait until the Browser AI composer is ready.";
+		}
+		if (firstBlocker.includes("runtime")) {
+			return "Wait for the Browser AI webview runtime, then rerun Browser AI preflight.";
+		}
+		if (firstBlocker.includes("bridge")) {
+			return "Wait for the Browser AI bridge, then rerun Browser AI preflight.";
+		}
+		if (firstBlocker.includes("composer")) {
+			return "Wait for the Browser AI composer, then rerun Browser AI preflight.";
+		}
+		if (firstBlocker.includes("slot")) {
+			return "Confirm the active tab and Browser AI slot, then rerun Browser AI preflight.";
+		}
+		return "Resolve Browser AI blockers, then rerun Browser AI preflight.";
+	}
+	if (warnings.length > 0) {
+		return "Browser AI is usable with notes; review warnings before sending.";
+	}
+	return "Browser AI is ready for send/read operations.";
 }
 
 function applySupervisorWorkerCandidateToPreflight(
