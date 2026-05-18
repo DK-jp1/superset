@@ -698,13 +698,20 @@ type CommanderControllerBoundWorkerCompletionStatus =
 	| "RUNNING"
 	| "COMPLETED"
 	| "NOT_SUBMITTED"
+	| "WAITING"
 	| "STALLED"
+	| "STALE"
 	| "BLOCKED"
 	| "UNKNOWN";
 
 interface CommanderControllerBoundWorkerCompletionStatusInput {
 	staleThresholdMs?: unknown;
 	recentWindowMs?: unknown;
+	expectedTaskRunId?: unknown;
+	expectedSentAt?: unknown;
+	expectedWorkerPaneId?: unknown;
+	expectedTabId?: unknown;
+	expectedDoneTag?: unknown;
 }
 
 interface CommanderControllerBoundWorkerCompletionStatusResult
@@ -716,6 +723,17 @@ interface CommanderControllerBoundWorkerCompletionStatusResult
 	workerIdentityOk: boolean;
 	workerUiState: CommanderControllerWorkerUiState;
 	workerInputReady: boolean;
+	taskPhase: CommanderControllerBoundWorkerCompletionStatus;
+	taskRunId: string | null;
+	instructionId: string | null;
+	sentAt: string | null;
+	expectedDoneTag: string | null;
+	currentRunOutputLength: number;
+	currentRunStarted: boolean;
+	phaseChangedAt: string | null;
+	lastCompletedTaskRunId: string | null;
+	lastCompletedAt: string | null;
+	staleReason: string | null;
 	instructionSubmitted: boolean;
 	inputStillContainsInstruction: boolean;
 	rawLen: number;
@@ -726,6 +744,8 @@ interface CommanderControllerBoundWorkerCompletionStatusResult
 	completionSignalReason: string | null;
 	doneTagDetected: boolean;
 	endReportDetected: boolean;
+	reportExtracted: boolean;
+	reportLength: number;
 	workerReportExtracted: boolean;
 	workerReportLength: number;
 	promptReturned: boolean;
@@ -955,6 +975,8 @@ interface CommanderControllerSendInstructionInput {
 	requirePreflight?: unknown;
 	allowWorkerTypes?: unknown;
 	dryRun?: unknown;
+	taskRunId?: unknown;
+	expectedDoneTag?: unknown;
 }
 
 interface CommanderControllerSendInstructionResult
@@ -973,6 +995,10 @@ interface CommanderControllerSendInstructionResult
 	warnings: string[];
 	message: string;
 	sentAt: string | null;
+	taskRunId: string | null;
+	instructionId: string | null;
+	expectedDoneTag: string | null;
+	outputOffsetBeforeSend: number | null;
 	preflightStatus: CommanderControllerPreflightStatus;
 	preflightBlockers: string[];
 	preflightWarnings: string[];
@@ -986,11 +1012,15 @@ interface CommanderControllerSendInstructionResult
 interface CommanderControllerLastWorkerInstructionMarker {
 	paneId: string;
 	terminalId: string | null;
+	taskRunId: string;
+	instructionId: string;
+	tabId: string | null;
 	sentAt: string;
 	instruction: string;
 	instructionHash: string;
 	instructionPreview: string;
 	instructionLength: number;
+	expectedDoneTag: string | null;
 	outputOffsetBeforeSend: number;
 }
 
@@ -1038,6 +1068,7 @@ interface CommanderControllerBoundWorkerLatestResponseResult
 	workerReportSource: string | null;
 	workerReportLength: number;
 	workerReportPreview: string;
+	staleReportIgnored: boolean;
 	summary: string;
 	promptEchoRemoved: boolean;
 	usedLastSendMarker: boolean;
@@ -1952,6 +1983,29 @@ export function CommanderTab({
 				lastOutputAt: number;
 				checkedAt: number;
 				textLength: number;
+			}
+		>
+	>(new Map());
+	const workerRunStateRef = useRef<
+		Map<
+			string,
+			{
+				taskRunId: string;
+				instructionId: string;
+				tabId: string | null;
+				paneId: string;
+				terminalId: string | null;
+				sentAt: string;
+				instruction: string;
+				instructionHash: string;
+				instructionPreview: string;
+				instructionLength: number;
+				expectedDoneTag: string | null;
+				outputOffsetBeforeSend: number;
+				phase: CommanderControllerBoundWorkerCompletionStatus;
+				phaseChangedAt: number;
+				lastCompletedTaskRunId: string | null;
+				lastCompletedAt: string | null;
 			}
 		>
 	>(new Map());
@@ -5113,6 +5167,10 @@ export function CommanderTab({
 				blockers,
 				warnings,
 				sentAt: null,
+				taskRunId: null,
+				instructionId: null,
+				expectedDoneTag: normalizedInput.expectedDoneTag ?? null,
+				outputOffsetBeforeSend: null,
 				preflightStatus: preflight.status,
 				preflightBlockers: preflight.blockers,
 				preflightWarnings: preflight.warnings,
@@ -5151,6 +5209,14 @@ export function CommanderTab({
 
 			try {
 				const outputOffsetBeforeSend = getOutputLogOffset(targetPaneId);
+				const taskRunId =
+					normalizedInput.taskRunId ??
+					generateCommanderControllerRunId("task-run");
+				const instructionId =
+					generateCommanderControllerRunId("instruction");
+				const expectedDoneTag =
+					normalizedInput.expectedDoneTag ??
+					extractDoneTagName(terminalInstruction.text);
 				const ok = await sendToTerminal(
 					targetPaneId,
 					terminalInstruction.text,
@@ -5173,19 +5239,45 @@ export function CommanderTab({
 				lastWorkerInstructionMarkerRef.current = {
 					paneId: targetPaneId,
 					terminalId: preflight.terminalId,
+					taskRunId,
+					instructionId,
+					tabId: activeTabId,
 					sentAt,
 					instruction: terminalInstruction.text,
 					instructionHash: hashControllerText(terminalInstruction.text),
 					instructionPreview: terminalInstruction.text.slice(0, 240),
 					instructionLength: instruction.length,
+					expectedDoneTag,
 					outputOffsetBeforeSend,
 				};
+				workerRunStateRef.current.set(targetPaneId, {
+					taskRunId,
+					instructionId,
+					tabId: activeTabId,
+					paneId: targetPaneId,
+					terminalId: preflight.terminalId,
+					sentAt,
+					instruction: terminalInstruction.text,
+					instructionHash: hashControllerText(terminalInstruction.text),
+					instructionPreview: terminalInstruction.text.slice(0, 240),
+					instructionLength: instruction.length,
+					expectedDoneTag,
+					outputOffsetBeforeSend,
+					phase: "NOT_SUBMITTED",
+					phaseChangedAt: Date.now(),
+					lastCompletedTaskRunId: null,
+					lastCompletedAt: null,
+				});
 				return {
 					ok: true,
 					...baseResult,
 					status: "SENT",
 					message: `Instruction sent to ${workerType} worker`,
 					sentAt,
+					taskRunId,
+					instructionId,
+					expectedDoneTag,
+					outputOffsetBeforeSend,
 				};
 			} catch (error) {
 				return {
@@ -5353,12 +5445,14 @@ export function CommanderTab({
 				workerReportSource,
 				workerReportLength,
 				workerReportPreview,
+				staleReportIgnored,
 			} = extractedResponse;
 			const workerReportFields = {
 				workerReportExtracted,
 				workerReportSource,
 				workerReportLength,
 				workerReportPreview,
+				staleReportIgnored,
 			};
 			const latestResponseText = analyzedResponseText;
 			const analysis = analyzeBoundWorkerOutput(latestResponseText, {
@@ -5550,6 +5644,8 @@ export function CommanderTab({
 				targetPaneId && lastWorkerInstructionMarkerRef.current?.paneId === targetPaneId
 					? lastWorkerInstructionMarkerRef.current
 					: null;
+			const currentRun =
+				targetPaneId ? workerRunStateRef.current.get(targetPaneId) ?? null : null;
 
 			if (!activeTabIdSnapshot) blockers.push("active tab not found");
 			if (preflight.workerBindingStatus === "stale") {
@@ -5562,6 +5658,24 @@ export function CommanderTab({
 				blockers.push(`worker type is not allowed: ${workerType || "unknown"}`);
 			}
 			if (!targetPaneId) blockers.push("bound worker paneId not found");
+			if (
+				normalizedInput.expectedWorkerPaneId &&
+				targetPaneId &&
+				normalizedInput.expectedWorkerPaneId !== targetPaneId
+			) {
+				blockers.push(
+					`expected worker pane mismatch: expected ${normalizedInput.expectedWorkerPaneId}, active bound worker is ${targetPaneId}`,
+				);
+			}
+			if (
+				normalizedInput.expectedTabId &&
+				activeTabIdSnapshot &&
+				normalizedInput.expectedTabId !== activeTabIdSnapshot
+			) {
+				blockers.push(
+					`expected tab mismatch: expected ${normalizedInput.expectedTabId}, active tab is ${activeTabIdSnapshot}`,
+				);
+			}
 			warnings.push(...preflight.warnings.map((warning) => `preflight: ${warning}`));
 
 			const blockedBase = {
@@ -5572,6 +5686,19 @@ export function CommanderTab({
 				workerIdentityOk,
 				workerUiState: preflight.workerUiState,
 				workerInputReady: preflight.workerInputReady,
+				taskPhase: "BLOCKED" as CommanderControllerBoundWorkerCompletionStatus,
+				taskRunId: currentRun?.taskRunId ?? null,
+				instructionId: currentRun?.instructionId ?? null,
+				sentAt: currentRun?.sentAt ?? null,
+				expectedDoneTag: currentRun?.expectedDoneTag ?? null,
+				currentRunOutputLength: 0,
+				currentRunStarted: false,
+				phaseChangedAt: currentRun
+					? new Date(currentRun.phaseChangedAt).toISOString()
+					: null,
+				lastCompletedTaskRunId: currentRun?.lastCompletedTaskRunId ?? null,
+				lastCompletedAt: currentRun?.lastCompletedAt ?? null,
+				staleReason: null,
 				instructionSubmitted: false,
 				inputStillContainsInstruction: false,
 				rawLen: 0,
@@ -5582,6 +5709,8 @@ export function CommanderTab({
 				completionSignalReason: null,
 				doneTagDetected: false,
 				endReportDetected: false,
+				reportExtracted: false,
+				reportLength: 0,
 				workerReportExtracted: false,
 				workerReportLength: 0,
 				promptReturned: false,
@@ -5625,12 +5754,30 @@ export function CommanderTab({
 					.filter((value) => value.trim())
 					.join("\n"),
 			);
+			const currentRunOutputText = currentRun
+				? normalizeWorkerOutputText(
+						getOutputLogSince(targetPaneId, currentRun.outputOffsetBeforeSend),
+					)
+				: "";
+			const currentRunOutputWithoutEcho = currentRun
+				? stripBoundWorkerPromptEcho(
+						currentRunOutputText,
+						currentRun.instruction,
+					).text
+				: "";
+			const currentRunStarted = Boolean(currentRun);
+			const currentScopeText = currentRun
+				? currentRunOutputWithoutEcho
+				: combinedOutputText;
 			const observedText = normalizeBoundWorkerStatusObservationText(
-				combinedOutputText,
+				currentScopeText || combinedOutputText,
 			);
 			const now = Date.now();
+			const observationKey = currentRun
+				? `${targetPaneId}:${currentRun.taskRunId}`
+				: `${targetPaneId}:global`;
 			const previousObservation =
-				workerCompletionObservationRef.current.get(targetPaneId);
+				workerCompletionObservationRef.current.get(observationKey);
 			const currentFingerprint = hashControllerText(observedText);
 			const outputChanged =
 				Boolean(previousObservation) &&
@@ -5640,7 +5787,7 @@ export function CommanderTab({
 				!previousObservation || outputChanged
 					? now
 					: previousObservation.lastOutputAt;
-			workerCompletionObservationRef.current.set(targetPaneId, {
+			workerCompletionObservationRef.current.set(observationKey, {
 				fingerprint: currentFingerprint,
 				lastOutputAt: lastOutputAtMs,
 				checkedAt: now,
@@ -5655,24 +5802,92 @@ export function CommanderTab({
 					/(?:input|prompt|residue|未送信|残留)/i.test(blocker),
 				);
 			const instructionSubmitted =
-				Boolean(lastInstructionMarker) &&
-				outputLogText.length > (lastInstructionMarker?.outputOffsetBeforeSend ?? 0) &&
+				Boolean(currentRun ?? lastInstructionMarker) &&
 				!inputStillContainsInstruction;
-			const doneTagDetected = /\bDONE_TAG\s*:/.test(combinedOutputText);
-			const endReportDetected = /\bEND_REPORT\b/.test(combinedOutputText);
-			const idleMessageDetected = detectBoundWorkerIdleMessage(combinedOutputText);
+			const expectedDoneTag =
+				normalizedInput.expectedDoneTag ??
+				currentRun?.expectedDoneTag ??
+				lastInstructionMarker?.expectedDoneTag ??
+				null;
+			const currentRunReportsFromRawOutput = currentRun
+				? extractBoundWorkerDoneTagReports(currentRunOutputText)
+				: [];
+			const matchingCurrentRunReportsFromRawOutput = expectedDoneTag
+				? currentRunReportsFromRawOutput.filter(
+						(report) => report.tag === expectedDoneTag,
+					)
+				: currentRunReportsFromRawOutput;
+			const currentRunReportFromResponseEchoPair =
+				matchingCurrentRunReportsFromRawOutput.length >= 2
+					? matchingCurrentRunReportsFromRawOutput.at(-1) ?? null
+					: null;
+			const currentRunReport =
+				extractBoundWorkerDoneTagReport(currentScopeText) ??
+				currentRunReportFromResponseEchoPair;
+			const visibleReport = currentRun
+				? extractBoundWorkerDoneTagReport(combinedOutputText)
+				: null;
+			const currentReportMatchesExpected =
+				Boolean(currentRunReport) &&
+				(!expectedDoneTag || currentRunReport?.tag === expectedDoneTag);
+			const staleVisibleReportOnly =
+				currentRunStarted &&
+				!currentReportMatchesExpected &&
+				Boolean(visibleReport) &&
+				(!expectedDoneTag || visibleReport?.tag !== expectedDoneTag);
+			const doneTagDetected = Boolean(currentRunReport);
+			const endReportDetected =
+				Boolean(currentRunReport) && /\bEND_REPORT\b/.test(currentRunReport?.text ?? "");
+			const idleMessageDetected = detectBoundWorkerIdleMessage(currentScopeText);
 			const workerResponse = await readBoundWorkerLatestResponseController();
+			const promptEchoOnly =
+				workerResponse.selectedResponseReason === "prompt-echo-waiting" ||
+				/(?:prompt echo|submitted prompt echo)/i.test(
+					workerResponse.waitingReason ?? "",
+				);
+			const effectiveInstructionSubmitted =
+				instructionSubmitted && !promptEchoOnly;
+			const expectedRunMismatch =
+				Boolean(normalizedInput.expectedTaskRunId) &&
+				normalizedInput.expectedTaskRunId !== (currentRun?.taskRunId ?? null);
+			const expectedSentAtMismatch =
+				Boolean(normalizedInput.expectedSentAt) &&
+				normalizedInput.expectedSentAt !== (currentRun?.sentAt ?? null);
+			const expectedDoneTagMismatch =
+				Boolean(normalizedInput.expectedDoneTag) &&
+				normalizedInput.expectedDoneTag !== expectedDoneTag;
+			if (expectedRunMismatch) {
+				warnings.push(
+					`expected taskRunId does not match current run: ${normalizedInput.expectedTaskRunId}`,
+				);
+			}
+			if (expectedSentAtMismatch) {
+				warnings.push(
+					`expected sentAt does not match current run: ${normalizedInput.expectedSentAt}`,
+				);
+			}
+			if (expectedDoneTagMismatch) {
+				warnings.push(
+					`expected DONE_TAG does not match current run: ${normalizedInput.expectedDoneTag}`,
+				);
+			}
 			const completionDetected =
-				workerResponse.completionDetected ||
-				(doneTagDetected && endReportDetected) ||
-				workerResponse.workerReportExtracted;
+				currentReportMatchesExpected ||
+				(!currentRunStarted &&
+					(workerResponse.completionDetected ||
+						workerResponse.workerReportExtracted ||
+						(doneTagDetected && endReportDetected)));
 			const completionSignalReason =
-				workerResponse.completionSignalReason ??
-				(doneTagDetected && endReportDetected
-					? "DONE_TAG/END_REPORT worker report detected"
-					: workerResponse.workerReportExtracted
-						? "structured worker report extracted"
-						: null);
+				currentReportMatchesExpected
+					? expectedDoneTag
+						? `current run DONE_TAG/END_REPORT worker report detected: ${expectedDoneTag}`
+						: "current run DONE_TAG/END_REPORT worker report detected"
+					: !currentRunStarted
+						? (workerResponse.completionSignalReason ??
+							(workerResponse.workerReportExtracted
+								? "structured worker report extracted"
+								: null))
+						: null;
 			const promptReturned =
 				preflight.workerInputReady &&
 				(completionDetected || idleMessageDetected) &&
@@ -5683,21 +5898,42 @@ export function CommanderTab({
 				!promptReturned &&
 				!inputStillContainsInstruction &&
 				(runningSignal.outputLooksStillRunning ||
-					(instructionSubmitted && outputChangedRecently));
+					(effectiveInstructionSubmitted && outputChangedRecently));
 
 			let status: CommanderControllerBoundWorkerCompletionStatus = "UNKNOWN";
-			if (inputStillContainsInstruction) {
+			let staleReason: string | null = null;
+			if (expectedRunMismatch) {
+				staleReason = "expected taskRunId does not match the current worker run";
+			} else if (expectedSentAtMismatch) {
+				staleReason = "expected sentAt does not match the current worker run";
+			} else if (expectedDoneTagMismatch) {
+				staleReason = "expected DONE_TAG does not match the current worker run";
+			}
+			if (staleVisibleReportOnly) {
+				warnings.push(
+					"previous DONE_TAG/END_REPORT is visible, but current run output is being evaluated separately",
+				);
+			}
+
+			if (inputStillContainsInstruction || promptEchoOnly) {
 				status = "NOT_SUBMITTED";
-			} else if (completionDetected || promptReturned || idleMessageDetected) {
+			} else if (staleReason) {
+				status = "STALE";
+			} else if (
+				completionDetected ||
+				(!currentRunStarted && (promptReturned || idleMessageDetected))
+			) {
 				status = "COMPLETED";
 			} else if (clearlyRunning) {
 				status = "RUNNING";
 			} else if (
-				instructionSubmitted &&
+				effectiveInstructionSubmitted &&
 				staleDurationMs !== null &&
 				staleDurationMs >= normalizedInput.staleThresholdMs
 			) {
 				status = "STALLED";
+			} else if (effectiveInstructionSubmitted && currentRunStarted) {
+				status = observedText ? "RUNNING" : "WAITING";
 			} else if (workerResponse.status === "READY") {
 				status = "READY";
 			}
@@ -5710,9 +5946,21 @@ export function CommanderTab({
 			if (workerResponse.status === "WAITING" && status === "UNKNOWN") {
 				warnings.push("worker latest response is still waiting");
 			}
+			if (workerResponse.staleReportIgnored) {
+				warnings.push("previous worker DONE_TAG report ignored for current run");
+			}
 			warnings.push(
 				...workerResponse.warnings.map((warning) => `worker response: ${warning}`),
 			);
+			if (currentRun && currentRun.phase !== status) {
+				currentRun.phase = status;
+				currentRun.phaseChangedAt = now;
+			}
+			if (currentRun && status === "COMPLETED") {
+				const completedAt = new Date().toISOString();
+				currentRun.lastCompletedTaskRunId = currentRun.taskRunId;
+				currentRun.lastCompletedAt = completedAt;
+			}
 
 			const nextRecommendedAction = getBoundWorkerCompletionStatusNextAction({
 				status,
@@ -5733,7 +5981,20 @@ export function CommanderTab({
 				workerIdentityOk,
 				workerUiState: preflight.workerUiState,
 				workerInputReady: preflight.workerInputReady,
-				instructionSubmitted,
+				taskPhase: status,
+				taskRunId: currentRun?.taskRunId ?? null,
+				instructionId: currentRun?.instructionId ?? null,
+				sentAt: currentRun?.sentAt ?? null,
+				expectedDoneTag,
+				currentRunOutputLength: currentRunOutputText.length,
+				currentRunStarted,
+				phaseChangedAt: currentRun
+					? new Date(currentRun.phaseChangedAt).toISOString()
+					: null,
+				lastCompletedTaskRunId: currentRun?.lastCompletedTaskRunId ?? null,
+				lastCompletedAt: currentRun?.lastCompletedAt ?? null,
+				staleReason,
+				instructionSubmitted: effectiveInstructionSubmitted,
 				inputStillContainsInstruction,
 				rawLen: rawOutputText.length,
 				outputTextLength: outputText.length || outputLogText.length,
@@ -5743,8 +6004,16 @@ export function CommanderTab({
 				completionSignalReason,
 				doneTagDetected,
 				endReportDetected,
-				workerReportExtracted: workerResponse.workerReportExtracted,
-				workerReportLength: workerResponse.workerReportLength,
+				reportExtracted: Boolean(currentReportMatchesExpected),
+				reportLength:
+					currentReportMatchesExpected && currentRunReport
+						? currentRunReport.text.length
+						: workerResponse.workerReportLength,
+				workerReportExtracted: Boolean(currentReportMatchesExpected),
+				workerReportLength:
+					currentReportMatchesExpected && currentRunReport
+						? currentRunReport.text.length
+						: workerResponse.workerReportLength,
 				promptReturned,
 				idleMessageDetected,
 				staleDurationMs,
@@ -8238,6 +8507,8 @@ function normalizeSendInstructionInput(
 	requirePreflight: boolean;
 	allowWorkerTypes: CommanderControllerAllowedWorkerType[];
 	dryRun: boolean;
+	taskRunId: string | null;
+	expectedDoneTag: string | null;
 } {
 	const source =
 		typeof input?.source === "string" && input.source.trim()
@@ -8257,6 +8528,14 @@ function normalizeSendInstructionInput(
 		allowWorkerTypes:
 			allowWorkerTypes.length > 0 ? allowWorkerTypes : ["codex", "claude"],
 		dryRun: input?.dryRun === true,
+		taskRunId:
+			typeof input?.taskRunId === "string"
+				? input.taskRunId.trim() || null
+				: null,
+		expectedDoneTag:
+			typeof input?.expectedDoneTag === "string"
+				? input.expectedDoneTag.trim() || null
+				: null,
 	};
 }
 
@@ -8452,6 +8731,7 @@ function getEmptyBoundWorkerOutputFields(
 	| "workerReportSource"
 	| "workerReportLength"
 	| "workerReportPreview"
+	| "staleReportIgnored"
 	| "waitingReason"
 > {
 	return {
@@ -8485,6 +8765,7 @@ function getEmptyBoundWorkerOutputFields(
 		workerReportSource: null,
 		workerReportLength: 0,
 		workerReportPreview: "",
+		staleReportIgnored: false,
 		waitingReason: null,
 	};
 }
@@ -8686,6 +8967,19 @@ function hashControllerText(text: string): string {
 	return `${normalized.length}:${Math.abs(hash).toString(36)}:${normalized.slice(0, 80)}`;
 }
 
+function generateCommanderControllerRunId(prefix: string): string {
+	const randomPart =
+		typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+			? crypto.randomUUID()
+			: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+	return `${prefix}-${randomPart}`;
+}
+
+function extractDoneTagName(text: string): string | null {
+	const match = text.match(/\bDONE_TAG\s*:\s*([A-Za-z0-9_.:-]+)/);
+	return match?.[1] ?? null;
+}
+
 function limitWorkerOutputText(text: string, maxLength = 50_000): string {
 	if (text.length <= maxLength) return text;
 	return text.slice(text.length - maxLength);
@@ -8730,8 +9024,15 @@ function extractBoundWorkerDoneTagReport(text: string): {
 	text: string;
 	tag: string | null;
 } | null {
+	return extractBoundWorkerDoneTagReports(text).at(-1) ?? null;
+}
+
+function extractBoundWorkerDoneTagReports(text: string): Array<{
+	text: string;
+	tag: string | null;
+}> {
 	const normalized = normalizeWorkerOutputText(text);
-	if (!normalized) return null;
+	if (!normalized) return [];
 	const lines = normalized.split("\n");
 	const reports: Array<{ text: string; tag: string | null }> = [];
 	for (let start = 0; start < lines.length; start += 1) {
@@ -8749,7 +9050,7 @@ function extractBoundWorkerDoneTagReport(text: string): {
 			break;
 		}
 	}
-	return reports.at(-1) ?? null;
+	return reports;
 }
 
 function extractBoundWorkerDoneTagReportFromSources(
@@ -8823,8 +9124,14 @@ function getBoundWorkerCompletionStatusNextAction(params: {
 	if (params.status === "RUNNING") {
 		return "Continue watching the bound worker; completion signal has not appeared yet.";
 	}
+	if (params.status === "WAITING") {
+		return "Current run has been submitted; wait for meaningful worker output or completion.";
+	}
 	if (params.status === "STALLED") {
 		return "Inspect the worker pane or terminal snapshot; output has stopped changing without a completion signal.";
+	}
+	if (params.status === "STALE") {
+		return "Ignore previous run completion; keep watching the current task run or inspect the worker pane.";
 	}
 	if (params.status === "READY") {
 		return "Worker response is readable; review completion details before forwarding.";
@@ -8853,6 +9160,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 	workerReportSource: string | null;
 	workerReportLength: number;
 	workerReportPreview: string;
+	staleReportIgnored: boolean;
 } {
 	const { outputText, screenText, viewportText, paneId, lastInstructionMarker } =
 		params;
@@ -8887,6 +9195,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 				extractedResponseCandidates: [doneTagReport.text],
 				selectedResponseReason: "done-tag-report",
 				waitingReason: null,
+				staleReportIgnored: false,
 				...reportExtraction,
 			};
 		}
@@ -8910,7 +9219,11 @@ function extractBoundWorkerResponseForAnalysis(params: {
 				screenText,
 				outputText,
 			]);
-			if (fallbackDoneTagReport) {
+			const fallbackMatchesExpectedDoneTag =
+				Boolean(fallbackDoneTagReport) &&
+				Boolean(lastInstructionMarker.expectedDoneTag) &&
+				fallbackDoneTagReport?.tag === lastInstructionMarker.expectedDoneTag;
+			if (fallbackDoneTagReport && fallbackMatchesExpectedDoneTag) {
 				const reportExtraction =
 					createBoundWorkerReportExtractionFields(fallbackDoneTagReport);
 				return {
@@ -8929,7 +9242,30 @@ function extractBoundWorkerResponseForAnalysis(params: {
 					extractedResponseCandidates: [fallbackDoneTagReport.text],
 					selectedResponseReason: "idle-fallback-done-tag-report",
 					waitingReason: null,
+					staleReportIgnored: false,
 					...reportExtraction,
+				};
+			}
+			if (fallbackDoneTagReport && !fallbackMatchesExpectedDoneTag) {
+				analysisWarnings.push(
+					lastInstructionMarker.expectedDoneTag
+						? `visible DONE_TAG report ignored because it does not match current run expectedDoneTag: ${lastInstructionMarker.expectedDoneTag}`
+						: "visible DONE_TAG report ignored because it was outside current output delta",
+				);
+				return {
+					deltaText,
+					analyzedResponseText: "",
+					promptEchoRemoved: stripped.promptEchoRemoved,
+					usedLastSendMarker,
+					analysisWarnings,
+					uiNoiseRemoved: focused.uiNoiseRemoved,
+					ignoredUiNoiseLines: focused.ignoredUiNoiseLines,
+					extractedResponseCandidates: [fallbackDoneTagReport.text],
+					selectedResponseReason: "stale-done-tag-waiting",
+					waitingReason:
+						"visible DONE_TAG report was outside current run output delta",
+					staleReportIgnored: true,
+					...emptyReportExtraction,
 				};
 			}
 		}
@@ -8985,6 +9321,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 						extractedResponseCandidates: [visibleDoneTagReport.text],
 						selectedResponseReason: "visible-delta-done-tag-report",
 						waitingReason: null,
+						staleReportIgnored: false,
 						...reportExtraction,
 					};
 				}
@@ -9016,6 +9353,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 								visibleFocused.extractedResponseCandidates,
 							selectedResponseReason: "stale-marker-waiting",
 							waitingReason: staleMarkerReason,
+							staleReportIgnored: false,
 							...emptyReportExtraction,
 						};
 					}
@@ -9051,6 +9389,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 							visibleFocused.extractedResponseCandidates,
 						selectedResponseReason: "visible-delta-response-candidate",
 						waitingReason: null,
+						staleReportIgnored: false,
 						...emptyReportExtraction,
 					};
 				}
@@ -9078,6 +9417,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 				extractedResponseCandidates: focused.extractedResponseCandidates,
 				selectedResponseReason: "stale-marker-waiting",
 				waitingReason: staleMarkerReason,
+				staleReportIgnored: false,
 				...emptyReportExtraction,
 			};
 		}
@@ -9105,6 +9445,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 				extractedResponseCandidates: focused.extractedResponseCandidates,
 				selectedResponseReason: "progress-fragment-waiting",
 				waitingReason: "worker output delta contains only progress fragments",
+				staleReportIgnored: false,
 				...emptyReportExtraction,
 			};
 		}
@@ -9128,6 +9469,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 				extractedResponseCandidates: focused.extractedResponseCandidates,
 				selectedResponseReason: "prompt-echo-waiting",
 				waitingReason: residualEchoReason,
+				staleReportIgnored: false,
 				...emptyReportExtraction,
 			};
 		}
@@ -9146,6 +9488,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 			waitingReason: focused.text.trim()
 				? null
 				: "no response candidate found after prompt echo removal",
+			staleReportIgnored: false,
 			...emptyReportExtraction,
 		};
 	}
@@ -9173,6 +9516,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 			extractedResponseCandidates: [doneTagReport.text],
 			selectedResponseReason: "visible-output-done-tag-report",
 			waitingReason: null,
+			staleReportIgnored: false,
 			...reportExtraction,
 		};
 	}
@@ -9198,6 +9542,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 		waitingReason: focused.text.trim()
 			? null
 			: "no response candidate found in visible output",
+		staleReportIgnored: false,
 		...emptyReportExtraction,
 	};
 }
@@ -10660,6 +11005,11 @@ function normalizeBoundWorkerCompletionStatusInput(
 ): {
 	staleThresholdMs: number;
 	recentWindowMs: number;
+	expectedTaskRunId: string | null;
+	expectedSentAt: string | null;
+	expectedWorkerPaneId: string | null;
+	expectedTabId: string | null;
+	expectedDoneTag: string | null;
 } {
 	const record = input && typeof input === "object" ? input : {};
 	const rawStaleThresholdMs = (
@@ -10676,7 +11026,33 @@ function normalizeBoundWorkerCompletionStatusInput(
 		typeof rawRecentWindowMs === "number" && Number.isFinite(rawRecentWindowMs)
 			? Math.max(1_000, Math.min(Math.floor(rawRecentWindowMs), 60_000))
 			: 10_000;
-	return { staleThresholdMs, recentWindowMs };
+	return {
+		staleThresholdMs,
+		recentWindowMs,
+		expectedTaskRunId:
+			normalizeControllerTextInput(
+				(record as CommanderControllerBoundWorkerCompletionStatusInput)
+					.expectedTaskRunId,
+			) || null,
+		expectedSentAt:
+			normalizeControllerTextInput(
+				(record as CommanderControllerBoundWorkerCompletionStatusInput).expectedSentAt,
+			) || null,
+		expectedWorkerPaneId:
+			normalizeControllerTextInput(
+				(record as CommanderControllerBoundWorkerCompletionStatusInput)
+					.expectedWorkerPaneId,
+			) || null,
+		expectedTabId:
+			normalizeControllerTextInput(
+				(record as CommanderControllerBoundWorkerCompletionStatusInput).expectedTabId,
+			) || null,
+		expectedDoneTag:
+			normalizeControllerTextInput(
+				(record as CommanderControllerBoundWorkerCompletionStatusInput)
+					.expectedDoneTag,
+			) || null,
+	};
 }
 
 function normalizeFindTabByTitleInput(
