@@ -50,6 +50,23 @@ import {
 	sendSelectionToBrowserAI,
 } from "./commander-bridge";
 import {
+	classifyInstructionSafetyFindings,
+	findInstructionSafetyBlockers,
+	type CommanderInstructionSafetyFinding,
+	type CommanderInstructionSafetySource,
+} from "./commander-safety";
+import {
+	extractBoundWorkerDoneTagReport,
+	extractBoundWorkerDoneTagReportForInstructionScope,
+	extractBoundWorkerDoneTagReportFromSources,
+	extractBoundWorkerDoneTagReportFromSourcesForInstructionScope,
+	extractBoundWorkerDoneTagReports,
+	hasBoundWorkerDoneTagReportPromptEcho,
+	isBoundWorkerIdleOnlyCompletionMessage,
+	isBoundWorkerDoneTagReportPromptEcho,
+	validateWorkerReportForBrowserAiReview,
+} from "./commander-worker-report";
+import {
 	buildSendHandoffLedgerPrompt,
 	generateWorkerPrompt,
 	generateReviewPrompt,
@@ -991,6 +1008,9 @@ interface CommanderControllerSendInstructionResult
 	source: string;
 	requirePreflight: boolean;
 	dryRun: boolean;
+	safetyFindings: CommanderInstructionSafetyFinding[];
+	safetyBlockers: CommanderInstructionSafetyFinding[];
+	safetyWarnings: CommanderInstructionSafetyFinding[];
 	blockers: string[];
 	warnings: string[];
 	message: string;
@@ -1093,6 +1113,11 @@ type CommanderControllerSendWorkerResponseStatus =
 	| "SENT"
 	| CommanderControllerBrowserAiSubmissionVerificationStatus
 	| "BLOCKED";
+type CommanderControllerWorkerReportValidationStatus =
+	| "VALID"
+	| "FORMAT_INVALID"
+	| "MISSING"
+	| "UNKNOWN";
 
 interface CommanderControllerSendWorkerResponseResult
 	extends CommanderControllerCommandResult {
@@ -1109,6 +1134,10 @@ interface CommanderControllerSendWorkerResponseResult
 	workerReportSource: string | null;
 	workerReportLength: number;
 	workerReportPreview: string;
+	workerReportValid: boolean;
+	workerReportValidationStatus: CommanderControllerWorkerReportValidationStatus;
+	workerReportValidationReason: string | null;
+	workerReportValidationWarnings: string[];
 	promptLength: number;
 	blockers: string[];
 	warnings: string[];
@@ -5142,9 +5171,29 @@ export function CommanderTab({
 			) {
 				blockers.push(`auto loop is already in phase: ${preflight.autoLoopPhase}`);
 			}
-			const safetyBlockers = findInstructionSafetyBlockers(instruction);
-			blockers.push(...safetyBlockers);
+			const safetyFindings = classifyInstructionSafetyFindings(
+				instruction,
+				getInstructionSafetySource(source),
+			);
+			const safetyBlockers = safetyFindings.filter(
+				(finding) => finding.severity === "block",
+			);
+			const safetyWarnings = safetyFindings.filter(
+				(finding) => finding.severity === "warning",
+			);
+			blockers.push(
+				...safetyBlockers.map(
+					(finding) =>
+						`${finding.reason} [source=${finding.source}; matched=${finding.matchedText}]`,
+				),
+			);
 			warnings.push(...preflight.warnings.map((warning) => `preflight: ${warning}`));
+			warnings.push(
+				...safetyWarnings.map(
+					(finding) =>
+						`${finding.reason} [source=${finding.source}; matched=${finding.matchedText}]`,
+				),
+			);
 			if (!requirePreflight) {
 				warnings.push("preflight blocking is disabled for this request");
 			}
@@ -5167,6 +5216,9 @@ export function CommanderTab({
 				source,
 				requirePreflight,
 				dryRun,
+				safetyFindings,
+				safetyBlockers,
+				safetyWarnings,
 				blockers,
 				warnings,
 				sentAt: null,
@@ -5824,9 +5876,20 @@ export function CommanderTab({
 				matchingCurrentRunReportsFromRawOutput.length >= 2
 					? matchingCurrentRunReportsFromRawOutput.at(-1) ?? null
 					: null;
+			const currentScopeReport = currentRun
+				? extractBoundWorkerDoneTagReportForInstructionScope(
+						currentScopeText,
+						currentRun.instruction,
+					)
+				: extractBoundWorkerDoneTagReport(currentScopeText);
+			const currentScopeReportPromptEchoIgnored =
+				Boolean(currentRun) &&
+				hasBoundWorkerDoneTagReportPromptEcho(
+					currentScopeText,
+					currentRun?.instruction ?? "",
+				);
 			const currentRunReport =
-				extractBoundWorkerDoneTagReport(currentScopeText) ??
-				currentRunReportFromResponseEchoPair;
+				currentScopeReport ?? currentRunReportFromResponseEchoPair;
 			const visibleReport = currentRun
 				? extractBoundWorkerDoneTagReport(combinedOutputText)
 				: null;
@@ -5838,8 +5901,8 @@ export function CommanderTab({
 				!currentReportMatchesExpected &&
 				Boolean(visibleReport) &&
 				(!expectedDoneTag || visibleReport?.tag !== expectedDoneTag);
-			const doneTagDetected = Boolean(currentRunReport);
-			const endReportDetected =
+			const currentRunDoneTagDetected = Boolean(currentRunReport);
+			const currentRunEndReportDetected =
 				Boolean(currentRunReport) && /\bEND_REPORT\b/.test(currentRunReport?.text ?? "");
 			const idleMessageDetected = detectBoundWorkerIdleMessage(currentScopeText);
 			const workerResponse = await readBoundWorkerLatestResponseController();
@@ -5848,6 +5911,24 @@ export function CommanderTab({
 				/(?:prompt echo|submitted prompt echo)/i.test(
 					workerResponse.waitingReason ?? "",
 				);
+			const workerResponseMatchesExpectedDoneTag =
+				!promptEchoOnly &&
+				Boolean(expectedDoneTag) &&
+				workerResponse.latestResponseText.includes(expectedDoneTag ?? "");
+			const workerResponseCompletionForCurrentRun =
+				currentRunStarted &&
+				!promptEchoOnly &&
+				workerResponse.completionDetected &&
+				(workerResponse.usedLastSendMarker || workerResponseMatchesExpectedDoneTag);
+			const doneTagDetected =
+				currentRunDoneTagDetected ||
+				workerResponseMatchesExpectedDoneTag ||
+				(workerResponseCompletionForCurrentRun &&
+					/\bDONE_TAG:/i.test(workerResponse.latestResponseText));
+			const endReportDetected =
+				currentRunEndReportDetected ||
+				(workerResponseCompletionForCurrentRun &&
+					/\bEND_REPORT\b/.test(workerResponse.latestResponseText));
 			const effectiveInstructionSubmitted =
 				instructionSubmitted && !promptEchoOnly;
 			const expectedRunMismatch =
@@ -5876,6 +5957,7 @@ export function CommanderTab({
 			}
 			const completionDetected =
 				currentReportMatchesExpected ||
+				workerResponseCompletionForCurrentRun ||
 				(!currentRunStarted &&
 					(workerResponse.completionDetected ||
 						workerResponse.workerReportExtracted ||
@@ -5890,6 +5972,9 @@ export function CommanderTab({
 							(workerResponse.workerReportExtracted
 								? "structured worker report extracted"
 								: null))
+						: workerResponseCompletionForCurrentRun
+							? (workerResponse.completionSignalReason ??
+								"current run worker response completion detected")
 						: null;
 			const promptReturned =
 				preflight.workerInputReady &&
@@ -5915,6 +6000,11 @@ export function CommanderTab({
 			if (staleVisibleReportOnly) {
 				warnings.push(
 					"previous DONE_TAG/END_REPORT is visible, but current run output is being evaluated separately",
+				);
+			}
+			if (currentScopeReportPromptEchoIgnored && !currentRunReport) {
+				warnings.push(
+					"submitted DONE_TAG prompt echo ignored for current run completion",
 				);
 			}
 
@@ -6064,6 +6154,10 @@ export function CommanderTab({
 			const responseText = (
 				workerResponse.analyzedResponseText || workerResponse.latestResponseText
 			).trim();
+			const workerReportValidation = validateWorkerReportForBrowserAiReview(
+				workerResponse,
+				responseText,
+			);
 
 			if (!activeTabIdSnapshot) blockers.push("active tab not found");
 			if (!provider) blockers.push("browser ai provider not ready");
@@ -6090,6 +6184,11 @@ export function CommanderTab({
 			if (!responseText) {
 				blockers.push("bound worker response text is empty");
 			}
+			if (!workerReportValidation.workerReportValid) {
+				blockers.push(
+					`bound worker report is not valid for Browser AI review: ${workerReportValidation.workerReportValidationStatus}`,
+				);
+			}
 			const submitWarning = getBrowserAiSubmitWarning(composerReadiness);
 			if (submitWarning) warnings.push(submitWarning);
 			if (runtime.visualStatus === "NEEDS_FIX") {
@@ -6098,6 +6197,7 @@ export function CommanderTab({
 			warnings.push(
 				...workerResponse.warnings.map((warning) => `worker response: ${warning}`),
 			);
+			warnings.push(...workerReportValidation.workerReportValidationWarnings);
 
 			const prompt = responseText
 				? buildSendBoundWorkerResponseToBrowserAiPrompt({
@@ -6136,6 +6236,7 @@ export function CommanderTab({
 				workerReportSource: workerResponse.workerReportSource,
 				workerReportLength: workerResponse.workerReportLength,
 				workerReportPreview: workerResponse.workerReportPreview,
+				...workerReportValidation,
 				promptLength: prompt.length,
 				blockers,
 				warnings,
@@ -6433,6 +6534,7 @@ export function CommanderTab({
 				blockers.push(
 					...findInstructionSafetyBlockers(
 						latestReply.extractedCodexInstruction,
+						"browser ai reply",
 					),
 				);
 			}
@@ -8557,6 +8659,18 @@ function normalizeSendInstructionInput(
 	};
 }
 
+function getInstructionSafetySource(
+	source: string,
+): CommanderInstructionSafetySource {
+	const normalized = source.toLowerCase();
+	if (normalized.includes("browser")) return "browser ai reply";
+	if (normalized.includes("worker")) return "worker report";
+	if (normalized.includes("shell") || normalized.includes("command")) {
+		return "actual shell command";
+	}
+	return "instruction text";
+}
+
 function prepareBoundWorkerInstructionForTerminal(
 	instruction: string,
 	workerType: string,
@@ -8581,98 +8695,6 @@ function prepareBoundWorkerInstructionForTerminal(
 		text: compacted,
 		warning: "Claude worker instruction compacted for reliable TUI submit",
 	};
-}
-
-function findInstructionSafetyBlockers(instruction: string): string[] {
-	const blockers: string[] = [];
-	const normalized = instruction.trim();
-	if (!normalized) return blockers;
-	const checks: Array<{ label: string; pattern: RegExp }> = [
-		{
-			label: "commit requires Doy confirmation",
-			pattern:
-				/\bgit\s+commit\b|\bcommit(?:\s|$|[\\/.,;:、。!?）)]|してください|する|して|実行|確認|必要)|コミット/i,
-		},
-		{
-			label: "push requires Doy confirmation",
-			pattern:
-				/\bgit\s+push\b|\bpush(?:\s|$|[\\/.,;:、。!?）)]|してください|する|して|実行|確認|必要)|プッシュ/i,
-		},
-		{
-			label: "destructive file operation requires Doy confirmation",
-			pattern:
-				/\brm\s+-rf\b|\brm\s+-fr\b|\bgit\s+reset\s+--hard\b|\bgit\s+clean\s+-[A-Za-z]*f\b|\btruncate\b|\bdd\s+if=|\bmkfs\b|\bdelete\b|\bremove\b|削除|破壊/i,
-		},
-		{
-			label: "database/app-state direct operation is not allowed",
-			pattern:
-				/local\.db|app-state\.json|~\/\.superset|~\/\.doydeck-superset-dev|\.doydeck-superset-dev/i,
-		},
-		{
-			label: "cookie/token/private API operation is not allowed",
-			pattern:
-				/\bcookie\b|\bcookies\b|\btoken\b|\bprivate\s+api\b|秘密鍵|認証情報|トークン/i,
-		},
-	];
-	let inNegativeSafetySection = false;
-	for (const rawLine of normalized.split("\n")) {
-		const line = rawLine.trim();
-		if (!line) continue;
-		if (isNegativeInstructionSafetySectionHeading(line)) {
-			inNegativeSafetySection = true;
-			continue;
-		}
-		if (isPositiveInstructionSectionHeading(line)) {
-			inNegativeSafetySection = false;
-		}
-		if (inNegativeSafetySection || isNegatedInstructionSafetyLine(line)) {
-			continue;
-		}
-		for (const check of checks) {
-			if (check.pattern.test(line) && !blockers.includes(check.label)) {
-				blockers.push(check.label);
-			}
-		}
-	}
-	return blockers;
-}
-
-function isNegativeInstructionSafetySectionHeading(line: string): boolean {
-	const normalized = line.replace(/^[#>*•・\-\d.)\s]+/, "").trim();
-	return /^(やらないこと|禁止(?:事項)?|対象外|触らないこと|避けること|not allowed|forbidden|do not|don't|avoid)\s*[:：]?$/i.test(
-		normalized,
-	);
-}
-
-function isPositiveInstructionSectionHeading(line: string): boolean {
-	const normalized = line.replace(/^[#>*•・\-\d.)\s]+/, "").trim();
-	return /^(目的|対象|やること|実施内容|確認|確認方法|完了報告|必要なら|修正する場合|手順|出力|成果物|scope|task)\s*[:：]?$/i.test(
-		normalized,
-	);
-}
-
-function isNegatedInstructionSafetyLine(line: string): boolean {
-	return [
-		/しないでください/,
-		/しないこと/,
-		/していません/,
-		/していない/,
-		/なし/,
-		/無し/,
-		/未実施/,
-		/未実行/,
-		/触らない/,
-		/使わない/,
-		/行わない/,
-		/不要/,
-		/禁止/,
-		/対象外/,
-		/\bdo not\b/i,
-		/\bdon't\b/i,
-		/\bno\s+(?:commit|push|cookies?|tokens?|private\s+api|database|db)\b/i,
-		/\bnot\s+(?:allowed|required|needed|performed|used)\b/i,
-		/\bwithout\s+(?:commit|push|cookies?|tokens?)\b/i,
-	].some((pattern) => pattern.test(line));
 }
 
 function getSendInstructionBlockedMessage(blockers: string[]): string {
@@ -8805,6 +8827,9 @@ function evaluateBoundWorkerInputReadiness(params: {
 	paneId: string | null;
 }): CommanderControllerWorkerInputReadiness {
 	const { workerType, paneId } = params;
+	if (workerType === "codex") {
+		return evaluateCodexWorkerInputReadiness(paneId);
+	}
 	if (workerType !== "claude") {
 		return {
 			workerUiState: "ready-for-input",
@@ -8976,6 +9001,90 @@ function evaluateBoundWorkerInputReadiness(params: {
 	};
 }
 
+function evaluateCodexWorkerInputReadiness(
+	paneId: string | null,
+): CommanderControllerWorkerInputReadiness {
+	const workerInputBlockers: string[] = [];
+	const workerInputWarnings: string[] = [];
+	if (!paneId) {
+		workerInputBlockers.push("codex worker paneId not found");
+		return {
+			workerUiState: "unknown",
+			workerInputReady: false,
+			workerInputBlockers,
+			workerInputWarnings,
+			workerUiStateReason: "bound Codex worker paneId was unavailable",
+		};
+	}
+
+	const snapshot = getTerminalOutputSnapshot(paneId);
+	const outputLogText = getOutputLogSince(paneId, 0);
+	const currentUiText = normalizeWorkerOutputText(
+		snapshot?.viewportText ||
+			snapshot?.screenText ||
+			snapshot?.text ||
+			(outputLogText ? outputLogText.slice(-6000) : ""),
+	);
+	if (!currentUiText) {
+		workerInputBlockers.push("codex worker input readiness could not be inspected");
+		return {
+			workerUiState: "unknown",
+			workerInputReady: false,
+			workerInputBlockers,
+			workerInputWarnings,
+			workerUiStateReason: "Codex terminal output snapshot is empty",
+		};
+	}
+
+	const tailLines = currentUiText
+		.split("\n")
+		.map((line) => line.replace(/\s+/g, " ").trim())
+		.filter(Boolean)
+		.slice(-48);
+	const promptLine =
+		[...tailLines]
+			.reverse()
+			.find((line) => /^[›>](?:\s|$)/.test(line)) ?? null;
+	if (
+		promptLine &&
+		/^[›>]\s+\S/.test(promptLine) &&
+		!isCodexWorkerPlaceholderPromptLine(promptLine)
+	) {
+		workerInputBlockers.push(
+			"codex input appears to contain unsent prompt residue",
+		);
+		return {
+			workerUiState: "prompt-echo-residue",
+			workerInputReady: false,
+			workerInputBlockers,
+			workerInputWarnings,
+			workerUiStateReason: `Codex input residue visible: ${promptLine}`,
+		};
+	}
+	if (promptLine && isCodexWorkerPlaceholderPromptLine(promptLine)) {
+		workerInputWarnings.push(
+			"codex placeholder prompt line ignored for input readiness",
+		);
+	}
+	if (!promptLine) {
+		workerInputWarnings.push("codex ready prompt line was not confirmed");
+	}
+	return {
+		workerUiState: "ready-for-input",
+		workerInputReady: true,
+		workerInputBlockers,
+		workerInputWarnings,
+		workerUiStateReason: promptLine
+			? `Codex current input line appears empty: ${promptLine}`
+			: "Codex input residue was not detected",
+	};
+}
+
+function isCodexWorkerPlaceholderPromptLine(line: string): boolean {
+	const normalized = line.replace(/\s+/g, " ").trim();
+	return /^([›>])\s+Find and fix a bug in @filename$/i.test(normalized);
+}
+
 function hashControllerText(text: string): string {
 	const normalized = text.replace(/\s+/g, " ").trim();
 	let hash = 0;
@@ -9036,69 +9145,6 @@ function createBoundWorkerReportExtractionFields(
 		workerReportLength: report.text.length,
 		workerReportPreview: getBoundWorkerReportPreview(report.text),
 	};
-}
-
-function extractBoundWorkerDoneTagReport(text: string): {
-	text: string;
-	tag: string | null;
-} | null {
-	return extractBoundWorkerDoneTagReports(text).at(-1) ?? null;
-}
-
-function extractBoundWorkerDoneTagReports(text: string): Array<{
-	text: string;
-	tag: string | null;
-}> {
-	const normalized = normalizeWorkerOutputText(text);
-	if (!normalized) return [];
-	const lines = normalized.split("\n");
-	const reports: Array<{ text: string; tag: string | null }> = [];
-	for (let start = 0; start < lines.length; start += 1) {
-		const startMatch = lines[start]?.match(/\bDONE_TAG\s*:\s*([A-Za-z0-9_.:-]+)/);
-		if (!startMatch) continue;
-		for (let end = start; end < lines.length; end += 1) {
-			if (!/\bEND_REPORT\b/.test(lines[end] ?? "")) continue;
-			const reportText = lines.slice(start, end + 1).join("\n").trim();
-			if (reportText) {
-				reports.push({
-					text: reportText,
-					tag: startMatch[1] ?? null,
-				});
-			}
-			break;
-		}
-	}
-	return reports;
-}
-
-function extractBoundWorkerDoneTagReportFromSources(
-	sources: string[],
-): { text: string; tag: string | null } | null {
-	for (const source of sources) {
-		const report = extractBoundWorkerDoneTagReport(source);
-		if (report) return report;
-	}
-	const combinedSource = sources
-		.map((source) => source.trim())
-		.filter(Boolean)
-		.join("\n");
-	if (combinedSource) {
-		const combinedReport = extractBoundWorkerDoneTagReport(combinedSource);
-		if (combinedReport) return combinedReport;
-	}
-	return null;
-}
-
-function isBoundWorkerIdleOnlyCompletionMessage(text: string): boolean {
-	const normalized = normalizeWorkerOutputText(text).replace(/\s+/g, " ").trim();
-	if (!normalized || normalized.length > 160) return false;
-	if (/\bDONE_TAG\s*:|\bEND_REPORT\b/.test(normalized)) return false;
-	if (/受信確認|NOOP|ACK|S\d+_[A-Z0-9_]+/.test(normalized)) return false;
-	return (
-		/(?:報告|作業|確認)?完了.*(?:追加指示|次の指示).*(?:静止|待機)/.test(
-			normalized,
-		) || /(?:追加指示|次の指示)まで(?:静止|待機)/.test(normalized)
-	);
 }
 
 function normalizeBoundWorkerStatusObservationText(text: string): string {
@@ -9194,7 +9240,21 @@ function extractBoundWorkerResponseForAnalysis(params: {
 			deltaText,
 			lastInstructionMarker.instruction,
 		);
-		const doneTagReport = extractBoundWorkerDoneTagReport(stripped.text);
+		const doneTagReport = extractBoundWorkerDoneTagReportForInstructionScope(
+			stripped.text,
+			lastInstructionMarker.instruction,
+		);
+		if (
+			!doneTagReport &&
+			hasBoundWorkerDoneTagReportPromptEcho(
+				stripped.text,
+				lastInstructionMarker.instruction,
+			)
+		) {
+			analysisWarnings.push(
+				"submitted DONE_TAG prompt echo ignored during worker response analysis",
+			);
+		}
 		if (doneTagReport) {
 			const reportExtraction =
 				createBoundWorkerReportExtractionFields(doneTagReport);
@@ -9232,11 +9292,22 @@ function extractBoundWorkerResponseForAnalysis(params: {
 			analysisWarnings.push(
 				"worker output delta contained only an idle completion message; checking terminal output for DONE_TAG report",
 			);
-			const fallbackDoneTagReport = extractBoundWorkerDoneTagReportFromSources([
-				viewportText,
-				screenText,
-				outputText,
-			]);
+			const fallbackDoneTagReport =
+				extractBoundWorkerDoneTagReportFromSourcesForInstructionScope(
+					[viewportText, screenText, outputText],
+					lastInstructionMarker.instruction,
+				);
+			if (
+				!fallbackDoneTagReport &&
+				hasBoundWorkerDoneTagReportPromptEcho(
+					[viewportText, screenText, outputText].join("\n"),
+					lastInstructionMarker.instruction,
+				)
+			) {
+				analysisWarnings.push(
+					"visible DONE_TAG prompt echo ignored during idle fallback",
+				);
+			}
 			const fallbackMatchesExpectedDoneTag =
 				Boolean(fallbackDoneTagReport) &&
 				Boolean(lastInstructionMarker.expectedDoneTag) &&
@@ -9286,6 +9357,21 @@ function extractBoundWorkerResponseForAnalysis(params: {
 					...emptyReportExtraction,
 				};
 			}
+			return {
+				deltaText,
+				analyzedResponseText: "",
+				promptEchoRemoved: stripped.promptEchoRemoved,
+				usedLastSendMarker,
+				analysisWarnings,
+				uiNoiseRemoved: focused.uiNoiseRemoved,
+				ignoredUiNoiseLines: focused.ignoredUiNoiseLines,
+				extractedResponseCandidates: focused.extractedResponseCandidates,
+				selectedResponseReason: "idle-only-waiting",
+				waitingReason:
+					"worker output delta contained only an idle completion message",
+				staleReportIgnored: false,
+				...emptyReportExtraction,
+			};
 		}
 		const focusedIsMarkerOnly =
 			lastInstructionMarker &&
@@ -9309,9 +9395,22 @@ function extractBoundWorkerResponseForAnalysis(params: {
 					visibleDeltaText,
 					lastInstructionMarker.instruction,
 				);
-				const visibleDoneTagReport = extractBoundWorkerDoneTagReport(
-					visibleStripped.text,
-				);
+				const visibleDoneTagReport =
+					extractBoundWorkerDoneTagReportForInstructionScope(
+						visibleStripped.text,
+						lastInstructionMarker.instruction,
+					);
+				if (
+					!visibleDoneTagReport &&
+					hasBoundWorkerDoneTagReportPromptEcho(
+						visibleStripped.text,
+						lastInstructionMarker.instruction,
+					)
+				) {
+					analysisWarnings.push(
+						"visible DONE_TAG prompt echo ignored during worker response analysis",
+					);
+				}
 				if (visibleDoneTagReport) {
 					const reportExtraction =
 						createBoundWorkerReportExtractionFields(visibleDoneTagReport);
@@ -9544,6 +9643,23 @@ function extractBoundWorkerResponseForAnalysis(params: {
 	}
 	if (focused.uiNoiseRemoved) {
 		analysisWarnings.push("worker UI noise removed from visible output fallback");
+	}
+	if (!focused.responseFocused) {
+		return {
+			deltaText: "",
+			analyzedResponseText: "",
+			promptEchoRemoved: false,
+			usedLastSendMarker,
+			analysisWarnings,
+			uiNoiseRemoved: focused.uiNoiseRemoved,
+			ignoredUiNoiseLines: focused.ignoredUiNoiseLines,
+			extractedResponseCandidates: focused.extractedResponseCandidates,
+			selectedResponseReason: "visible-output-waiting",
+			waitingReason:
+				"last worker instruction marker unavailable and no focused worker response found",
+			staleReportIgnored: false,
+			...emptyReportExtraction,
+		};
 	}
 	return {
 		deltaText: "",
