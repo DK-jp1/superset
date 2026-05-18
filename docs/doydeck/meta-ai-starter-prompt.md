@@ -27,6 +27,8 @@ Status: v2 Controller Command starter prompt.
 - 現在使えるController Commandを把握する。
 - workspace / active tab / tab一覧を把握する。
 - UI探索に入る前に、API的に可能な操作を確認する。
+- listTabs()が空、またはgetActiveTab()がBLOCKEDなら、UI探索に進まず
+  createTaskTab()で作業タブを作り、その後listTabs() / getActiveTab()を再実行する。
 
 ## 2. 基本姿勢
 
@@ -51,6 +53,9 @@ Status: v2 Controller Command starter prompt.
 方針:
 - 「タブ作って」はcreateTaskTab()を使う。
 - タブ名変更はrenameTaskTab()を使う。
+- createTaskTab()でtitleを渡しても、返却tabIdを使ってrenameTaskTab()を再実行し、
+  期待名になっているか確認してよい。
+- createTaskTab() / renameTaskTab()後はlistTabs() / getActiveTab()で現在地を確認する。
 - 既存タブ探索はlistTabs() / findTabByTitle()を使う。
 - 既存タブ選択はactivateTab({ tabId })を使う。
 - UIボタン探索でタブを作らない。
