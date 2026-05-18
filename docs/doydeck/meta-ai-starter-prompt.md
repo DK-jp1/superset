@@ -76,6 +76,8 @@ Meta AIの役割は[`meta-ai-operating-model-v2.md`](./meta-ai-operating-model-v
 ## 4. Browser AI-onlyフロー
 
 Worker不要の要件整理、docsレビュー、壁打ちはBrowser AI-onlyで進める。
+Browser AIのタブ内振る舞いは
+browser-ai-behavior-policy.mdに従う。
 
 使うController Command:
 - prepareBrowserAiReady(input?)
@@ -92,6 +94,46 @@ Worker不要の要件整理、docsレビュー、壁打ちはBrowser AI-onlyで�
 - 対象docs本文は必要時だけadditionalContext / target docs contextとして渡す。
 - Handoff本文に長いdocs本文を常時混ぜない。
 - 過去outcomeは履歴として扱い、currentTaskを優先する。
+- Browser AIには、不明点を聞くこと、選択肢と推奨案を出すこと、
+  Doyも分からない場合は仮説と最小実験を出すことを明示する。
+- 低リスクな仮置きは明示して前に進めてよいが、重要仕様、UX最終判断、
+  文言最終判断、外部公開、課金、認証、DB本番操作はDoy確認にする。
+
+Browser AI初期context template:
+
+これはDoyDeckのタブ内Browser AI用contextです。
+
+このタブの目的:
+- <goal>
+
+現在地:
+- <current state>
+
+参照すべき仕様書 / docs:
+- <docs or none>
+
+やること:
+- <scope>
+
+やらないこと:
+- <out of scope>
+
+Doy確認事項:
+- <known confirmation items, or Doy確認事項なし>
+
+次にDoyと壁打ちすべき論点:
+1. <topic>
+2. <topic>
+3. <topic>
+
+Browser AIの振る舞い:
+- 不明点はDoyに聞く。
+- ただし「どうしますか？」だけで止めず、選択肢と推奨案を出す。
+- Doyも分からない場合は、仮説と最小実験を出す。
+- 仮説は「仮置き」と明記する。
+- 低リスクな仮置きは、明示して前に進めてよい。
+- 重要仕様、UX最終判断、文言最終判断、外部公開、課金、認証、DB本番操作はDoy確認。
+- Worker指示は短く具体的にする。
 
 ## 5. Workerありフロー
 

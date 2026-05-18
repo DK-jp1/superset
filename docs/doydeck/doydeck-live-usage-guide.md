@@ -45,6 +45,7 @@ Doy確認ゲート付きで扱う。
   - Worker不要のHandoffレビュー。
   - docs本文をadditional contextとして渡すレビュー。
   - STOP / 次アクション / Doy確認事項の分類。
+  - タブ内の振る舞いは[`browser-ai-behavior-policy.md`](./browser-ai-behavior-policy.md)に従う。
 - Workerへのdocs-only指示
   - 作業側Codexへの低リスクdocs指示。
   - 作業側CC / Claude Codeへの短いdocs指示。
@@ -164,6 +165,9 @@ DoyDeck内運用での対応:
 
 - Meta AI入口: 複数タスク整理、タブ化候補提案、Doy確認後の準備、全体監視。
 - Browser AI入口: 1タブ内の壁打ち、要件定義、Worker指示文作成、Worker結果レビュー。
+  - Browser AIは不明点を聞くが、「どうしますか？」だけで止めず、
+    選択肢、推奨案、仮置き、最小実験を提示する。
+  - 重要仕様、UX最終判断、文言最終判断、外部公開、課金、認証、DB本番操作はDoy確認。
 
 ## 6. タスク粒度
 
@@ -223,6 +227,9 @@ promptは短く、現在taskを中心にする。
 - Browser AIへは、Worker指示が不要な場合に`STOP`または`次のWorker指示は不要`を
   明記させる。
 - Doy確認が不要な場合は`Doy確認事項なし`と明記させる。
+- Browser AIへ初期contextを渡す時は、このタブの目的、現在地、参照docs、
+  やること / やらないこと、Doy確認事項、次に壁打ちすべき論点、
+  Browser AIの振る舞いを短く含める。
 
 ## 8. Worker launch policy
 

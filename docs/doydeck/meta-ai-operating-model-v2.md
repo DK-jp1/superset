@@ -77,6 +77,9 @@ smoke tests, diagnostics, and recovery.
 - Creates Worker instructions.
 - Reviews Worker results.
 - Sorts STOP, next instruction, and Doy confirmation items.
+- Follows [`browser-ai-behavior-policy.md`](./browser-ai-behavior-policy.md):
+  ask unclear or important points with options, a recommendation, and temporary
+  assumptions instead of silently finalizing important decisions.
 
 ### Worker AI
 
@@ -145,6 +148,7 @@ Browser AI entry:
 - Requirement definition.
 - Worker instruction creation.
 - Worker result review.
+- Doy questions and hypothesis building inside the current tab.
 
 Working phrase:
 
