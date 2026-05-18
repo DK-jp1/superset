@@ -86,6 +86,9 @@ type CommanderControllerSessionInput = Partial<
 	Record<CommanderSessionTextField | "nextAction" | "notes", unknown>
 > & {
 	targetFiles?: unknown;
+	resetForNewTask?: unknown;
+	replace?: unknown;
+	clearRecordedOutcome?: unknown;
 };
 
 interface CommanderControllerCommandResult {
@@ -1441,7 +1444,10 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			typicalUse: "Set task goal, plan, risks, and notes for a pilot run.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
-			notes: ["Only updates Commander session fields."],
+			notes: [
+				"Only updates Commander session fields.",
+				"resetForNewTask, replace, and clearRecordedOutcome isolate new task context from previous Controller outcomes.",
+			],
 		},
 		{
 			name: "buildHandoffLedger",
@@ -1753,6 +1759,7 @@ export function CommanderTab({
 		createEmptyCommanderSession,
 	);
 	const sessionRef = useRef<CommanderSession>(session);
+	const sessionTabIdRef = useRef<string | null>(null);
 	const [autoRelayMode, setAutoRelayMode] = useState<AutoRelayMode>("off");
 	const [
 		requireBoundWorkerForAutoLoop,
@@ -1802,15 +1809,26 @@ export function CommanderTab({
 	);
 	const webview = useCommanderWebview({ workspaceId, activeTabId });
 	const sessionPersistence = useCommanderSessionPersistence(workspaceId);
+	const resolveActiveTabIdSnapshot = useCallback(
+		() => useTabsStore.getState().activeTabIds[workspaceId] ?? activeTabId ?? null,
+		[activeTabId, workspaceId],
+	);
 
 	useEffect(() => {
 		if (!workspaceId.trim()) return;
+		const resolvedActiveTabId = resolveActiveTabIdSnapshot();
 		const loadedSession =
-			sessionPersistence.loadSession() ?? createEmptyCommanderSession();
+			sessionPersistence.loadSession(resolvedActiveTabId) ??
+			createEmptyCommanderSession();
 		setSession(loadedSession);
 		sessionRef.current = loadedSession;
+		sessionTabIdRef.current = resolvedActiveTabId;
 		setState(commanderStateFromSession(loadedSession));
-	}, [workspaceId, sessionPersistence.loadSession]);
+	}, [
+		resolveActiveTabIdSnapshot,
+		sessionPersistence.loadSession,
+		workspaceId,
+	]);
 
 	useEffect(() => {
 		sessionRef.current = session;
@@ -1818,9 +1836,11 @@ export function CommanderTab({
 
 	const handleSessionApplied = useCallback(
 		(appliedSession: CommanderSession) => {
-			sessionPersistence.saveSession(appliedSession);
+			const resolvedActiveTabId = resolveActiveTabIdSnapshot();
+			sessionTabIdRef.current = resolvedActiveTabId;
+			sessionPersistence.saveSession(appliedSession, resolvedActiveTabId);
 		},
-		[sessionPersistence],
+		[resolveActiveTabIdSnapshot, sessionPersistence],
 	);
 
 	const handleClearSession = useCallback(() => {
@@ -1831,13 +1851,30 @@ export function CommanderTab({
 		) {
 			return;
 		}
-		sessionPersistence.clearSession();
+		const resolvedActiveTabId = resolveActiveTabIdSnapshot();
+		sessionPersistence.clearSession(resolvedActiveTabId);
 		const emptySession = createEmptyCommanderSession();
 		sessionRef.current = emptySession;
+		sessionTabIdRef.current = resolvedActiveTabId;
 		setSession(emptySession);
 		setState(commanderStateFromSession(emptySession));
 		toast.success("Commander Sessionを削除しました");
-	}, [sessionPersistence]);
+	}, [resolveActiveTabIdSnapshot, sessionPersistence]);
+
+	const ensureCommanderSessionForActiveTab = useCallback((): CommanderSession => {
+		const resolvedActiveTabId = resolveActiveTabIdSnapshot();
+		if (sessionTabIdRef.current === resolvedActiveTabId) {
+			return sessionRef.current;
+		}
+		const loadedSession =
+			sessionPersistence.loadSession(resolvedActiveTabId) ??
+			createEmptyCommanderSession();
+		sessionRef.current = loadedSession;
+		sessionTabIdRef.current = resolvedActiveTabId;
+		setSession(loadedSession);
+		setState(commanderStateFromSession(loadedSession));
+		return loadedSession;
+	}, [resolveActiveTabIdSnapshot, sessionPersistence]);
 
 	const transfer = usePromptTransfer({
 		workspaceId,
@@ -2138,14 +2175,15 @@ export function CommanderTab({
 
 	const getCommanderSessionControllerResult =
 		useCallback((): CommanderControllerSessionResult => {
+			const activeSession = ensureCommanderSessionForActiveTab();
 			return {
 				ok: true,
 				...getCommanderControllerContext(),
-				session: sessionRef.current,
+				session: activeSession,
 				changedFields: [],
 				skippedFields: [],
 			};
-		}, [getCommanderControllerContext]);
+		}, [ensureCommanderSessionForActiveTab, getCommanderControllerContext]);
 
 	const setCommanderSessionController = useCallback(
 		(
@@ -2158,7 +2196,7 @@ export function CommanderTab({
 					reason: "input must be an object",
 				};
 			}
-			const baseSession = sessionRef.current;
+			const baseSession = ensureCommanderSessionForActiveTab();
 			const { session: nextSession, changedFields, skippedFields } =
 				mergeCommanderSessionControllerInput(baseSession, input);
 			if (changedFields.length === 0) {
@@ -2185,7 +2223,11 @@ export function CommanderTab({
 				skippedFields,
 			};
 		},
-		[getCommanderControllerContext, handleSessionApplied],
+		[
+			ensureCommanderSessionForActiveTab,
+			getCommanderControllerContext,
+			handleSessionApplied,
+		],
 	);
 
 	const listTabsController =
@@ -2656,7 +2698,7 @@ export function CommanderTab({
 
 	const buildHandoffLedgerController =
 		useCallback((): CommanderControllerHandoffResult => {
-			const sessionSnapshot = sessionRef.current;
+			const sessionSnapshot = ensureCommanderSessionForActiveTab();
 			try {
 				const stateSnapshot = commanderStateFromSession(sessionSnapshot);
 				return {
@@ -2681,7 +2723,11 @@ export function CommanderTab({
 					session: sessionSnapshot,
 				};
 			}
-		}, [getCommanderControllerContext, transfer.buildHandoffLedger]);
+		}, [
+			ensureCommanderSessionForActiveTab,
+			getCommanderControllerContext,
+			transfer.buildHandoffLedger,
+		]);
 
 	const getAutoLoopPreflightController =
 		useCallback(async (): Promise<CommanderControllerAutoLoopPreflightResult> => {
@@ -5574,7 +5620,7 @@ export function CommanderTab({
 				};
 			}
 
-			const baseSession = sessionRef.current;
+			const baseSession = ensureCommanderSessionForActiveTab();
 			const { session: nextSession, updatedFields } =
 				applyControllerChainOutcomeToSession(baseSession, summary);
 			if (updatedFields.length > 0) {
@@ -5611,6 +5657,7 @@ export function CommanderTab({
 			};
 		},
 		[
+			ensureCommanderSessionForActiveTab,
 			getCommanderControllerContext,
 			getControllerChainSummaryController,
 			handleSessionApplied,
@@ -5916,13 +5963,29 @@ function mergeCommanderSessionControllerInput(
 	changedFields: string[];
 	skippedFields: string[];
 } {
+	const replaceSession = input.replace === true || input.resetForNewTask === true;
+	const clearRecordedOutcome =
+		replaceSession || input.clearRecordedOutcome === true;
+	const baseSession = replaceSession ? createEmptyCommanderSession() : base;
 	const next: CommanderSession = {
-		...base,
-		targetFiles: [...base.targetFiles],
-		selectedFiles: [...base.selectedFiles],
+		...baseSession,
+		targetFiles: [...baseSession.targetFiles],
+		selectedFiles: [...baseSession.selectedFiles],
 	};
 	const changedFields: string[] = [];
 	const skippedFields: string[] = [];
+	if (replaceSession) {
+		changedFields.push(input.resetForNewTask === true ? "resetForNewTask" : "replace");
+	} else if (clearRecordedOutcome) {
+		const clearedSession = clearControllerChainOutcomeFromSession(next);
+		for (const field of getChangedCommanderSessionFields(next, clearedSession)) {
+			changedFields.push(field);
+		}
+		Object.assign(next, clearedSession);
+		if (changedFields.length === 0) {
+			changedFields.push("clearRecordedOutcome");
+		}
+	}
 	const textFields: CommanderSessionTextField[] = [
 		"goal",
 		"intentNotes",
@@ -5986,6 +6049,76 @@ function mergeCommanderSessionControllerInput(
 	}
 
 	return { session: next, changedFields, skippedFields };
+}
+
+function clearControllerChainOutcomeFromSession(
+	base: CommanderSession,
+): CommanderSession {
+	const next: CommanderSession = {
+		...base,
+		targetFiles: [...base.targetFiles],
+		selectedFiles: [...base.selectedFiles],
+		intentNotes: removeCommanderControllerSections(
+			base.intentNotes,
+			"Controller Chain Outcome",
+		),
+		completionCriteria: removeCommanderControllerSections(
+			base.completionCriteria,
+			"Controller Chain Completion",
+		),
+		implementationPlan: removeCommanderControllerSections(
+			base.implementationPlan,
+			"Controller Chain Next Action",
+		),
+		testPlan: removeCommanderControllerSections(
+			base.testPlan,
+			"Controller Chain Latest QA",
+		),
+		risksOpenQuestions: removeCommanderControllerSections(
+			base.risksOpenQuestions,
+			"Controller Chain Blockers",
+		),
+	};
+	if (isControllerGeneratedCurrentTask(base.currentTask)) {
+		next.currentTask = "";
+	}
+	return next;
+}
+
+function getChangedCommanderSessionFields(
+	before: CommanderSession,
+	after: CommanderSession,
+): string[] {
+	const fields: Array<keyof CommanderSession> = [
+		"goal",
+		"intentNotes",
+		"completionCriteria",
+		"constraints",
+		"allowedScope",
+		"forbiddenScope",
+		"currentTask",
+		"implementationPlan",
+		"testPlan",
+		"risksOpenQuestions",
+		"targetFiles",
+		"selectedFiles",
+	];
+	return fields.filter((field) => {
+		const beforeValue = before[field];
+		const afterValue = after[field];
+		if (Array.isArray(beforeValue) || Array.isArray(afterValue)) {
+			return JSON.stringify(beforeValue) !== JSON.stringify(afterValue);
+		}
+		return beforeValue !== afterValue;
+	});
+}
+
+function isControllerGeneratedCurrentTask(value: string): boolean {
+	const trimmed = value.trim();
+	return (
+		trimmed.startsWith("Controller chain ") ||
+		trimmed.includes("Codex追加送信なし。Auto Loop未開始。")
+	);
 }
 
 function applyControllerChainOutcomeToSession(

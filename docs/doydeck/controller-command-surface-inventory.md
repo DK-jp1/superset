@@ -97,7 +97,7 @@ Implemented:
 | Tab / Workspace | `activateTab(input)` | implemented | Activates an existing workspace tab by `tabId`; no Browser AI / Worker readiness scan. |
 | Tab / Workspace | `renameTaskTab(input)` | implemented | Renames an existing workspace tab by `tabId`; no delete/close behavior. |
 | Session | `getCommanderSession()` | implemented | Returns current Commander session. |
-| Session | `setCommanderSession(input)` | implemented | Updates supported Commander session fields. |
+| Session | `setCommanderSession(input)` | implemented | Updates supported Commander session fields. Supports `resetForNewTask`, `replace`, and `clearRecordedOutcome` to avoid carrying previous task outcome sections into a new task. |
 | Handoff | `buildHandoffLedger()` | implemented | Builds Handoff Ledger from current session/context. |
 | Handoff | `getHandoffLedger()` | implemented | Alias for `buildHandoffLedger`. |
 | Browser AI | `prepareBrowserAiReady(input?)` | implemented | Browser-AI-only provider preparation. Can navigate to ChatGPT / Claude / Gemini when explicitly requested; does not require worker binding. |

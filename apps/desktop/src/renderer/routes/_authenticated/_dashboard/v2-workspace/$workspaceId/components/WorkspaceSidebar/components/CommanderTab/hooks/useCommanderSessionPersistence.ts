@@ -11,19 +11,29 @@ interface PersistedCommanderSession {
 	version: typeof STORAGE_VERSION;
 	appVariant: string;
 	workspaceId: string;
+	tabId: string;
 	savedAt: string;
 	session: CommanderSession;
 }
 
 export function useCommanderSessionPersistence(workspaceId: string) {
 	const appVariant = useMemo(getCommanderSessionAppVariant, []);
-	const storageKey = useMemo(() => {
-		const trimmedWorkspaceId = workspaceId.trim();
-		if (!trimmedWorkspaceId) return null;
-		return buildCommanderSessionStorageKey(appVariant, trimmedWorkspaceId);
-	}, [appVariant, workspaceId]);
+	const getStorageKey = useCallback(
+		(tabId?: string | null): string | null => {
+			const trimmedWorkspaceId = workspaceId.trim();
+			const trimmedTabId = tabId?.trim() ?? "";
+			if (!trimmedWorkspaceId || !trimmedTabId) return null;
+			return buildCommanderSessionStorageKey(
+				appVariant,
+				trimmedWorkspaceId,
+				trimmedTabId,
+			);
+		},
+		[appVariant, workspaceId],
+	);
 
-	const loadSession = useCallback((): CommanderSession | null => {
+	const loadSession = useCallback((tabId?: string | null): CommanderSession | null => {
+		const storageKey = getStorageKey(tabId);
 		if (!storageKey) return null;
 		try {
 			const raw = window.localStorage.getItem(storageKey);
@@ -41,12 +51,15 @@ export function useCommanderSessionPersistence(workspaceId: string) {
 			console.warn("[S3.18] failed to load Commander Session:", error);
 			return null;
 		}
-	}, [storageKey]);
+	}, [getStorageKey]);
 
 	const saveSession = useCallback(
-		(session: CommanderSession): boolean => {
+		(session: CommanderSession, tabId?: string | null): boolean => {
+			const storageKey = getStorageKey(tabId);
 			if (!storageKey) {
-				toast.warning("workspaceIdが未取得のためSessionを保存しませんでした");
+				toast.warning(
+					"workspaceIdまたはtabIdが未取得のためSessionを保存しませんでした",
+				);
 				return false;
 			}
 			try {
@@ -54,6 +67,7 @@ export function useCommanderSessionPersistence(workspaceId: string) {
 					version: STORAGE_VERSION,
 					appVariant,
 					workspaceId: workspaceId.trim(),
+					tabId: tabId?.trim() ?? "",
 					savedAt: new Date().toISOString(),
 					session,
 				};
@@ -66,10 +80,11 @@ export function useCommanderSessionPersistence(workspaceId: string) {
 				return false;
 			}
 		},
-		[appVariant, storageKey, workspaceId],
+		[appVariant, getStorageKey, workspaceId],
 	);
 
-	const clearSession = useCallback((): boolean => {
+	const clearSession = useCallback((tabId?: string | null): boolean => {
+		const storageKey = getStorageKey(tabId);
 		if (!storageKey) return false;
 		try {
 			window.localStorage.removeItem(storageKey);
@@ -80,12 +95,13 @@ export function useCommanderSessionPersistence(workspaceId: string) {
 			toast.error("Commander Sessionの削除に失敗しました");
 			return false;
 		}
-	}, [storageKey]);
+	}, [getStorageKey]);
 
 	return {
 		appVariant,
-		storageKey,
-		canPersist: Boolean(storageKey),
+		getStorageKey,
+		storageKey: null,
+		canPersist: Boolean(workspaceId.trim()),
 		loadSession,
 		saveSession,
 		clearSession,
@@ -99,8 +115,9 @@ function getCommanderSessionAppVariant(): string {
 function buildCommanderSessionStorageKey(
 	appVariant: string,
 	workspaceId: string,
+	tabId: string,
 ): string {
-	return `${STORAGE_PREFIX}.${sanitizeStoragePart(appVariant)}.${sanitizeStoragePart(workspaceId)}`;
+	return `${STORAGE_PREFIX}.${sanitizeStoragePart(appVariant)}.${sanitizeStoragePart(workspaceId)}.${sanitizeStoragePart(tabId)}`;
 }
 
 function sanitizeStoragePart(value: string): string {
@@ -116,6 +133,7 @@ function isPersistedCommanderSession(
 		candidate.version === STORAGE_VERSION &&
 		typeof candidate.appVariant === "string" &&
 		typeof candidate.workspaceId === "string" &&
+		typeof candidate.tabId === "string" &&
 		typeof candidate.savedAt === "string" &&
 		isCommanderSession(candidate.session)
 	);
