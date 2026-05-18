@@ -234,9 +234,11 @@ const SUBMIT_SELECTORS: Record<BrowserProvider, string[]> = {
 		'form button[type="submit"]',
 	],
 	claude: [
+		'button[aria-label="メッセージを送信"]',
+		'button[aria-label*="送信"]',
+		'button[aria-label*="send" i]',
 		'button[aria-label="Send Message"]',
 		'button[aria-label="Send message"]',
-		'fieldset button[type="button"]:last-of-type',
 	],
 	gemini: [
 		'button[aria-label="Send message"]',
