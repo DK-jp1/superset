@@ -990,6 +990,10 @@ interface CommanderControllerBoundWorkerLatestResponseResult
 	outputLooksComplete: boolean;
 	outputLooksStillRunning: boolean;
 	workerReportLooksComplete: boolean;
+	workerReportExtracted: boolean;
+	workerReportSource: string | null;
+	workerReportLength: number;
+	workerReportPreview: string;
 	summary: string;
 	promptEchoRemoved: boolean;
 	usedLastSendMarker: boolean;
@@ -1025,6 +1029,11 @@ interface CommanderControllerSendWorkerResponseResult
 	workerType: string;
 	workerIdentityOk: boolean;
 	responseLength: number;
+	responsePackageLength: number;
+	workerReportExtracted: boolean;
+	workerReportSource: string | null;
+	workerReportLength: number;
+	workerReportPreview: string;
 	promptLength: number;
 	blockers: string[];
 	warnings: string[];
@@ -5254,7 +5263,17 @@ export function CommanderTab({
 				extractedResponseCandidates,
 				selectedResponseReason,
 				waitingReason,
+				workerReportExtracted,
+				workerReportSource,
+				workerReportLength,
+				workerReportPreview,
 			} = extractedResponse;
+			const workerReportFields = {
+				workerReportExtracted,
+				workerReportSource,
+				workerReportLength,
+				workerReportPreview,
+			};
 			const latestResponseText = analyzedResponseText;
 			const analysis = analyzeBoundWorkerOutput(latestResponseText, {
 				lastInstructionMarker,
@@ -5304,6 +5323,7 @@ export function CommanderTab({
 					extractedResponseCandidates,
 					selectedResponseReason,
 					waitingReason,
+					...workerReportFields,
 					blockers,
 					warnings,
 					message: getBoundWorkerLatestResponseMessage("WAITING", blockers, warnings),
@@ -5353,6 +5373,7 @@ export function CommanderTab({
 					extractedResponseCandidates,
 					selectedResponseReason,
 					waitingReason,
+					...workerReportFields,
 					blockers,
 					warnings,
 					message: "Bound worker still appears to be running",
@@ -5418,6 +5439,7 @@ export function CommanderTab({
 				extractedResponseCandidates,
 				selectedResponseReason,
 				waitingReason,
+				...workerReportFields,
 				blockers,
 				warnings,
 				message: getBoundWorkerLatestResponseMessage("READY", blockers, warnings),
@@ -5525,6 +5547,11 @@ export function CommanderTab({
 				workerType: workerResponse.workerType,
 				workerIdentityOk: workerResponse.workerIdentityOk,
 				responseLength: responseText.length,
+				responsePackageLength: responseText.length,
+				workerReportExtracted: workerResponse.workerReportExtracted,
+				workerReportSource: workerResponse.workerReportSource,
+				workerReportLength: workerResponse.workerReportLength,
+				workerReportPreview: workerResponse.workerReportPreview,
 				promptLength: prompt.length,
 				blockers,
 				warnings,
@@ -8106,6 +8133,10 @@ function getEmptyBoundWorkerOutputFields(
 	| "outputLooksComplete"
 	| "outputLooksStillRunning"
 	| "workerReportLooksComplete"
+	| "workerReportExtracted"
+	| "workerReportSource"
+	| "workerReportLength"
+	| "workerReportPreview"
 	| "waitingReason"
 > {
 	return {
@@ -8135,6 +8166,10 @@ function getEmptyBoundWorkerOutputFields(
 		outputLooksComplete: false,
 		outputLooksStillRunning: false,
 		workerReportLooksComplete: false,
+		workerReportExtracted: false,
+		workerReportSource: null,
+		workerReportLength: 0,
+		workerReportPreview: "",
 		waitingReason: null,
 	};
 }
@@ -8341,6 +8376,97 @@ function limitWorkerOutputText(text: string, maxLength = 50_000): string {
 	return text.slice(text.length - maxLength);
 }
 
+function getBoundWorkerReportPreview(text: string): string {
+	return text.replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
+function createEmptyBoundWorkerReportExtraction(): {
+	workerReportExtracted: boolean;
+	workerReportSource: string | null;
+	workerReportLength: number;
+	workerReportPreview: string;
+} {
+	return {
+		workerReportExtracted: false,
+		workerReportSource: null,
+		workerReportLength: 0,
+		workerReportPreview: "",
+	};
+}
+
+function createBoundWorkerReportExtractionFields(
+	report: { text: string; tag: string | null } | null,
+): {
+	workerReportExtracted: boolean;
+	workerReportSource: string | null;
+	workerReportLength: number;
+	workerReportPreview: string;
+} {
+	if (!report) return createEmptyBoundWorkerReportExtraction();
+	return {
+		workerReportExtracted: true,
+		workerReportSource: "DONE_TAG",
+		workerReportLength: report.text.length,
+		workerReportPreview: getBoundWorkerReportPreview(report.text),
+	};
+}
+
+function extractBoundWorkerDoneTagReport(text: string): {
+	text: string;
+	tag: string | null;
+} | null {
+	const normalized = normalizeWorkerOutputText(text);
+	if (!normalized) return null;
+	const lines = normalized.split("\n");
+	const reports: Array<{ text: string; tag: string | null }> = [];
+	for (let start = 0; start < lines.length; start += 1) {
+		const startMatch = lines[start]?.match(/\bDONE_TAG\s*:\s*([A-Za-z0-9_.:-]+)/);
+		if (!startMatch) continue;
+		for (let end = start; end < lines.length; end += 1) {
+			if (!/\bEND_REPORT\b/.test(lines[end] ?? "")) continue;
+			const reportText = lines.slice(start, end + 1).join("\n").trim();
+			if (reportText) {
+				reports.push({
+					text: reportText,
+					tag: startMatch[1] ?? null,
+				});
+			}
+			break;
+		}
+	}
+	return reports.at(-1) ?? null;
+}
+
+function extractBoundWorkerDoneTagReportFromSources(
+	sources: string[],
+): { text: string; tag: string | null } | null {
+	for (const source of sources) {
+		const report = extractBoundWorkerDoneTagReport(source);
+		if (report) return report;
+	}
+	const combinedSource = sources
+		.map((source) => source.trim())
+		.filter(Boolean)
+		.join("\n");
+	if (combinedSource) {
+		const combinedReport = extractBoundWorkerDoneTagReport(combinedSource);
+		if (combinedReport) return combinedReport;
+	}
+	return null;
+}
+
+function isBoundWorkerIdleOnlyCompletionMessage(text: string): boolean {
+	const normalized = normalizeWorkerOutputText(text).replace(/\s+/g, " ").trim();
+	if (!normalized || normalized.length > 160) return false;
+	if (/\bDONE_TAG\s*:|\bEND_REPORT\b/.test(normalized)) return false;
+	if (/受信確認|NOOP|ACK|S\d+_[A-Z0-9_]+/.test(normalized)) return false;
+	return (
+		/(?:報告|作業|確認)?完了.*(?:追加指示|次の指示).*(?:静止|待機)/.test(
+			normalized,
+		) || /(?:追加指示|次の指示)まで(?:静止|待機)/.test(normalized)
+	);
+}
+
 function extractBoundWorkerResponseForAnalysis(params: {
 	outputText: string;
 	screenText: string;
@@ -8358,12 +8484,17 @@ function extractBoundWorkerResponseForAnalysis(params: {
 	extractedResponseCandidates: string[];
 	selectedResponseReason: string;
 	waitingReason: string | null;
+	workerReportExtracted: boolean;
+	workerReportSource: string | null;
+	workerReportLength: number;
+	workerReportPreview: string;
 } {
 	const { outputText, screenText, viewportText, paneId, lastInstructionMarker } =
 		params;
 	const usedLastSendMarker =
 		Boolean(lastInstructionMarker) && lastInstructionMarker?.paneId === paneId;
 	const analysisWarnings: string[] = [];
+	const emptyReportExtraction = createEmptyBoundWorkerReportExtraction();
 	if (usedLastSendMarker && lastInstructionMarker) {
 		const deltaText = normalizeWorkerOutputText(
 			getOutputLogSince(paneId, lastInstructionMarker.outputOffsetBeforeSend),
@@ -8372,6 +8503,28 @@ function extractBoundWorkerResponseForAnalysis(params: {
 			deltaText,
 			lastInstructionMarker.instruction,
 		);
+		const doneTagReport = extractBoundWorkerDoneTagReport(stripped.text);
+		if (doneTagReport) {
+			const reportExtraction =
+				createBoundWorkerReportExtractionFields(doneTagReport);
+			if (stripped.promptEchoRemoved) {
+				analysisWarnings.push("prompt echo removed from worker output analysis");
+			}
+			analysisWarnings.push("DONE_TAG worker report block extracted from output delta");
+			return {
+				deltaText,
+				analyzedResponseText: limitWorkerOutputText(doneTagReport.text.trim()),
+				promptEchoRemoved: stripped.promptEchoRemoved,
+				usedLastSendMarker,
+				analysisWarnings,
+				uiNoiseRemoved: false,
+				ignoredUiNoiseLines: [],
+				extractedResponseCandidates: [doneTagReport.text],
+				selectedResponseReason: "done-tag-report",
+				waitingReason: null,
+				...reportExtraction,
+			};
+		}
 		const focused = extractBoundWorkerResponseCandidates(stripped.text);
 		if (stripped.promptEchoRemoved) {
 			analysisWarnings.push("prompt echo removed from worker output analysis");
@@ -8381,6 +8534,39 @@ function extractBoundWorkerResponseForAnalysis(params: {
 		}
 		if (focused.uiNoiseRemoved) {
 			analysisWarnings.push("worker UI noise removed from response analysis");
+		}
+		const focusedIdleOnly = isBoundWorkerIdleOnlyCompletionMessage(focused.text);
+		if (focusedIdleOnly) {
+			analysisWarnings.push(
+				"worker output delta contained only an idle completion message; checking terminal output for DONE_TAG report",
+			);
+			const fallbackDoneTagReport = extractBoundWorkerDoneTagReportFromSources([
+				viewportText,
+				screenText,
+				outputText,
+			]);
+			if (fallbackDoneTagReport) {
+				const reportExtraction =
+					createBoundWorkerReportExtractionFields(fallbackDoneTagReport);
+				return {
+					deltaText,
+					analyzedResponseText: limitWorkerOutputText(
+						fallbackDoneTagReport.text.trim(),
+					),
+					promptEchoRemoved: stripped.promptEchoRemoved,
+					usedLastSendMarker,
+					analysisWarnings: [
+						...analysisWarnings,
+						"DONE_TAG worker report block extracted instead of idle completion message",
+					],
+					uiNoiseRemoved: focused.uiNoiseRemoved,
+					ignoredUiNoiseLines: focused.ignoredUiNoiseLines,
+					extractedResponseCandidates: [fallbackDoneTagReport.text],
+					selectedResponseReason: "idle-fallback-done-tag-report",
+					waitingReason: null,
+					...reportExtraction,
+				};
+			}
 		}
 		const focusedIsMarkerOnly =
 			lastInstructionMarker &&
@@ -8393,7 +8579,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 				"worker output delta contained only the last ack marker; checking visible output",
 			);
 		}
-		if (!focused.responseFocused || focusedIsMarkerOnly) {
+		if (!focused.responseFocused || focusedIsMarkerOnly || focusedIdleOnly) {
 			const visibleDeltaText = extractVisibleBoundWorkerDeltaText({
 				screenText,
 				viewportText,
@@ -8404,6 +8590,39 @@ function extractBoundWorkerResponseForAnalysis(params: {
 					visibleDeltaText,
 					lastInstructionMarker.instruction,
 				);
+				const visibleDoneTagReport = extractBoundWorkerDoneTagReport(
+					visibleStripped.text,
+				);
+				if (visibleDoneTagReport) {
+					const reportExtraction =
+						createBoundWorkerReportExtractionFields(visibleDoneTagReport);
+					analysisWarnings.push(
+						"DONE_TAG worker report block extracted from visible output",
+					);
+					if (visibleStripped.promptEchoRemoved) {
+						analysisWarnings.push(
+							"prompt echo removed from visible worker output analysis",
+						);
+					}
+					return {
+						deltaText: visibleDeltaText,
+						analyzedResponseText: limitWorkerOutputText(
+							visibleDoneTagReport.text.trim(),
+						),
+						promptEchoRemoved:
+							stripped.promptEchoRemoved || visibleStripped.promptEchoRemoved,
+						usedLastSendMarker,
+						analysisWarnings,
+						uiNoiseRemoved: focused.uiNoiseRemoved,
+						ignoredUiNoiseLines: truncateIgnoredUiNoiseLines(
+							focused.ignoredUiNoiseLines,
+						),
+						extractedResponseCandidates: [visibleDoneTagReport.text],
+						selectedResponseReason: "visible-delta-done-tag-report",
+						waitingReason: null,
+						...reportExtraction,
+					};
+				}
 				const visibleFocused = extractBoundWorkerResponseCandidates(
 					visibleStripped.text,
 				);
@@ -8432,6 +8651,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 								visibleFocused.extractedResponseCandidates,
 							selectedResponseReason: "stale-marker-waiting",
 							waitingReason: staleMarkerReason,
+							...emptyReportExtraction,
 						};
 					}
 					analysisWarnings.push(
@@ -8466,6 +8686,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 							visibleFocused.extractedResponseCandidates,
 						selectedResponseReason: "visible-delta-response-candidate",
 						waitingReason: null,
+						...emptyReportExtraction,
 					};
 				}
 			}
@@ -8492,6 +8713,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 				extractedResponseCandidates: focused.extractedResponseCandidates,
 				selectedResponseReason: "stale-marker-waiting",
 				waitingReason: staleMarkerReason,
+				...emptyReportExtraction,
 			};
 		}
 		if (
@@ -8518,6 +8740,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 				extractedResponseCandidates: focused.extractedResponseCandidates,
 				selectedResponseReason: "progress-fragment-waiting",
 				waitingReason: "worker output delta contains only progress fragments",
+				...emptyReportExtraction,
 			};
 		}
 		const residualEchoReason =
@@ -8540,6 +8763,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 				extractedResponseCandidates: focused.extractedResponseCandidates,
 				selectedResponseReason: "prompt-echo-waiting",
 				waitingReason: residualEchoReason,
+				...emptyReportExtraction,
 			};
 		}
 		return {
@@ -8557,6 +8781,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 			waitingReason: focused.text.trim()
 				? null
 				: "no response candidate found after prompt echo removal",
+			...emptyReportExtraction,
 		};
 	}
 	const candidates = [
@@ -8565,6 +8790,27 @@ function extractBoundWorkerResponseForAnalysis(params: {
 		outputText,
 	].map((value) => limitWorkerOutputText(value.trim()));
 	const fallbackText = candidates.find((value) => value.length > 0) ?? "";
+	const doneTagReport = extractBoundWorkerDoneTagReportFromSources(candidates);
+	if (doneTagReport) {
+		const reportExtraction = createBoundWorkerReportExtractionFields(doneTagReport);
+		if (!lastInstructionMarker) {
+			analysisWarnings.push("last worker instruction marker unavailable; using visible output fallback");
+		}
+		analysisWarnings.push("DONE_TAG worker report block extracted from visible output fallback");
+		return {
+			deltaText: "",
+			analyzedResponseText: limitWorkerOutputText(doneTagReport.text.trim()),
+			promptEchoRemoved: false,
+			usedLastSendMarker,
+			analysisWarnings,
+			uiNoiseRemoved: false,
+			ignoredUiNoiseLines: [],
+			extractedResponseCandidates: [doneTagReport.text],
+			selectedResponseReason: "visible-output-done-tag-report",
+			waitingReason: null,
+			...reportExtraction,
+		};
+	}
 	const focused = extractBoundWorkerResponseCandidates(fallbackText);
 	if (!lastInstructionMarker) {
 		analysisWarnings.push("last worker instruction marker unavailable; using visible output fallback");
@@ -8587,6 +8833,7 @@ function extractBoundWorkerResponseForAnalysis(params: {
 		waitingReason: focused.text.trim()
 			? null
 			: "no response candidate found in visible output",
+		...emptyReportExtraction,
 	};
 }
 
@@ -9238,6 +9485,8 @@ function detectBoundWorkerCompletionSignal(text: string): {
 	completionSignalReason: string | null;
 } {
 	const completionPatterns: Array<[RegExp, string]> = [
+		[/\bDONE_TAG\s*:/, "DONE_TAG worker report detected"],
+		[/\bEND_REPORT\b/, "END_REPORT worker report terminator detected"],
 		[/<<<DOYDECK_WORKER_RESPONSE_START>>>/i, "response envelope start detected"],
 		[/^\s*(?:#{1,4}\s*)?完了報告(?:\s|$|[:：])/m, "completion report heading detected"],
 		[/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?実施内容(?:\s|$|[:：])/m, "completion section detected: 実施内容"],
