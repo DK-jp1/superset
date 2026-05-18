@@ -63,7 +63,7 @@ Status: v2 Controller Command starter prompt.
 
 雑な複数タスクを渡された場合:
 - すぐに全部をタブ化しない。
-- まずDoyDeckに入れる候補 / 入れない候補 / 優先度 / 推奨tab titleを提案する。
+- まずDoyDeckに入れる候補 / 入れない候補 / 後回し候補 / 優先度 / 推奨tab titleを提案する。
 - DoyがOKした候補だけcreateTaskTab() / renameTaskTab()で作る。
 - 詳細はtask-intake-to-tab-workflow.mdに従う。
 
