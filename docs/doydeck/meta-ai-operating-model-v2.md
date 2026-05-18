@@ -96,6 +96,13 @@ Controller Commands are the API-like native path for operating DoyDeck without U
 exploration. They cover tab creation, Browser AI readiness, Worker binding,
 preflight, Handoff building, response reading, and outcome recording.
 
+Write commands are guarded by target tab. Meta AI should resolve the target with
+`listTabs()` / `getActiveTab()` / `findTabByTitle()` and pass
+`expectedTabId`, `expectedTitle`, and `requireActiveTabMatch:true` to
+`setCommanderSession()` / `recordControllerChainOutcome()` and similar writes.
+If the active tab is not the target tab, Meta AI should treat the command as
+`BLOCKED` and avoid writing to the current tab.
+
 ## 4. Meta AI as Preparation Layer
 
 After Doy confirms the work item, Meta AI may prepare the task surface with:

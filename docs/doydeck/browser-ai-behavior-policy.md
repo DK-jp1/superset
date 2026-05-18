@@ -111,6 +111,23 @@ Worker instructions should be short and concrete:
 - Verification.
 - Report format.
 
+If a Worker or Meta AI will call a write Controller Command, Browser AI should
+include the guarded-write requirement in the instruction:
+
+- Resolve the target tab with `listTabs()` / `getActiveTab()` /
+  `findTabByTitle()` before writing.
+- Treat the Controller-returned `tabId` as the target; do not rely on a tab title
+  concept alone.
+- For `setCommanderSession()` / `recordControllerChainOutcome()` and similar
+  write commands, pass `expectedTabId`, `expectedTitle`, and
+  `requireActiveTabMatch:true`.
+- If `activeTabId` does not match `targetTabId`, do not write. Treat the result
+  as `BLOCKED`.
+- Guardless writes are legacy compatibility only and should not be used in new
+  task flows.
+- Completion reports for Ledger / Handoff / Outcome updates should include
+  `targetTabId`, `activeTabId`, and `expectedTitle`.
+
 ## 6. Initial Browser AI Context Template
 
 Meta AI can send this context after preparing a tab.

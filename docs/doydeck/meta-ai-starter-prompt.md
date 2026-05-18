@@ -64,9 +64,12 @@ Meta AIの役割は[`meta-ai-operating-model-v2.md`](./meta-ai-operating-model-v
 - createTaskTab() / renameTaskTab()後はlistTabs() / getActiveTab()で現在地を確認する。
 - 既存タブ探索はlistTabs() / findTabByTitle()を使う。
 - 既存タブ選択はactivateTab({ tabId })を使う。
+- Meta AIは「タブ名っぽい概念」ではなく、Controllerが返したtabIdを作業対象として持つ。
 - setCommanderSession() / recordControllerChainOutcome() のような書き込み系commandは、
-  原則 `expectedTabId` または `expectedTitle` と `requireActiveTabMatch:true` を付ける。
-  対象タブが違う場合はBLOCKEDとして扱い、別タブへ書き込まない。
+  原則 `expectedTabId` / `expectedTitle` / `requireActiveTabMatch:true` を付ける。
+- 書き込み前にlistTabs() / getActiveTab() / findTabByTitle()でtarget tabを確認する。
+- activeTabIdとtargetTabIdが一致しない場合は書き込まない。
+- guardなしwriteは既存互換用。新規運用では使わない。
 - UIボタン探索でタブを作らない。
 - closeTab / delete / remove系はDoy確認対象。
 
@@ -182,8 +185,10 @@ Workerが必要な場合に使うController Command:
 - HandoffにはDecision Record本文全文を入れず、DR-ID短参照を使う。
 - 例: DR-2026-05-17-001: DoyDeck本体開発とsafe-dev検証を分離する
 - 過去outcomeは履歴として扱い、今回のcurrentTaskを優先する。
-- Outcome記録時は `recordControllerChainOutcome({ expectedTabId, requireActiveTabMatch:true, ... })`
+- Outcome記録時は `recordControllerChainOutcome({ expectedTabId, expectedTitle, requireActiveTabMatch:true, ... })`
   のように、active tabが想定タブと一致することをController側でも確認する。
+- Ledger / Handoff / Outcome更新後の報告には、`targetTabId` / `activeTabId` / `expectedTitle` を含める。
+- Controller返却と画面表示が矛盾する時だけ、visual sanity checkで仮説を立て直す。
 
 ## 7. prompt slimming方針
 

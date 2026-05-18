@@ -129,6 +129,24 @@ Implemented:
 | Outcome | `recordControllerChainOutcome(input?)` | implemented | Records Controller chain outcome into Handoff/session state. Supports expected-tab guards before mutating session state. |
 | Outcome | `updateHandoffLedgerWithControllerOutcome(input?)` | implemented | Alias for `recordControllerChainOutcome`; same expected-tab guard behavior. |
 
+### Guarded write standard
+
+Write commands that mutate Commander Session, Handoff, Ledger, or Outcome state
+should be called with an expected-tab guard in normal operation:
+
+- Resolve the target tab first with `listTabs()` / `getActiveTab()` /
+  `findTabByTitle()`.
+- Use the returned `tabId` as `expectedTabId`. Include `expectedTitle` when the
+  title is part of the human-readable intent.
+- Pass `requireActiveTabMatch:true`.
+- If `activeTabId` differs from `expectedTabId`, the command must return
+  `BLOCKED` and must not write.
+- Guardless writes remain for existing compatibility, but new Meta AI / Browser
+  AI / Worker flows should not rely on them.
+- Reports for Ledger / Handoff / Outcome updates should include `targetTabId`,
+  `activeTabId`, and `expectedTitle`.
+- Use visual sanity check only when Controller state and visible UI disagree.
+
 ## 4. Operation coverage matrix
 
 ### A. Tab / Workspace
