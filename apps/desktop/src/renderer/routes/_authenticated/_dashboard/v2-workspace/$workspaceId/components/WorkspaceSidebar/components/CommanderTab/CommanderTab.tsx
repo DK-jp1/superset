@@ -693,6 +693,50 @@ interface CommanderControllerTerminalOutputSnapshotResult
 	message: string;
 }
 
+type CommanderControllerBoundWorkerCompletionStatus =
+	| "READY"
+	| "RUNNING"
+	| "COMPLETED"
+	| "NOT_SUBMITTED"
+	| "STALLED"
+	| "BLOCKED"
+	| "UNKNOWN";
+
+interface CommanderControllerBoundWorkerCompletionStatusInput {
+	staleThresholdMs?: unknown;
+	recentWindowMs?: unknown;
+}
+
+interface CommanderControllerBoundWorkerCompletionStatusResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerBoundWorkerCompletionStatus;
+	activeTabId: string | null;
+	workerPaneId: string | null;
+	workerType: string;
+	workerIdentityOk: boolean;
+	workerUiState: CommanderControllerWorkerUiState;
+	workerInputReady: boolean;
+	instructionSubmitted: boolean;
+	inputStillContainsInstruction: boolean;
+	rawLen: number;
+	outputTextLength: number;
+	outputChangedRecently: boolean;
+	lastOutputAt: string | null;
+	completionDetected: boolean;
+	completionSignalReason: string | null;
+	doneTagDetected: boolean;
+	endReportDetected: boolean;
+	workerReportExtracted: boolean;
+	workerReportLength: number;
+	promptReturned: boolean;
+	idleMessageDetected: boolean;
+	staleDurationMs: number | null;
+	nextRecommendedAction: string;
+	warnings: string[];
+	blockers: string[];
+	message: string;
+}
+
 interface CommanderControllerActivateWorkerPaneInput {
 	paneId?: unknown;
 	workerPaneId?: unknown;
@@ -1452,6 +1496,31 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			notes: ["No activate, bind, send, clear, or launch side effects."],
 		},
 		{
+			name: "getBoundWorkerCompletionStatus",
+			category: "Worker",
+			access: "read-only",
+			implemented: true,
+			description: "Return structured task/worker completion status for the bound worker pane.",
+			typicalUse: "Let Meta AI or scripts watch Worker completion without ad hoc terminal polling.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: [
+				"Prioritizes DONE_TAG/END_REPORT and prompt-return completion over TUI running indicators.",
+				"Alias getTaskRunStatus is also available.",
+			],
+		},
+		{
+			name: "getTaskRunStatus",
+			category: "Worker",
+			access: "read-only",
+			implemented: true,
+			description: "Alias for getBoundWorkerCompletionStatus.",
+			typicalUse: "Compatibility name for task/worker status watchers.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["No Auto Loop, Worker send, bind, or activation side effects."],
+		},
+		{
 			name: "activateTerminalPaneForTab",
 			category: "Worker",
 			access: "write",
@@ -1793,6 +1862,12 @@ interface CommanderControllerCommands {
 	getTerminalOutputSnapshot: (
 		input?: CommanderControllerTerminalOutputSnapshotInput,
 	) => CommanderControllerTerminalOutputSnapshotResult;
+	getBoundWorkerCompletionStatus: (
+		input?: CommanderControllerBoundWorkerCompletionStatusInput,
+	) => Promise<CommanderControllerBoundWorkerCompletionStatusResult>;
+	getTaskRunStatus: (
+		input?: CommanderControllerBoundWorkerCompletionStatusInput,
+	) => Promise<CommanderControllerBoundWorkerCompletionStatusResult>;
 	getSupervisorPilotReadiness: () => Promise<CommanderControllerSupervisorPilotReadinessResult>;
 	prepareSupervisorPilotReadiness: (
 		input?: CommanderControllerSupervisorPilotPrepareInput,
@@ -1869,6 +1944,17 @@ export function CommanderTab({
 		useRef<CommanderControllerLastWorkerInstructionMarker | null>(null);
 	const lastBrowserAiSubmissionRef =
 		useRef<CommanderControllerBrowserAiSubmissionState | null>(null);
+	const workerCompletionObservationRef = useRef<
+		Map<
+			string,
+			{
+				fingerprint: string;
+				lastOutputAt: number;
+				checkedAt: number;
+				textLength: number;
+			}
+		>
+	>(new Map());
 	const browserAiSubmissionSequenceRef = useRef(0);
 
 	const workerPrompt = useMemo(
@@ -5447,6 +5533,232 @@ export function CommanderTab({
 			};
 		}, [getAutoLoopPreflightController, getCommanderControllerContext]);
 
+	const getBoundWorkerCompletionStatusController =
+		useCallback(async (
+			input?: CommanderControllerBoundWorkerCompletionStatusInput,
+		): Promise<CommanderControllerBoundWorkerCompletionStatusResult> => {
+			const normalizedInput = normalizeBoundWorkerCompletionStatusInput(input);
+			const blockers: string[] = [];
+			const warnings: string[] = [];
+			const preflight = await getAutoLoopPreflightController();
+			const activeTabIdSnapshot = preflight.activeTabId;
+			const targetPaneId = preflight.workerPaneId;
+			const workerType = preflight.workerType;
+			const workerTypeAllowed = workerType === "codex" || workerType === "claude";
+			const workerIdentityOk = preflight.workerIdentityOk;
+			const lastInstructionMarker =
+				targetPaneId && lastWorkerInstructionMarkerRef.current?.paneId === targetPaneId
+					? lastWorkerInstructionMarkerRef.current
+					: null;
+
+			if (!activeTabIdSnapshot) blockers.push("active tab not found");
+			if (preflight.workerBindingStatus === "stale") {
+				blockers.push("bound worker stale");
+			} else if (!preflight.workerBound) {
+				blockers.push("worker binding required");
+			}
+			if (!workerIdentityOk) blockers.push(...preflight.workerIdentityBlockers);
+			if (!workerTypeAllowed) {
+				blockers.push(`worker type is not allowed: ${workerType || "unknown"}`);
+			}
+			if (!targetPaneId) blockers.push("bound worker paneId not found");
+			warnings.push(...preflight.warnings.map((warning) => `preflight: ${warning}`));
+
+			const blockedBase = {
+				...getCommanderControllerContext(),
+				activeTabId: activeTabIdSnapshot,
+				workerPaneId: targetPaneId,
+				workerType,
+				workerIdentityOk,
+				workerUiState: preflight.workerUiState,
+				workerInputReady: preflight.workerInputReady,
+				instructionSubmitted: false,
+				inputStillContainsInstruction: false,
+				rawLen: 0,
+				outputTextLength: 0,
+				outputChangedRecently: false,
+				lastOutputAt: null,
+				completionDetected: false,
+				completionSignalReason: null,
+				doneTagDetected: false,
+				endReportDetected: false,
+				workerReportExtracted: false,
+				workerReportLength: 0,
+				promptReturned: false,
+				idleMessageDetected: false,
+				staleDurationMs: null,
+				warnings,
+				blockers,
+			};
+
+			if (blockers.length > 0 || !targetPaneId) {
+				return {
+					ok: false,
+					...blockedBase,
+					status: "BLOCKED",
+					nextRecommendedAction: getBoundWorkerCompletionStatusNextAction({
+						status: "BLOCKED",
+						blockers,
+						inputStillContainsInstruction: false,
+						completionDetected: false,
+						outputChangedRecently: false,
+						staleDurationMs: null,
+					}),
+					message: blockers[0] ?? "bound worker completion status blocked",
+				};
+			}
+
+			const outputLogText = normalizeWorkerOutputText(
+				getOutputLogSince(targetPaneId, 0),
+			);
+			const snapshot = getTerminalOutputSnapshot(targetPaneId);
+			const rawOutputText = normalizeWorkerOutputText(
+				snapshot?.text ?? outputLogText,
+			);
+			const outputText = normalizeWorkerOutputText(
+				snapshot?.outputText ?? outputLogText,
+			);
+			const screenText = normalizeWorkerOutputText(snapshot?.screenText ?? "");
+			const viewportText = normalizeWorkerOutputText(snapshot?.viewportText ?? "");
+			const combinedOutputText = normalizeWorkerOutputText(
+				[viewportText, screenText, outputText, outputLogText]
+					.filter((value) => value.trim())
+					.join("\n"),
+			);
+			const observedText = normalizeBoundWorkerStatusObservationText(
+				combinedOutputText,
+			);
+			const now = Date.now();
+			const previousObservation =
+				workerCompletionObservationRef.current.get(targetPaneId);
+			const currentFingerprint = hashControllerText(observedText);
+			const outputChanged =
+				Boolean(previousObservation) &&
+				previousObservation?.fingerprint !== currentFingerprint &&
+				observedText.length > 0;
+			const lastOutputAtMs =
+				!previousObservation || outputChanged
+					? now
+					: previousObservation.lastOutputAt;
+			workerCompletionObservationRef.current.set(targetPaneId, {
+				fingerprint: currentFingerprint,
+				lastOutputAt: lastOutputAtMs,
+				checkedAt: now,
+				textLength: observedText.length,
+			});
+			const outputChangedRecently =
+				outputChanged && now - lastOutputAtMs <= normalizedInput.recentWindowMs;
+			const staleDurationMs = previousObservation ? now - lastOutputAtMs : null;
+			const inputStillContainsInstruction =
+				preflight.workerUiState === "prompt-echo-residue" ||
+				preflight.workerInputBlockers.some((blocker) =>
+					/(?:input|prompt|residue|未送信|残留)/i.test(blocker),
+				);
+			const instructionSubmitted =
+				Boolean(lastInstructionMarker) &&
+				outputLogText.length > (lastInstructionMarker?.outputOffsetBeforeSend ?? 0) &&
+				!inputStillContainsInstruction;
+			const doneTagDetected = /\bDONE_TAG\s*:/.test(combinedOutputText);
+			const endReportDetected = /\bEND_REPORT\b/.test(combinedOutputText);
+			const idleMessageDetected = detectBoundWorkerIdleMessage(combinedOutputText);
+			const workerResponse = await readBoundWorkerLatestResponseController();
+			const completionDetected =
+				workerResponse.completionDetected ||
+				(doneTagDetected && endReportDetected) ||
+				workerResponse.workerReportExtracted;
+			const completionSignalReason =
+				workerResponse.completionSignalReason ??
+				(doneTagDetected && endReportDetected
+					? "DONE_TAG/END_REPORT worker report detected"
+					: workerResponse.workerReportExtracted
+						? "structured worker report extracted"
+						: null);
+			const promptReturned =
+				preflight.workerInputReady &&
+				(completionDetected || idleMessageDetected) &&
+				!inputStillContainsInstruction;
+			const runningSignal = detectBoundWorkerRunningSignal(observedText);
+			const clearlyRunning =
+				!completionDetected &&
+				!promptReturned &&
+				!inputStillContainsInstruction &&
+				(runningSignal.outputLooksStillRunning ||
+					(instructionSubmitted && outputChangedRecently));
+
+			let status: CommanderControllerBoundWorkerCompletionStatus = "UNKNOWN";
+			if (inputStillContainsInstruction) {
+				status = "NOT_SUBMITTED";
+			} else if (completionDetected || promptReturned || idleMessageDetected) {
+				status = "COMPLETED";
+			} else if (clearlyRunning) {
+				status = "RUNNING";
+			} else if (
+				instructionSubmitted &&
+				staleDurationMs !== null &&
+				staleDurationMs >= normalizedInput.staleThresholdMs
+			) {
+				status = "STALLED";
+			} else if (workerResponse.status === "READY") {
+				status = "READY";
+			}
+
+			if (runningSignal.runningSignalReason && !clearlyRunning) {
+				warnings.push(
+					`running signal ignored after higher-priority state: ${runningSignal.runningSignalReason}`,
+				);
+			}
+			if (workerResponse.status === "WAITING" && status === "UNKNOWN") {
+				warnings.push("worker latest response is still waiting");
+			}
+			warnings.push(
+				...workerResponse.warnings.map((warning) => `worker response: ${warning}`),
+			);
+
+			const nextRecommendedAction = getBoundWorkerCompletionStatusNextAction({
+				status,
+				blockers,
+				inputStillContainsInstruction,
+				completionDetected,
+				outputChangedRecently,
+				staleDurationMs,
+			});
+
+			return {
+				ok: status !== "UNKNOWN",
+				...getCommanderControllerContext(),
+				status,
+				activeTabId: activeTabIdSnapshot,
+				workerPaneId: targetPaneId,
+				workerType,
+				workerIdentityOk,
+				workerUiState: preflight.workerUiState,
+				workerInputReady: preflight.workerInputReady,
+				instructionSubmitted,
+				inputStillContainsInstruction,
+				rawLen: rawOutputText.length,
+				outputTextLength: outputText.length || outputLogText.length,
+				outputChangedRecently,
+				lastOutputAt: new Date(lastOutputAtMs).toISOString(),
+				completionDetected,
+				completionSignalReason,
+				doneTagDetected,
+				endReportDetected,
+				workerReportExtracted: workerResponse.workerReportExtracted,
+				workerReportLength: workerResponse.workerReportLength,
+				promptReturned,
+				idleMessageDetected,
+				staleDurationMs,
+				nextRecommendedAction,
+				warnings,
+				blockers,
+				message: `bound worker completion status: ${status}`,
+			};
+		}, [
+			getAutoLoopPreflightController,
+			getCommanderControllerContext,
+			readBoundWorkerLatestResponseController,
+		]);
+
 	const sendBoundWorkerResponseToBrowserAiController =
 		useCallback(async (
 			_input?: unknown,
@@ -6160,6 +6472,8 @@ export function CommanderTab({
 			bindWorkerToTab: bindWorkerToTabController,
 			getWorkerInputReadiness: getWorkerInputReadinessController,
 			getTerminalOutputSnapshot: getTerminalOutputSnapshotController,
+			getBoundWorkerCompletionStatus: getBoundWorkerCompletionStatusController,
+			getTaskRunStatus: getBoundWorkerCompletionStatusController,
 			getSupervisorPilotReadiness: getSupervisorPilotReadinessController,
 			prepareSupervisorPilotReadiness:
 				prepareSupervisorPilotReadinessController,
@@ -6209,6 +6523,7 @@ export function CommanderTab({
 		bindWorkerToTabController,
 		getWorkerInputReadinessController,
 		getTerminalOutputSnapshotController,
+		getBoundWorkerCompletionStatusController,
 		getSupervisorPilotReadinessController,
 		prepareSupervisorPilotReadinessController,
 		activateTerminalPaneForTabController,
@@ -8467,6 +8782,56 @@ function isBoundWorkerIdleOnlyCompletionMessage(text: string): boolean {
 	);
 }
 
+function normalizeBoundWorkerStatusObservationText(text: string): string {
+	return normalizeWorkerOutputText(text)
+		.split("\n")
+		.map((line) => stripInlineBoundWorkerUiNoise(line).replace(/\s+/g, " ").trim())
+		.filter((line) => line && !isBoundWorkerUiNoiseLine(line))
+		.join("\n");
+}
+
+function detectBoundWorkerIdleMessage(text: string): boolean {
+	const normalized = normalizeWorkerOutputText(text);
+	if (!normalized) return false;
+	return normalized.split("\n").some((line) => {
+		const compact = line.replace(/\s+/g, " ").trim();
+		return (
+			isBoundWorkerIdleOnlyCompletionMessage(compact) ||
+			/(?:報告|作業|確認)?完了/.test(compact) ||
+			/(?:追加指示|次の指示).*(?:待機|静止)/.test(compact)
+		);
+	});
+}
+
+function getBoundWorkerCompletionStatusNextAction(params: {
+	status: CommanderControllerBoundWorkerCompletionStatus;
+	blockers: string[];
+	inputStillContainsInstruction: boolean;
+	completionDetected: boolean;
+	outputChangedRecently: boolean;
+	staleDurationMs: number | null;
+}): string {
+	if (params.status === "BLOCKED") {
+		return params.blockers[0] ?? "Fix worker binding before watching completion.";
+	}
+	if (params.status === "NOT_SUBMITTED") {
+		return "Worker input still appears to contain an unsubmitted instruction; verify submit before waiting for completion.";
+	}
+	if (params.status === "COMPLETED") {
+		return "Read or forward the worker report; do not keep polling for running state.";
+	}
+	if (params.status === "RUNNING") {
+		return "Continue watching the bound worker; completion signal has not appeared yet.";
+	}
+	if (params.status === "STALLED") {
+		return "Inspect the worker pane or terminal snapshot; output has stopped changing without a completion signal.";
+	}
+	if (params.status === "READY") {
+		return "Worker response is readable; review completion details before forwarding.";
+	}
+	return "Collect another snapshot or inspect worker pane state.";
+}
+
 function extractBoundWorkerResponseForAnalysis(params: {
 	outputText: string;
 	screenText: string;
@@ -10288,6 +10653,30 @@ function normalizeTerminalOutputSnapshotInput(
 		paneId: typeof rawPaneId === "string" ? rawPaneId.trim() || null : null,
 		maxOutputChars,
 	};
+}
+
+function normalizeBoundWorkerCompletionStatusInput(
+	input?: CommanderControllerBoundWorkerCompletionStatusInput,
+): {
+	staleThresholdMs: number;
+	recentWindowMs: number;
+} {
+	const record = input && typeof input === "object" ? input : {};
+	const rawStaleThresholdMs = (
+		record as CommanderControllerBoundWorkerCompletionStatusInput
+	).staleThresholdMs;
+	const rawRecentWindowMs = (
+		record as CommanderControllerBoundWorkerCompletionStatusInput
+	).recentWindowMs;
+	const staleThresholdMs =
+		typeof rawStaleThresholdMs === "number" && Number.isFinite(rawStaleThresholdMs)
+			? Math.max(5_000, Math.min(Math.floor(rawStaleThresholdMs), 15 * 60_000))
+			: 120_000;
+	const recentWindowMs =
+		typeof rawRecentWindowMs === "number" && Number.isFinite(rawRecentWindowMs)
+			? Math.max(1_000, Math.min(Math.floor(rawRecentWindowMs), 60_000))
+			: 10_000;
+	return { staleThresholdMs, recentWindowMs };
 }
 
 function normalizeFindTabByTitleInput(
