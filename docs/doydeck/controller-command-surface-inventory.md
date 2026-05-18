@@ -172,7 +172,7 @@ Implemented:
 | Send worker response to Browser AI | implemented | done | `sendBoundWorkerResponseToBrowserAI()`. |
 | List recognized worker candidates | implemented | done | `listRecognizedWorkers()` returns Codex / Claude candidates and separates shell/unknown as ignored candidates. |
 | Inspect worker UI/input readiness | implemented | done | `getWorkerInputReadiness()` checks bound or paneId-selected worker input state without send/bind/activate side effects. |
-| Launch new worker | should not implement yet | P3 | New worker launch requires Doy confirmation. |
+| Launch new worker | should not implement yet | P3 | Do not add automated launch command yet. Routine safe setup may start Claude in an existing terminal pane with the documented Worker launch policy; unknown/login/credential cases require Doy confirmation. |
 
 ### D. Outcome / Handoff
 
@@ -235,7 +235,9 @@ P3 / dangerous / should not implement yet:
 - `closeTab(input)`
   - Can kill terminal/session state. Needs Doy confirmation, dry-run, and dirty-state guard.
 - `launchWorker(input)`
-  - New Codex / Claude launch is Doy confirmation scope.
+  - Do not automate Worker launch as a Controller Command yet.
+  - Manual/routine setup can use the documented Claude launch policy in an existing terminal pane.
+  - Unknown commands, login, credentials, private API, or destructive setup require Doy confirmation.
 - `clearWorkerInput(input)`
   - Input clear/delete can destroy unsent work. Doy confirmation required.
 - `resetBrowserAiThread(input)`
@@ -299,7 +301,9 @@ Candidate 3: task intake proposal accessors
 - cookie / token / private API操作。
 - `local.db` / `app-state.json`直接操作。
 - `~/.superset` / `~/.doydeck-superset-dev`直接操作。
-- Codex / Claude Code新規起動。
+- Automated Codex / Claude Code launch command.
+  - Routine safe setup in an existing terminal pane follows the Worker launch policy.
+  - Unknown launch, login, credentials, private API, or destructive setup remains Doy confirmation scope.
 - commit / push自動化。
 - Browser AI providerのprivate API利用。
 - UI大改造。

@@ -49,6 +49,7 @@ Doy確認ゲート付きで扱う。
   - 作業側Codexへの低リスクdocs指示。
   - 作業側CC / Claude Codeへの短いdocs指示。
   - commit / pushなし、destructiveなし、DBなしの範囲。
+  - Workerが未起動の場合、既存terminal paneで既知の安全なroutine起動を行ってよい。
 - Codex chainでの低リスク作業
   - Browser AI -> Codex -> Browser AI -> Outcome記録。
   - no-op、docs-only、小さい調査、限定修正。
@@ -113,8 +114,8 @@ Doy確認ゲート付きで扱う。
 - cookie / token / private APIに触る必要がある。
 - `local.db`、`app-state.json`、`~/.superset`、
   `~/.doydeck-superset-dev`を直接操作する必要がある。
-- 新規Worker起動が必要。
-- Codex / Claude Codeの新規起動が必要。
+- unknown / non-routine Worker起動が必要。
+- Worker起動にcredentials、login、private API、destructive操作が絡む。
 - 仕様の最終判断が必要。
 - UXの最終判断が必要。
 - 文言の最終判断が必要。
@@ -212,7 +213,48 @@ promptは短く、現在taskを中心にする。
   明記させる。
 - Doy確認が不要な場合は`Doy確認事項なし`と明記させる。
 
-## 8. 既知制限
+## 8. Worker launch policy
+
+Worker起動は、DoyDeck本体コード変更やAuto Loop開始とは別のroutine safe setupとして扱う。
+ただし、既知の安全な起動方法に限る。
+
+標準:
+
+- Mac native Claude Codeを標準Worker起動経路にする。
+- 標準コマンド:
+
+```bash
+claude --dangerously-skip-permissions --effort high
+```
+
+- `--effort max`は使わない。
+- 理由: Opus/max消費が重すぎるため。
+
+Windows:
+
+- Doyが「Windowsで」と明示した場合のみ、SSH経由でWindows側Claude Codeを起動する。
+- Windows起動コマンド:
+
+```bash
+ssh -tt -i ~/.ssh/id_ed25519 doy90@100.67.78.1 'claude --dangerously-skip-permissions --effort high'
+```
+
+- モデル指定が必要な場合だけ:
+
+```bash
+ssh -tt -i ~/.ssh/id_ed25519 doy90@100.67.78.1 'claude --dangerously-skip-permissions --model claude-opus-4-6 --effort high'
+```
+
+停止条件:
+
+- credentials / login / CAPTCHAが必要。
+- destructive操作が必要。
+- cookie / token / private APIが必要。
+- `local.db` / `app-state.json` / `~/.superset` /
+  `~/.doydeck-superset-dev`の直接操作が必要。
+- 既知の安全な起動コマンドが確認できない。
+
+## 9. 既知制限
 
 実運用開始時点の既知制限:
 
@@ -230,7 +272,7 @@ promptは短く、現在taskを中心にする。
 - 非表示 / non-mounted pane
   - `activateTerminalPaneForTab()` / `activateWorkerPane()` /
     `focusBoundWorkerPane()`で既存paneを表示 / focusできる。
-  - 新規Worker起動はしない。
+  - 未起動の場合は、上記Worker launch policyに従って既存terminal paneでroutine起動する。
   - output captureは継続監視。
 - completionDetected / worker response summary
   - S9.7までに改善済み。
@@ -242,7 +284,7 @@ promptは短く、現在taskを中心にする。
   - Auto Loop本体は勝手に開始しない。
   - 実運用ではController chain、preflight、Handoff Ledgerを監視対象として扱う。
 
-## 9. 推奨する最初の実運用タスク
+## 10. 推奨する最初の実運用タスク
 
 最初の実運用タスク候補:
 
@@ -263,7 +305,7 @@ promptは短く、現在taskを中心にする。
    - Handoff LedgerへOutcome記録。
    - Decisionが出たらDecision Ledgerへ1判断1レコードで記録。
 
-## 10. 次改善候補
+## 11. 次改善候補
 
 Priority A: worker response warning細部整理
 
@@ -306,7 +348,7 @@ Priority G: Auto Loop監視UI / stop reason表示
 - Auto Loop本体を作り直さない。
 - 既存Auto Loop / Controller chainの状態、stop reason、Outcomeを見やすくする。
 
-## 11. 使用開始チェックリスト
+## 12. 使用開始チェックリスト
 
 DoyDeckでtaskを始める前に確認する。
 
@@ -318,6 +360,7 @@ DoyDeckでtaskを始める前に確認する。
 - Browser AI composer injection ready。
 - Workerを使う場合、workerTypeが`codex`または`claude`。
 - Workerを使う場合、workerIdentityOk:true。
+- Workerを起動する場合、Worker launch policyの標準コマンドを使っている。
 - Workerを使わない場合、Browser-AI-only preflightを使う。
 - preflightはREADYまたはREADY_WITH_NOTES。
 - Auto Loopはoff / idle、または明示管理。
@@ -327,7 +370,7 @@ DoyDeckでtaskを始める前に確認する。
 - Outcome記録OK。
 - UI状態判断が絡む場合はvisual sanity check済み。
 
-## 12. 短いまとめ
+## 13. 短いまとめ
 
 DoyDeckは、今日から低リスクdocs、調査、Browser AIレビュー、Codex / Claude Codeを使った
 低リスクWorker作業に使える。小から中規模のコード変更も、task slice、preflight、

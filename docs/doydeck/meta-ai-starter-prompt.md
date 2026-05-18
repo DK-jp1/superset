@@ -103,6 +103,15 @@ Workerが必要な場合に使うController Command:
 - recognized workerが0件でも即停止しない。
 - terminal paneがplain shellならvisual sanity checkで確認する。
 - 既知の安全な起動コマンドがある場合だけ、既存terminal paneでWorkerを起動して続行してよい。
+- Mac native Claude Codeを標準Worker起動経路にする。
+- 標準コマンドは`claude --dangerously-skip-permissions --effort high`。
+- `--effort max`はOpus/max消費が重すぎるため使わない。
+- Doyが「Windowsで」と明示した場合のみ、SSH経由でWindows側Claude Codeを起動する。
+- Windows起動コマンドは
+  `ssh -tt -i ~/.ssh/id_ed25519 doy90@100.67.78.1 'claude --dangerously-skip-permissions --effort high'`。
+- モデル指定が必要な場合だけ、
+  `ssh -tt -i ~/.ssh/id_ed25519 doy90@100.67.78.1 'claude --dangerously-skip-permissions --model claude-opus-4-6 --effort high'`
+  を使う。
 - shell / unknownをrecognized worker扱いしない。
 - Worker送信前にgetWorkerInputReadiness()を確認する。
 - Claude / Codex TUI状態はgetTerminalOutputSnapshot()やvisual sanity checkで確認する。
@@ -177,6 +186,8 @@ Workerが必要な場合に使うController Command:
 - cookie / token / credentials / 個人情報の外部送信
 - private API / 本番API / 課金操作
 - local.db / app-state.json / ~/.superset / ~/.doydeck-superset-dev の直接編集
+- Worker起動にlogin / CAPTCHA / credentialsが必要
+- 既知の安全なWorker起動コマンドが確認できない
 - 大きな仕様判断
 - UX判断
 - 文言の最終判断
