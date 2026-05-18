@@ -620,6 +620,11 @@ interface RecordedControllerChainOutcome {
 	latestBrowserAiReviewStatus: string;
 	latestWorkerResponseStatus: string;
 	workerResponseReturnedToBrowserAi: string;
+	submissionStatus: string;
+	uiReflected: string;
+	assistantReplyObserved: string;
+	visualVerificationUsed: string;
+	submissionNextRequiredAction: string;
 	hasStopSignal: string;
 	hasCodexInstruction: string;
 	hasDoyConfirmationItems: string;
@@ -677,6 +682,10 @@ function formatRecordedOutcomeQaLines(
 		`- Worker response expected: ${recordedOutcome.workerResponseExpected || "true"}`,
 		`- Worker response: ${recordedOutcome.latestWorkerResponseStatus || "未取得"}`,
 		`- Worker response returned to Browser AI: ${recordedOutcome.workerResponseReturnedToBrowserAi || "未取得"}`,
+		`- Browser AI submission: ${recordedOutcome.submissionStatus || "未取得"}`,
+		`- Browser AI UI reflected: ${recordedOutcome.uiReflected || "未取得"}`,
+		`- Browser AI assistant reply observed: ${recordedOutcome.assistantReplyObserved || "未取得"}`,
+		`- Browser AI visual verification: ${recordedOutcome.visualVerificationUsed || "未取得"}`,
 		`- Worker-only smoke passed: ${recordedOutcome.workerOnlySmokePassed || "false"}`,
 		`- STOP: ${recordedOutcome.hasStopSignal || "false"}`,
 		`- Codex instruction: ${recordedOutcome.hasCodexInstruction || "false"}`,
@@ -720,6 +729,11 @@ ${recordedOutcome.smokeType ? `- Smoke type: ${recordedOutcome.smokeType}` : ""}
 - Worker response expected: ${recordedOutcome.workerResponseExpected || "true"}
 - Worker response result: ${recordedOutcome.latestWorkerResponseStatus || "未取得"}
 - Worker response returned to Browser AI: ${recordedOutcome.workerResponseReturnedToBrowserAi || "未取得"}
+- Browser AI submission status: ${recordedOutcome.submissionStatus || "未取得"}
+- Browser AI UI reflected: ${recordedOutcome.uiReflected || "未取得"}
+- Browser AI assistant reply observed: ${recordedOutcome.assistantReplyObserved || "未取得"}
+- Browser AI visual verification used: ${recordedOutcome.visualVerificationUsed || "未取得"}
+${recordedOutcome.submissionNextRequiredAction ? `- Browser AI submission next action: ${recordedOutcome.submissionNextRequiredAction}` : ""}
 - Worker-only smoke passed: ${recordedOutcome.workerOnlySmokePassed || "false"}
 - Browser-AI-only: ${recordedOutcome.browserAiOnly || "false"}
 - STOP / 次のCodex指示不要: ${recordedOutcome.hasStopSignal === "true" ? recordedOutcome.extractedStopSignal || "true" : "false"}
@@ -773,6 +787,11 @@ function extractLatestControllerChainOutcome(
 		workerResponseReturnedToBrowserAi: readLine(
 			"workerResponseReturnedToBrowserAi",
 		),
+		submissionStatus: readLine("submissionStatus"),
+		uiReflected: readLine("uiReflected"),
+		assistantReplyObserved: readLine("assistantReplyObserved"),
+		visualVerificationUsed: readLine("visualVerificationUsed"),
+		submissionNextRequiredAction: readLine("submissionNextRequiredAction"),
 		hasStopSignal: readLine("hasStopSignal"),
 		hasCodexInstruction: readLine("hasCodexInstruction"),
 		hasDoyConfirmationItems: readLine("hasDoyConfirmationItems"),

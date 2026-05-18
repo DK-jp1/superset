@@ -277,6 +277,25 @@ const COMPOSER_SELECTORS: Record<BrowserProvider, string[]> = {
 	],
 };
 
+const USER_MESSAGE_SELECTORS: Record<BrowserProvider, string[]> = {
+	chatgpt: [
+		'[data-message-author-role="user"]',
+		'[data-testid*="conversation-turn"][data-message-author-role="user"]',
+	],
+	claude: [
+		'div.font-user-message',
+		'[data-testid*="user"]',
+		'[data-testid*="human"]',
+		'[class*="user-message"]',
+	],
+	gemini: [
+		"user-query",
+		'[data-test-id*="user"]',
+		'[class*="user-query"]',
+		'[class*="user-message"]',
+	],
+};
+
 const COMPOSER_TARGET_HELPER = `
 function isVisible(el) {
   if (!el) return false;
@@ -522,5 +541,156 @@ export function buildInjectionWithSubmitScript(
     }
     setTimeout(trySubmit, 250);
   });
+})()`;
+}
+
+export function buildSubmissionReflectionStateScript(
+	text: string,
+	provider: BrowserProvider,
+): string {
+	const escaped = JSON.stringify(text);
+	const composerSelectors = JSON.stringify(COMPOSER_SELECTORS[provider]);
+	const userSelectors = JSON.stringify(USER_MESSAGE_SELECTORS[provider]);
+	const assistantSelectors = JSON.stringify(
+		provider === "chatgpt"
+			? ['[data-message-author-role="assistant"]', ".agent-turn"]
+			: provider === "claude"
+				? ["div.font-claude-response"]
+				: ["message-content"],
+	);
+	return `(function() {
+  ${COMPOSER_TARGET_HELPER}
+  var submittedPrompt = ${escaped};
+  function normalizeText(value) {
+    return String(value || '').replace(/\\s+/g, ' ').trim();
+  }
+  function normalizeMultilineText(value) {
+    return String(value || '')
+      .replace(/\\r\\n/g, '\\n')
+      .replace(/\\r/g, '\\n')
+      .replace(/[\\t ]+\\n/g, '\\n')
+      .replace(/\\n{3,}/g, '\\n\\n')
+      .trim();
+  }
+  function fingerprintText(value) {
+    var text = normalizeText(value);
+    var hash = 0;
+    for (var i = 0; i < text.length; i++) {
+      hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+    }
+    return text.length + ':' + Math.abs(hash).toString(36) + ':' + text.slice(0, 80);
+  }
+  function getComposerText(el) {
+    if (!el) return '';
+    if (el.matches && el.matches('textarea,input')) {
+      return String(el.value || '');
+    }
+    return normalizeMultilineText(el.innerText || el.textContent || '');
+  }
+  function collectVisibleTexts(selectors) {
+    var seen = [];
+    var texts = [];
+    for (var i = 0; i < selectors.length; i++) {
+      var nodes = Array.prototype.slice.call(document.querySelectorAll(selectors[i]));
+      for (var n = 0; n < nodes.length; n++) {
+        var node = nodes[n];
+        if (!node || seen.indexOf(node) !== -1 || !isVisible(node)) continue;
+        seen.push(node);
+        var text = normalizeMultilineText(node.innerText || node.textContent || '');
+        if (text) texts.push(text);
+      }
+    }
+    return texts;
+  }
+  function isResponseInProgress() {
+    var busySelectors = [
+      '[aria-busy="true"]',
+      '[data-is-streaming="true"]',
+      '[data-streaming="true"]',
+      '.result-streaming',
+      '.streaming'
+    ];
+    for (var i = 0; i < busySelectors.length; i++) {
+      var busy = document.querySelector(busySelectors[i]);
+      if (busy && isVisible(busy)) return true;
+    }
+    var stopSelectors = [
+      '[data-testid="stop-button"]',
+      '[data-testid="composer-stop-button"]',
+      'button[aria-label="Stop generating"]',
+      'button[aria-label="Stop"]',
+      'button[aria-label="Cancel"]'
+    ];
+    for (var j = 0; j < stopSelectors.length; j++) {
+      var stop = document.querySelector(stopSelectors[j]);
+      if (stop && isVisible(stop) && !stop.disabled) return true;
+    }
+    var buttons = Array.prototype.slice.call(document.querySelectorAll('button[aria-label]'));
+    for (var k = 0; k < buttons.length; k++) {
+      var label = String(buttons[k].getAttribute('aria-label') || '');
+      if (/stop|cancel|停止|中止|生成を停止/i.test(label) && isVisible(buttons[k]) && !buttons[k].disabled) {
+        return true;
+      }
+    }
+    return false;
+  }
+  var normalizedPrompt = normalizeText(submittedPrompt);
+  var promptFingerprint = fingerprintText(normalizedPrompt);
+  var promptPrefix = normalizedPrompt.slice(0, Math.min(160, normalizedPrompt.length));
+  var promptSuffix = normalizedPrompt.slice(Math.max(0, normalizedPrompt.length - 100));
+  function matchesSubmittedPrompt(value) {
+    var text = normalizeText(value);
+    if (!text || !normalizedPrompt) return false;
+    if (fingerprintText(text) === promptFingerprint) return true;
+    if (normalizedPrompt.length <= 240 && text.indexOf(normalizedPrompt) !== -1) return true;
+    if (promptPrefix.length >= 32 && text.indexOf(promptPrefix) !== -1) return true;
+    if (promptSuffix.length >= 32 && text.indexOf(promptSuffix) !== -1) return true;
+    return false;
+  }
+  var composerTarget = findComposerTarget(${composerSelectors});
+  var composerText = getComposerText(composerTarget.element);
+  var composerTextNormalized = normalizeText(composerText);
+  var composerEmpty = composerTextNormalized.length === 0;
+  var userTexts = collectVisibleTexts(${userSelectors});
+  var latestUserText = userTexts[userTexts.length - 1] || '';
+  var userMessageReflected = false;
+  var reflectionReason = 'submitted prompt not found in visible user messages';
+  for (var u = 0; u < userTexts.length; u++) {
+    if (matchesSubmittedPrompt(userTexts[u])) {
+      userMessageReflected = true;
+      reflectionReason = 'submitted prompt matched visible user message';
+      break;
+    }
+  }
+  if (!userMessageReflected && composerEmpty && promptPrefix.length >= 32) {
+    var bodyText = normalizeText(document.body ? document.body.innerText || document.body.textContent || '' : '');
+    if (bodyText.indexOf(promptPrefix) !== -1) {
+      userMessageReflected = true;
+      reflectionReason = 'submitted prompt matched visible document after composer cleared';
+    }
+  }
+  if (!userMessageReflected && !composerEmpty) {
+    reflectionReason = 'composer still contains text after submit attempt';
+  }
+  var assistantTexts = collectVisibleTexts(${assistantSelectors});
+  var latestAssistantText = assistantTexts[assistantTexts.length - 1] || '';
+  return {
+    visualVerificationUsed: true,
+    userMessageCount: userTexts.length,
+    latestUserMessageText: latestUserText,
+    latestUserMessageFingerprint: fingerprintText(latestUserText),
+    submittedPromptFingerprint: promptFingerprint,
+    submittedPromptPreview: normalizedPrompt.slice(0, 240),
+    userMessageReflected: userMessageReflected,
+    reflectionReason: reflectionReason,
+    composerEmpty: composerEmpty,
+    composerTextLength: composerTextNormalized.length,
+    composerTextPreview: composerTextNormalized.slice(0, 240),
+    composerSelectorStatus: composerTarget.selector || composerTarget.status,
+    assistantCount: assistantTexts.length,
+    latestAssistantText: latestAssistantText,
+    latestAssistantFingerprint: fingerprintText(latestAssistantText),
+    isResponding: isResponseInProgress()
+  };
 })()`;
 }

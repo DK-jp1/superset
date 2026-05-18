@@ -39,6 +39,7 @@ import {
 	buildComposerReadinessScript,
 	buildInjectionWithSubmitScript,
 	buildLatestReplyStateScript,
+	buildSubmissionReflectionStateScript,
 	detectProvider,
 	getProviderLabel,
 	type BrowserProvider,
@@ -416,6 +417,9 @@ interface CommanderControllerBrowserAiPreflightResult
 	lastSubmissionType: CommanderControllerBrowserAiSubmissionType | null;
 	lastSubmissionStatus: CommanderControllerBrowserAiSubmissionRecordStatus | null;
 	lastSubmissionInjectionResult: string | null;
+	lastSubmissionUiReflected: boolean | null;
+	lastSubmissionAssistantReplyObserved: boolean | null;
+	lastSubmissionVisualVerificationUsed: boolean;
 	blockers: string[];
 	warnings: string[];
 	nextRequiredAction: string;
@@ -717,6 +721,11 @@ interface CommanderControllerChainSummaryResult
 	latestBrowserAiReviewStatus: CommanderControllerLatestReplyStatus;
 	latestWorkerResponseStatus: CommanderControllerBoundWorkerOutputStatus;
 	workerResponseReturnedToBrowserAi: boolean;
+	submissionStatus: CommanderControllerBrowserAiSubmissionRecordStatus | null;
+	uiReflected: boolean | null;
+	assistantReplyObserved: boolean | null;
+	visualVerificationUsed: boolean;
+	submissionNextRequiredAction: string | null;
 	hasStopSignal: boolean;
 	hasCodexInstruction: boolean;
 	hasDoyConfirmationItems: boolean;
@@ -740,6 +749,9 @@ interface CommanderControllerChainSummaryResult
 	lastSubmissionType: CommanderControllerBrowserAiSubmissionType | null;
 	lastSubmissionStatus: CommanderControllerBrowserAiSubmissionRecordStatus | null;
 	lastSubmissionInjectionResult: string | null;
+	lastSubmissionUiReflected: boolean | null;
+	lastSubmissionAssistantReplyObserved: boolean | null;
+	lastSubmissionVisualVerificationUsed: boolean;
 	autoLoopMode: AutoRelayMode;
 	autoLoopPhase: string;
 }
@@ -761,7 +773,18 @@ interface CommanderControllerRecordChainOutcomeResult
 	summary: CommanderControllerChainSummaryResult;
 }
 
-type CommanderControllerSendHandoffStatus = "SENT" | "BLOCKED" | "FAILED";
+type CommanderControllerBrowserAiSubmissionVerificationStatus =
+	| "SUBMITTED"
+	| "UI_REFLECTED"
+	| "WAITING_REPLY"
+	| "REPLIED"
+	| "NOT_REFLECTED"
+	| "FAILED";
+
+type CommanderControllerSendHandoffStatus =
+	| "SENT"
+	| CommanderControllerBrowserAiSubmissionVerificationStatus
+	| "BLOCKED";
 
 interface CommanderControllerSendHandoffResult
 	extends CommanderControllerCommandResult {
@@ -779,6 +802,12 @@ interface CommanderControllerSendHandoffResult
 	message: string;
 	sentAt: string | null;
 	injectionResult: string | null;
+	submissionStatus: CommanderControllerBrowserAiSubmissionVerificationStatus | null;
+	uiReflected: boolean | null;
+	assistantReplyObserved: boolean | null;
+	visualVerificationUsed: boolean;
+	submissionVerificationReason: string | null;
+	nextRequiredAction: string;
 	browserAiComposer: CommanderControllerBrowserAiReadiness;
 	composerReady: boolean;
 	composerInjectionReady: boolean;
@@ -952,8 +981,8 @@ interface CommanderControllerBoundWorkerLatestResponseResult
 
 type CommanderControllerSendWorkerResponseStatus =
 	| "SENT"
-	| "BLOCKED"
-	| "FAILED";
+	| CommanderControllerBrowserAiSubmissionVerificationStatus
+	| "BLOCKED";
 
 interface CommanderControllerSendWorkerResponseResult
 	extends CommanderControllerCommandResult {
@@ -971,6 +1000,12 @@ interface CommanderControllerSendWorkerResponseResult
 	message: string;
 	sentAt: string | null;
 	injectionResult: string | null;
+	submissionStatus: CommanderControllerBrowserAiSubmissionVerificationStatus | null;
+	uiReflected: boolean | null;
+	assistantReplyObserved: boolean | null;
+	visualVerificationUsed: boolean;
+	submissionVerificationReason: string | null;
+	nextRequiredAction: string;
 	browserAiComposer: CommanderControllerBrowserAiReadiness;
 	composerReady: boolean;
 	composerInjectionReady: boolean;
@@ -994,12 +1029,17 @@ interface CommanderControllerSendWorkerResponseResult
 
 type CommanderControllerBrowserAiSubmissionType = "handoff" | "worker-response";
 type CommanderControllerBrowserAiSubmissionRecordStatus =
-	| "SENT"
+	| "SUBMITTED"
+	| "UI_REFLECTED"
+	| "WAITING_REPLY"
+	| "REPLIED"
+	| "NOT_REFLECTED"
 	| "BLOCKED"
 	| "FAILED";
 type CommanderControllerBrowserAiSubmissionResultStatus =
 	| "READY"
 	| "NONE"
+	| CommanderControllerBrowserAiSubmissionRecordStatus
 	| "BLOCKED"
 	| "FAILED";
 
@@ -1023,6 +1063,12 @@ interface CommanderControllerBrowserAiSubmissionState {
 	injectionTargetStatus: string;
 	injectionBlockers: string[];
 	status: CommanderControllerBrowserAiSubmissionRecordStatus;
+	submissionStatus: CommanderControllerBrowserAiSubmissionVerificationStatus | null;
+	uiReflected: boolean | null;
+	assistantReplyObserved: boolean | null;
+	visualVerificationUsed: boolean;
+	submissionVerificationReason: string | null;
+	nextRequiredAction: string;
 	message: string;
 	warnings: string[];
 	blockers: string[];
@@ -1246,7 +1292,9 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			typicalUse: "Ask Browser AI for requirements review or next action.",
 			requiresDoyConfirmation: false,
 			riskLevel: "medium",
-			notes: ["Uses Browser AI composer injection; preflight should be checked first."],
+			notes: [
+				"Verifies UI reflection after composer injection; preflight should be checked first.",
+			],
 		},
 		{
 			name: "readBrowserAiLatestReply",
@@ -1279,7 +1327,10 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			typicalUse: "Inspect the previous Handoff or worker-response send result.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
-			notes: ["Alias getBrowserAiSubmissionState is also available."],
+			notes: [
+				"Includes submissionStatus, uiReflected, assistantReplyObserved, and visualVerificationUsed.",
+				"Alias getBrowserAiSubmissionState is also available.",
+			],
 		},
 		{
 			name: "getBrowserAiSubmissionState",
@@ -1301,7 +1352,9 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			typicalUse: "Complete Browser AI -> Worker -> Browser AI review chains.",
 			requiresDoyConfirmation: false,
 			riskLevel: "medium",
-			notes: ["Uses Browser AI composer injection; alias sendWorkerResponseToBrowserAI is also available."],
+			notes: [
+				"Verifies UI reflection after composer injection; alias sendWorkerResponseToBrowserAI is also available.",
+			],
 		},
 		{
 			name: "sendWorkerResponseToBrowserAI",
@@ -2023,18 +2076,61 @@ export function CommanderTab({
 				| "latestAssistantReplyLength"
 				| "latestAssistantReplyFingerprint"
 				| "latestAssistantReplyReadAt"
-			>,
+				| "submissionStatus"
+				| "uiReflected"
+				| "assistantReplyObserved"
+				| "visualVerificationUsed"
+				| "submissionVerificationReason"
+				| "nextRequiredAction"
+			> &
+				Partial<
+					Pick<
+						CommanderControllerBrowserAiSubmissionState,
+						| "submissionStatus"
+						| "uiReflected"
+						| "assistantReplyObserved"
+						| "visualVerificationUsed"
+						| "submissionVerificationReason"
+						| "nextRequiredAction"
+					>
+				>,
 		): CommanderControllerBrowserAiSubmissionState => {
 			browserAiSubmissionSequenceRef.current += 1;
+			const submissionStatus: CommanderControllerBrowserAiSubmissionVerificationStatus | null =
+				input.status === "BLOCKED"
+					? null
+					: (input.submissionStatus ??
+						(input.status as CommanderControllerBrowserAiSubmissionVerificationStatus));
+			const uiReflected =
+				input.uiReflected ??
+				(input.status === "NOT_REFLECTED"
+					? false
+					: getBrowserAiSubmissionStatusOk(input.status)
+						? true
+						: null);
+			const assistantReplyObserved =
+				input.assistantReplyObserved ?? (input.status === "REPLIED" ? true : null);
 			const submission: CommanderControllerBrowserAiSubmissionState = {
 				...input,
 				submissionId: `browser-ai-submission-${Date.now().toString(36)}-${browserAiSubmissionSequenceRef.current.toString(36)}`,
 				recordedAt: new Date().toISOString(),
-				detectedUserMessageAfterSubmit:
-					input.status === "SENT" && input.injectionResult === "submitted"
-						? null
-						: false,
-				detectedAssistantReplyAfterSubmit: null,
+				submissionStatus,
+				uiReflected,
+				assistantReplyObserved,
+				visualVerificationUsed: input.visualVerificationUsed === true,
+				submissionVerificationReason:
+					typeof input.submissionVerificationReason === "string"
+						? input.submissionVerificationReason
+						: null,
+				nextRequiredAction:
+					typeof input.nextRequiredAction === "string" &&
+					input.nextRequiredAction.trim()
+						? input.nextRequiredAction
+						: submissionStatus
+							? getBrowserAiSubmissionNextRequiredAction(submissionStatus, input.type)
+							: "Resolve Browser AI submission blocker before continuing.",
+				detectedUserMessageAfterSubmit: uiReflected,
+				detectedAssistantReplyAfterSubmit: assistantReplyObserved,
 				latestAssistantReplyStatus: null,
 				latestAssistantReplyLength: null,
 				latestAssistantReplyFingerprint: null,
@@ -2072,6 +2168,12 @@ export function CommanderTab({
 					submitSelectorStatus: "not_checked",
 					injectionTargetStatus: "not_checked",
 					injectionBlockers: [],
+					submissionStatus: null,
+					uiReflected: null,
+					assistantReplyObserved: null,
+					visualVerificationUsed: false,
+					submissionVerificationReason: null,
+					nextRequiredAction: "Submit to Browser AI before reading submission state.",
 					message: "No Browser AI submission has been recorded",
 					warnings: [],
 					blockers: [],
@@ -2086,10 +2188,12 @@ export function CommanderTab({
 				};
 			}
 			return {
-				ok: submission.status === "SENT",
+				ok: getBrowserAiSubmissionStatusOk(submission.status),
 				...getCommanderControllerContext(),
 				...submission,
-				status: submission.status === "SENT" ? "READY" : submission.status,
+				status: getBrowserAiSubmissionStatusOk(submission.status)
+					? "READY"
+					: submission.status,
 			};
 		}, [activeTabId, getCommanderControllerContext]);
 
@@ -2150,7 +2254,7 @@ export function CommanderTab({
 			}
 
 			if (
-				submission.status === "SENT" &&
+				getBrowserAiSubmissionStatusOk(submission.status) &&
 				status === "WAITING" &&
 				!latestTextAvailable
 			) {
@@ -2159,9 +2263,21 @@ export function CommanderTab({
 				);
 				warnings.push("provider/thread may have changed or Browser AI may still be responding");
 			}
+			const nextSubmissionStatus =
+				detectedAssistantReplyAfterSubmit === true ? "REPLIED" : submission.status;
+			const nextAssistantReplyObserved =
+				detectedAssistantReplyAfterSubmit ?? submission.assistantReplyObserved;
 
 			lastBrowserAiSubmissionRef.current = {
 				...submission,
+				status: nextSubmissionStatus,
+				submissionStatus:
+					nextSubmissionStatus === "BLOCKED" ? null : nextSubmissionStatus,
+				assistantReplyObserved: nextAssistantReplyObserved,
+				nextRequiredAction:
+					nextSubmissionStatus === "REPLIED"
+						? getBrowserAiSubmissionNextRequiredAction("REPLIED", submission.type)
+						: submission.nextRequiredAction,
 				detectedAssistantReplyAfterSubmit,
 				latestAssistantReplyStatus: status,
 				latestAssistantReplyLength: latestReplyText.length,
@@ -3021,6 +3137,11 @@ export function CommanderTab({
 				lastSubmissionType: lastSubmission?.type ?? null,
 				lastSubmissionStatus: lastSubmission?.status ?? null,
 				lastSubmissionInjectionResult: lastSubmission?.injectionResult ?? null,
+				lastSubmissionUiReflected: lastSubmission?.uiReflected ?? null,
+				lastSubmissionAssistantReplyObserved:
+					lastSubmission?.assistantReplyObserved ?? null,
+				lastSubmissionVisualVerificationUsed:
+					lastSubmission?.visualVerificationUsed === true,
 				blockers,
 				warnings,
 				nextRequiredAction: getBrowserAiPreflightNextAction(blockers, warnings),
@@ -4191,6 +4312,12 @@ export function CommanderTab({
 				warnings,
 				sentAt: null,
 				injectionResult: null,
+				submissionStatus: null,
+				uiReflected: null,
+				assistantReplyObserved: null,
+				visualVerificationUsed: false,
+				submissionVerificationReason: null,
+				nextRequiredAction: "Submit Handoff Ledger to Browser AI.",
 				browserAiComposer: composerReadiness,
 				...composerDiagnostics,
 				browserAiUrl: liveUrl,
@@ -4236,7 +4363,18 @@ export function CommanderTab({
 				const injectionResult = typeof result === "string" ? result : "unknown";
 				if (injectionResult === "submitted") {
 					const sentAt = new Date().toISOString();
-					const message = `${getProviderLabel(provider)}にHandoff Ledgerを送信しました`;
+					const verification = await verifyBrowserAiSubmissionReflection({
+						provider,
+						prompt,
+						injectIntoPage: webview.injectIntoPage,
+						latestReplyBeforeSubmit,
+						type: "handoff",
+					});
+					const submissionWarnings = [...warnings, ...verification.warnings];
+					const message =
+						verification.status === "NOT_REFLECTED"
+							? `${getProviderLabel(provider)}へのHandoff Ledger送信は試行されましたがUI反映を確認できません`
+							: `${getProviderLabel(provider)}へのHandoff Ledger送信状態: ${verification.status}`;
 					recordBrowserAiSubmissionControllerState({
 						activeTabId: activeTabIdSnapshot,
 						type: "handoff",
@@ -4248,9 +4386,15 @@ export function CommanderTab({
 						payloadLength: handoffLedgerLength,
 						sentAt,
 						injectionResult,
-						status: "SENT",
+						status: verification.status,
+						submissionStatus: verification.status,
+						uiReflected: verification.uiReflected,
+						assistantReplyObserved: verification.assistantReplyObserved,
+						visualVerificationUsed: verification.visualVerificationUsed,
+						submissionVerificationReason: verification.reason,
+						nextRequiredAction: verification.nextRequiredAction,
 						message,
-						warnings: [...warnings],
+						warnings: submissionWarnings,
 						blockers: [...blockers],
 						assistantCountBeforeSubmit:
 							latestReplyBeforeSubmit?.assistantCount ?? null,
@@ -4258,12 +4402,19 @@ export function CommanderTab({
 							latestReplyBeforeSubmit?.latestFingerprint ?? null,
 					});
 					return {
-						ok: true,
+						ok: getBrowserAiSubmissionStatusOk(verification.status),
 						...baseResult,
-						status: "SENT",
+						status: verification.status,
 						message,
+						warnings: submissionWarnings,
 						sentAt,
 						injectionResult,
+						submissionStatus: verification.status,
+						uiReflected: verification.uiReflected,
+						assistantReplyObserved: verification.assistantReplyObserved,
+						visualVerificationUsed: verification.visualVerificationUsed,
+						submissionVerificationReason: verification.reason,
+						nextRequiredAction: verification.nextRequiredAction,
 					};
 				}
 				const message =
@@ -5220,6 +5371,12 @@ export function CommanderTab({
 				warnings,
 				sentAt: null,
 				injectionResult: null,
+				submissionStatus: null,
+				uiReflected: null,
+				assistantReplyObserved: null,
+				visualVerificationUsed: false,
+				submissionVerificationReason: null,
+				nextRequiredAction: "Submit Worker Response to Browser AI.",
 				browserAiComposer: composerReadiness,
 				...composerDiagnostics,
 				browserAiUrl: liveUrl,
@@ -5272,7 +5429,18 @@ export function CommanderTab({
 				const injectionResult = typeof result === "string" ? result : "unknown";
 				if (injectionResult === "submitted") {
 					const sentAt = new Date().toISOString();
-					const message = `${getProviderLabel(provider)}にWorker Responseを送信しました`;
+					const verification = await verifyBrowserAiSubmissionReflection({
+						provider,
+						prompt,
+						injectIntoPage: webview.injectIntoPage,
+						latestReplyBeforeSubmit,
+						type: "worker-response",
+					});
+					const submissionWarnings = [...warnings, ...verification.warnings];
+					const message =
+						verification.status === "NOT_REFLECTED"
+							? `${getProviderLabel(provider)}へのWorker Response送信は試行されましたがUI反映を確認できません`
+							: `${getProviderLabel(provider)}へのWorker Response送信状態: ${verification.status}`;
 					recordBrowserAiSubmissionControllerState({
 						activeTabId: activeTabIdSnapshot,
 						type: "worker-response",
@@ -5284,9 +5452,15 @@ export function CommanderTab({
 						payloadLength: responseText.length,
 						sentAt,
 						injectionResult,
-						status: "SENT",
+						status: verification.status,
+						submissionStatus: verification.status,
+						uiReflected: verification.uiReflected,
+						assistantReplyObserved: verification.assistantReplyObserved,
+						visualVerificationUsed: verification.visualVerificationUsed,
+						submissionVerificationReason: verification.reason,
+						nextRequiredAction: verification.nextRequiredAction,
 						message,
-						warnings: [...warnings],
+						warnings: submissionWarnings,
 						blockers: [...blockers],
 						assistantCountBeforeSubmit:
 							latestReplyBeforeSubmit?.assistantCount ?? null,
@@ -5294,12 +5468,19 @@ export function CommanderTab({
 							latestReplyBeforeSubmit?.latestFingerprint ?? null,
 					});
 					return {
-						ok: true,
+						ok: getBrowserAiSubmissionStatusOk(verification.status),
 						...baseResult,
-						status: "SENT",
+						status: verification.status,
 						message,
+						warnings: submissionWarnings,
 						sentAt,
 						injectionResult,
+						submissionStatus: verification.status,
+						uiReflected: verification.uiReflected,
+						assistantReplyObserved: verification.assistantReplyObserved,
+						visualVerificationUsed: verification.visualVerificationUsed,
+						submissionVerificationReason: verification.reason,
+						nextRequiredAction: verification.nextRequiredAction,
 					};
 				}
 				const message =
@@ -5439,20 +5620,43 @@ export function CommanderTab({
 			}
 			const requestedWorkerResponseReturned =
 				normalizeControllerBooleanInput(input?.workerResponseReturnedToBrowserAi);
+			const lastSubmissionUiReflected = lastSubmission?.uiReflected ?? null;
+			const lastSubmissionAssistantReplyObserved =
+				lastSubmission?.assistantReplyObserved ?? null;
 			const workerResponseReturnedToBrowserAi =
 				requestedWorkerResponseReturned ??
 				(!workerResponseExpected
 					? false
 					: lastSubmission?.type === "worker-response" &&
-							lastSubmission.status === "SENT" &&
-							lastSubmission.injectionResult === "submitted");
+							lastSubmission.injectionResult === "submitted" &&
+							lastSubmission.uiReflected === true);
+			if (
+				browserAiReviewExpected &&
+				workerResponseExpected &&
+				lastSubmission?.type === "worker-response" &&
+				lastSubmission.status === "NOT_REFLECTED"
+			) {
+				blockers.push(
+					"Browser AI review NOT COMPLETED: worker response submission was not reflected in Browser AI UI",
+				);
+			}
 			if (
 				browserAiReviewExpected &&
 				workerResponseExpected &&
 				!workerResponseReturnedToBrowserAi
 			) {
 				warnings.push(
-					"latest worker-response submission tracking is unavailable or not SENT",
+					"latest worker-response submission tracking is unavailable or not UI_REFLECTED",
+				);
+			}
+			if (
+				browserAiReviewExpected &&
+				workerResponseExpected &&
+				workerResponseReturnedToBrowserAi &&
+				latestReply.status !== "READY"
+			) {
+				warnings.push(
+					`Browser AI review NOT COMPLETED: worker response was UI_REFLECTED but assistant reply is ${latestReply.status}`,
 				);
 			}
 			if (browserAiReviewExpected && latestReply.extractedCodexInstruction.trim()) {
@@ -5542,6 +5746,13 @@ export function CommanderTab({
 				latestBrowserAiReviewStatus: latestReply.status,
 				latestWorkerResponseStatus,
 				workerResponseReturnedToBrowserAi,
+				submissionStatus: lastSubmission?.status ?? null,
+				uiReflected: lastSubmissionUiReflected,
+				assistantReplyObserved: lastSubmissionAssistantReplyObserved,
+				visualVerificationUsed:
+					lastSubmission?.visualVerificationUsed === true,
+				submissionNextRequiredAction:
+					lastSubmission?.nextRequiredAction ?? null,
 				hasStopSignal: effectiveStopSignal,
 				hasCodexInstruction: effectiveHasCodexInstruction,
 				hasDoyConfirmationItems: effectiveHasDoyConfirmationItems,
@@ -5574,6 +5785,10 @@ export function CommanderTab({
 				lastSubmissionType: lastSubmission?.type ?? null,
 				lastSubmissionStatus: lastSubmission?.status ?? null,
 				lastSubmissionInjectionResult: lastSubmission?.injectionResult ?? null,
+				lastSubmissionUiReflected,
+				lastSubmissionAssistantReplyObserved,
+				lastSubmissionVisualVerificationUsed:
+					lastSubmission?.visualVerificationUsed === true,
 				autoLoopMode:
 					!browserAiOnly && "autoLoopMode" in preflight
 						? preflight.autoLoopMode
@@ -6142,6 +6357,10 @@ function applyControllerChainOutcomeToSession(
 		`Worker response expected: ${summary.workerResponseExpected}`,
 		`Worker response: ${summary.latestWorkerResponseStatus}`,
 		`Worker response returned to Browser AI: ${summary.workerResponseReturnedToBrowserAi}`,
+		`Browser AI submission status: ${summary.submissionStatus ?? "none"}`,
+		`Browser AI UI reflected: ${summary.uiReflected ?? "unknown"}`,
+		`Browser AI assistant reply observed: ${summary.assistantReplyObserved ?? "unknown"}`,
+		`Browser AI visual verification used: ${summary.visualVerificationUsed}`,
 		`Worker-only smoke passed: ${summary.workerOnlySmokePassed}`,
 		`STOP: ${summary.hasStopSignal}`,
 		`Codex instruction: ${summary.hasCodexInstruction}`,
@@ -6229,6 +6448,13 @@ function formatControllerChainOutcomeForSession(
 		`- latestBrowserAiReviewStatus: ${summary.latestBrowserAiReviewStatus}`,
 		`- latestWorkerResponseStatus: ${summary.latestWorkerResponseStatus}`,
 		`- workerResponseReturnedToBrowserAi: ${summary.workerResponseReturnedToBrowserAi}`,
+		`- submissionStatus: ${summary.submissionStatus ?? "none"}`,
+		`- uiReflected: ${summary.uiReflected ?? "unknown"}`,
+		`- assistantReplyObserved: ${summary.assistantReplyObserved ?? "unknown"}`,
+		`- visualVerificationUsed: ${summary.visualVerificationUsed}`,
+		`- submissionNextRequiredAction: ${
+			summary.submissionNextRequiredAction || "none"
+		}`,
 		`- hasStopSignal: ${summary.hasStopSignal}`,
 		`- hasCodexInstruction: ${summary.hasCodexInstruction}`,
 		`- hasDoyConfirmationItems: ${summary.hasDoyConfirmationItems}`,
@@ -6516,6 +6742,36 @@ interface BrowserAiLatestReplyState {
 	isResponding: boolean;
 }
 
+interface BrowserAiSubmissionReflectionState {
+	visualVerificationUsed: boolean;
+	userMessageCount: number;
+	latestUserMessageText: string;
+	latestUserMessageFingerprint: string | null;
+	submittedPromptFingerprint: string | null;
+	submittedPromptPreview: string;
+	userMessageReflected: boolean;
+	reflectionReason: string;
+	composerEmpty: boolean;
+	composerTextLength: number;
+	composerTextPreview: string;
+	composerSelectorStatus: string;
+	assistantCount: number | null;
+	latestAssistantText: string;
+	latestAssistantFingerprint: string | null;
+	isResponding: boolean;
+}
+
+interface BrowserAiSubmissionVerification {
+	status: CommanderControllerBrowserAiSubmissionVerificationStatus;
+	uiReflected: boolean | null;
+	assistantReplyObserved: boolean | null;
+	visualVerificationUsed: boolean;
+	reason: string;
+	nextRequiredAction: string;
+	reflection: BrowserAiSubmissionReflectionState | null;
+	warnings: string[];
+}
+
 async function readBrowserAiComposerReadiness({
 	provider,
 	injectIntoPage,
@@ -6729,6 +6985,191 @@ function normalizeBrowserAiLatestReplyState(
 				: null,
 		isResponding: candidate.isResponding === true,
 	};
+}
+
+function normalizeBrowserAiSubmissionReflectionState(
+	value: unknown,
+): BrowserAiSubmissionReflectionState {
+	if (!value || typeof value !== "object") {
+		return {
+			visualVerificationUsed: false,
+			userMessageCount: 0,
+			latestUserMessageText: "",
+			latestUserMessageFingerprint: null,
+			submittedPromptFingerprint: null,
+			submittedPromptPreview: "",
+			userMessageReflected: false,
+			reflectionReason: "submission reflection result invalid",
+			composerEmpty: false,
+			composerTextLength: 0,
+			composerTextPreview: "",
+			composerSelectorStatus: "invalid_result",
+			assistantCount: null,
+			latestAssistantText: "",
+			latestAssistantFingerprint: null,
+			isResponding: false,
+		};
+	}
+	const candidate = value as Partial<BrowserAiSubmissionReflectionState>;
+	return {
+		visualVerificationUsed: candidate.visualVerificationUsed === true,
+		userMessageCount:
+			typeof candidate.userMessageCount === "number"
+				? candidate.userMessageCount
+				: 0,
+		latestUserMessageText:
+			typeof candidate.latestUserMessageText === "string"
+				? candidate.latestUserMessageText.trim()
+				: "",
+		latestUserMessageFingerprint:
+			typeof candidate.latestUserMessageFingerprint === "string"
+				? candidate.latestUserMessageFingerprint
+				: null,
+		submittedPromptFingerprint:
+			typeof candidate.submittedPromptFingerprint === "string"
+				? candidate.submittedPromptFingerprint
+				: null,
+		submittedPromptPreview:
+			typeof candidate.submittedPromptPreview === "string"
+				? candidate.submittedPromptPreview.trim()
+				: "",
+		userMessageReflected: candidate.userMessageReflected === true,
+		reflectionReason:
+			typeof candidate.reflectionReason === "string"
+				? candidate.reflectionReason
+				: "submission reflection state normalized",
+		composerEmpty: candidate.composerEmpty === true,
+		composerTextLength:
+			typeof candidate.composerTextLength === "number"
+				? candidate.composerTextLength
+				: 0,
+		composerTextPreview:
+			typeof candidate.composerTextPreview === "string"
+				? candidate.composerTextPreview.trim()
+				: "",
+		composerSelectorStatus:
+			typeof candidate.composerSelectorStatus === "string"
+				? candidate.composerSelectorStatus
+				: "unknown",
+		assistantCount:
+			typeof candidate.assistantCount === "number"
+				? candidate.assistantCount
+				: null,
+		latestAssistantText:
+			typeof candidate.latestAssistantText === "string"
+				? candidate.latestAssistantText.trim()
+				: "",
+		latestAssistantFingerprint:
+			typeof candidate.latestAssistantFingerprint === "string"
+				? candidate.latestAssistantFingerprint
+				: null,
+		isResponding: candidate.isResponding === true,
+	};
+}
+
+function getBrowserAiSubmissionStatusOk(
+	status: CommanderControllerBrowserAiSubmissionRecordStatus,
+): boolean {
+	return (
+		status === "UI_REFLECTED" ||
+		status === "WAITING_REPLY" ||
+		status === "REPLIED"
+	);
+}
+
+function getBrowserAiSubmissionNextRequiredAction(
+	status: CommanderControllerBrowserAiSubmissionVerificationStatus,
+	type: CommanderControllerBrowserAiSubmissionType,
+): string {
+	if (status === "REPLIED") return "Read Browser AI latest reply and classify review.";
+	if (status === "WAITING_REPLY" || status === "UI_REFLECTED") {
+		return "Wait for Browser AI assistant reply, then read latest reply.";
+	}
+	if (status === "NOT_REFLECTED") {
+		return `Browser AI ${type} submission was attempted but not visible; verify provider UI before continuing.`;
+	}
+	if (status === "SUBMITTED") {
+		return "Submission was attempted but UI reflection was not verified; re-check Browser AI page.";
+	}
+	return "Resolve Browser AI submission failure before continuing.";
+}
+
+async function verifyBrowserAiSubmissionReflection({
+	provider,
+	prompt,
+	injectIntoPage,
+	latestReplyBeforeSubmit,
+	type,
+}: {
+	provider: BrowserProvider;
+	prompt: string;
+	injectIntoPage: (script: string) => Promise<unknown>;
+	latestReplyBeforeSubmit: BrowserAiLatestReplyState | null;
+	type: CommanderControllerBrowserAiSubmissionType;
+}): Promise<BrowserAiSubmissionVerification> {
+	await delay(900);
+	try {
+		const reflection = normalizeBrowserAiSubmissionReflectionState(
+			await injectIntoPage(buildSubmissionReflectionStateScript(prompt, provider)),
+		);
+		const assistantCountIncreased =
+			latestReplyBeforeSubmit?.assistantCount !== null &&
+			latestReplyBeforeSubmit?.assistantCount !== undefined &&
+			reflection.assistantCount !== null &&
+			reflection.assistantCount > latestReplyBeforeSubmit.assistantCount;
+		const assistantFingerprintChanged =
+			Boolean(latestReplyBeforeSubmit?.latestFingerprint) &&
+			Boolean(reflection.latestAssistantFingerprint) &&
+			reflection.latestAssistantFingerprint !==
+				latestReplyBeforeSubmit?.latestFingerprint;
+		const assistantTextLooksPlaceholder = /^[.…\s]*$/.test(
+			reflection.latestAssistantText,
+		);
+		const assistantReplyObserved =
+			!reflection.isResponding &&
+			!assistantTextLooksPlaceholder &&
+			reflection.latestAssistantText.length > 0 &&
+			(assistantCountIncreased || assistantFingerprintChanged);
+		const status: CommanderControllerBrowserAiSubmissionVerificationStatus =
+			assistantReplyObserved
+				? "REPLIED"
+				: reflection.userMessageReflected
+					? reflection.isResponding
+						? "WAITING_REPLY"
+						: "UI_REFLECTED"
+					: "NOT_REFLECTED";
+		return {
+			status,
+			uiReflected: reflection.userMessageReflected,
+			assistantReplyObserved,
+			visualVerificationUsed: reflection.visualVerificationUsed,
+			reason: reflection.reflectionReason,
+			nextRequiredAction: getBrowserAiSubmissionNextRequiredAction(status, type),
+			reflection,
+			warnings:
+				status === "NOT_REFLECTED"
+					? ["browser ai submitted prompt was not reflected in visible UI"]
+					: [],
+		};
+	} catch (error) {
+		const reason =
+			error instanceof Error
+				? `submission reflection verification failed: ${error.message}`
+				: "submission reflection verification failed";
+		return {
+			status: "SUBMITTED",
+			uiReflected: null,
+			assistantReplyObserved: null,
+			visualVerificationUsed: false,
+			reason,
+			nextRequiredAction: getBrowserAiSubmissionNextRequiredAction(
+				"SUBMITTED",
+				type,
+			),
+			reflection: null,
+			warnings: [reason],
+		};
+	}
 }
 
 function extractBrowserAiCodexInstruction(text: string): {
