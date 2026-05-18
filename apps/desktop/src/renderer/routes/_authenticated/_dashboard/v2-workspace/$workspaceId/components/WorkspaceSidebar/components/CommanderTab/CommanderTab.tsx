@@ -90,7 +90,23 @@ type CommanderControllerSessionInput = Partial<
 	resetForNewTask?: unknown;
 	replace?: unknown;
 	clearRecordedOutcome?: unknown;
+	expectedTabId?: unknown;
+	expectedTitle?: unknown;
+	requireActiveTabMatch?: unknown;
 };
+
+type CommanderControllerWriteGuardStatus = "READY" | "BLOCKED";
+
+interface CommanderControllerExpectedTabGuardResult {
+	status: CommanderControllerWriteGuardStatus;
+	activeTabId: string | null;
+	activeTabTitle: string | null;
+	expectedTabId: string | null;
+	expectedTitle: string | null;
+	requireActiveTabMatch: boolean;
+	blockers: string[];
+	warnings: string[];
+}
 
 interface CommanderControllerCommandResult {
 	ok: boolean;
@@ -101,9 +117,17 @@ interface CommanderControllerCommandResult {
 
 interface CommanderControllerSessionResult
 	extends CommanderControllerCommandResult {
+	status?: "READY" | "UPDATED" | "BLOCKED";
+	activeTabId?: string | null;
+	activeTabTitle?: string | null;
+	expectedTabId?: string | null;
+	expectedTitle?: string | null;
+	requireActiveTabMatch?: boolean;
 	session?: CommanderSession;
 	changedFields?: string[];
 	skippedFields?: string[];
+	blockers?: string[];
+	warnings?: string[];
 }
 
 interface CommanderControllerHandoffResult
@@ -276,6 +300,9 @@ type CommanderControllerChainMode =
 	| "noop-smoke";
 
 interface CommanderControllerChainOutcomeInput {
+	expectedTabId?: unknown;
+	expectedTitle?: unknown;
+	requireActiveTabMatch?: unknown;
 	browserAiOnly?: unknown;
 	chainMode?: unknown;
 	expectBrowserAiReview?: unknown;
@@ -760,6 +787,10 @@ interface CommanderControllerRecordChainOutcomeResult
 	extends CommanderControllerCommandResult {
 	status: CommanderControllerChainRecordStatus;
 	activeTabId: string | null;
+	activeTabTitle: string | null;
+	expectedTabId: string | null;
+	expectedTitle: string | null;
+	requireActiveTabMatch: boolean;
 	chainStatus: CommanderControllerChainStatus;
 	finalDecision: string;
 	nextAction: string;
@@ -1500,6 +1531,7 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			notes: [
 				"Only updates Commander session fields.",
 				"resetForNewTask, replace, and clearRecordedOutcome isolate new task context from previous Controller outcomes.",
+				"Pass expectedTabId or expectedTitle with requireActiveTabMatch:true to block cross-tab writes.",
 			],
 		},
 		{
@@ -1544,7 +1576,10 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			typicalUse: "Persist pilot smoke or handoff results in the Handoff Ledger.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
-			notes: ["Alias updateHandoffLedgerWithControllerOutcome is also available."],
+			notes: [
+				"Pass expectedTabId or expectedTitle with requireActiveTabMatch:true to block cross-tab writes.",
+				"Alias updateHandoffLedgerWithControllerOutcome is also available.",
+			],
 		},
 		{
 			name: "updateHandoffLedgerWithControllerOutcome",
@@ -1555,7 +1590,10 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			typicalUse: "Compatibility alias for outcome recording.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
-			notes: ["Records outcome in session state."],
+			notes: [
+				"Supports the same expectedTabId / expectedTitle / requireActiveTabMatch guard as recordControllerChainOutcome.",
+				"Records outcome in session state.",
+			],
 		},
 		{
 			name: "getControllerCommandInventory",
@@ -2016,9 +2054,9 @@ export function CommanderTab({
 	const getCommanderControllerContext = useCallback(
 		(): Pick<CommanderControllerCommandResult, "workspaceId" | "tabId"> => ({
 			workspaceId,
-			tabId: activeTabId,
+			tabId: resolveActiveTabIdSnapshot(),
 		}),
-		[workspaceId, activeTabId],
+		[workspaceId, resolveActiveTabIdSnapshot],
 	);
 
 	const getControllerCommandInventoryController = useCallback(
@@ -2061,6 +2099,72 @@ export function CommanderTab({
 
 	const getActiveTabIdController = useCallback(
 		() => useTabsStore.getState().activeTabIds[workspaceId] ?? activeTabId ?? null,
+		[activeTabId, workspaceId],
+	);
+
+	const getExpectedTabWriteGuard = useCallback(
+		(
+			input: {
+				expectedTabId?: unknown;
+				expectedTitle?: unknown;
+				requireActiveTabMatch?: unknown;
+			},
+			commandName: string,
+		): CommanderControllerExpectedTabGuardResult => {
+			const expectedTabId = normalizeControllerTextInput(input.expectedTabId);
+			const expectedTitle = normalizeControllerTextInput(input.expectedTitle);
+			const requireActiveTabMatch =
+				normalizeControllerBooleanInput(input.requireActiveTabMatch) === true;
+			const tabsState = useTabsStore.getState();
+			const resolvedActiveTabId =
+				tabsState.activeTabIds[workspaceId] ?? activeTabId ?? null;
+			const activeTab = resolvedActiveTabId
+				? (tabsState.tabs.find(
+						(tab) =>
+							tab.id === resolvedActiveTabId && tab.workspaceId === workspaceId,
+					) ?? null)
+				: null;
+			const activeTabTitle = activeTab ? getTabDisplayName(activeTab) : null;
+			const blockers: string[] = [];
+			const warnings: string[] = [];
+			const guardRequested =
+				requireActiveTabMatch || Boolean(expectedTabId || expectedTitle);
+
+			if (!guardRequested) {
+				warnings.push(
+					`${commandName}: unguarded write; pass expectedTabId or expectedTitle with requireActiveTabMatch:true to prevent cross-tab writes`,
+				);
+			}
+			if (requireActiveTabMatch && !expectedTabId && !expectedTitle) {
+				blockers.push(
+					"expectedTabId or expectedTitle is required when requireActiveTabMatch is true",
+				);
+			}
+			if (guardRequested && !resolvedActiveTabId) {
+				blockers.push("active tab not found");
+			}
+			if (expectedTabId && resolvedActiveTabId !== expectedTabId) {
+				blockers.push(
+					`active tab mismatch: expectedTabId=${expectedTabId}, activeTabId=${resolvedActiveTabId ?? "(none)"}`,
+				);
+			}
+			if (expectedTitle && activeTabTitle !== expectedTitle) {
+				blockers.push(
+					`active tab title mismatch: expectedTitle=${expectedTitle}, activeTitle=${activeTabTitle ?? "(none)"}`,
+				);
+			}
+
+			return {
+				status: blockers.length > 0 ? "BLOCKED" : "READY",
+				activeTabId: resolvedActiveTabId,
+				activeTabTitle,
+				expectedTabId: expectedTabId || null,
+				expectedTitle: expectedTitle || null,
+				requireActiveTabMatch,
+				blockers,
+				warnings,
+			};
+		},
 		[activeTabId, workspaceId],
 	);
 
@@ -2295,9 +2399,17 @@ export function CommanderTab({
 			return {
 				ok: true,
 				...getCommanderControllerContext(),
+				status: "READY",
+				activeTabId,
+				activeTabTitle: null,
+				expectedTabId: null,
+				expectedTitle: null,
+				requireActiveTabMatch: false,
 				session: activeSession,
 				changedFields: [],
 				skippedFields: [],
+				blockers: [],
+				warnings: [],
 			};
 		}, [ensureCommanderSessionForActiveTab, getCommanderControllerContext]);
 
@@ -2309,7 +2421,36 @@ export function CommanderTab({
 				return {
 					ok: false,
 					...getCommanderControllerContext(),
+					status: "BLOCKED",
 					reason: "input must be an object",
+					activeTabId: activeTabId ?? null,
+					activeTabTitle: null,
+					expectedTabId: null,
+					expectedTitle: null,
+					requireActiveTabMatch: false,
+					blockers: ["input must be an object"],
+					warnings: [],
+				};
+			}
+			const writeGuard = getExpectedTabWriteGuard(
+				input,
+				"setCommanderSession",
+			);
+			if (writeGuard.blockers.length > 0) {
+				return {
+					ok: false,
+					...getCommanderControllerContext(),
+					status: "BLOCKED",
+					reason: `setCommanderSession blocked: ${writeGuard.blockers[0]}`,
+					activeTabId: writeGuard.activeTabId,
+					activeTabTitle: writeGuard.activeTabTitle,
+					expectedTabId: writeGuard.expectedTabId,
+					expectedTitle: writeGuard.expectedTitle,
+					requireActiveTabMatch: writeGuard.requireActiveTabMatch,
+					changedFields: [],
+					skippedFields: [],
+					blockers: writeGuard.blockers,
+					warnings: writeGuard.warnings,
 				};
 			}
 			const baseSession = ensureCommanderSessionForActiveTab();
@@ -2319,10 +2460,18 @@ export function CommanderTab({
 				return {
 					ok: false,
 					...getCommanderControllerContext(),
+					status: "BLOCKED",
 					reason: "no supported non-empty fields provided",
+					activeTabId: writeGuard.activeTabId,
+					activeTabTitle: writeGuard.activeTabTitle,
+					expectedTabId: writeGuard.expectedTabId,
+					expectedTitle: writeGuard.expectedTitle,
+					requireActiveTabMatch: writeGuard.requireActiveTabMatch,
 					session: baseSession,
 					changedFields,
 					skippedFields,
+					blockers: ["no supported non-empty fields provided"],
+					warnings: writeGuard.warnings,
 				};
 			}
 
@@ -2334,15 +2483,25 @@ export function CommanderTab({
 			return {
 				ok: true,
 				...getCommanderControllerContext(),
+				status: "UPDATED",
+				activeTabId: writeGuard.activeTabId,
+				activeTabTitle: writeGuard.activeTabTitle,
+				expectedTabId: writeGuard.expectedTabId,
+				expectedTitle: writeGuard.expectedTitle,
+				requireActiveTabMatch: writeGuard.requireActiveTabMatch,
 				session: nextSession,
 				changedFields,
 				skippedFields,
+				blockers: [],
+				warnings: writeGuard.warnings,
 			};
 		},
 		[
 			ensureCommanderSessionForActiveTab,
+			getExpectedTabWriteGuard,
 			getCommanderControllerContext,
 			handleSessionApplied,
+			activeTabId,
 		],
 	);
 
@@ -5814,21 +5973,55 @@ export function CommanderTab({
 		async (
 			input?: CommanderControllerChainOutcomeInput,
 		): Promise<CommanderControllerRecordChainOutcomeResult> => {
+			const writeGuard = getExpectedTabWriteGuard(
+				input ?? {},
+				"recordControllerChainOutcome",
+			);
 			const summary = await getControllerChainSummaryController(input);
+			const summaryForRecord: CommanderControllerChainSummaryResult = {
+				...summary,
+				activeTabId: writeGuard.activeTabId ?? summary.activeTabId,
+			};
 			const recordedAt = summary.completedAt;
-			if (!summary.activeTabId) {
+			if (writeGuard.blockers.length > 0) {
+				return {
+					ok: false,
+					...getCommanderControllerContext(),
+					status: "BLOCKED",
+					activeTabId: writeGuard.activeTabId,
+					activeTabTitle: writeGuard.activeTabTitle,
+					expectedTabId: writeGuard.expectedTabId,
+					expectedTitle: writeGuard.expectedTitle,
+					requireActiveTabMatch: writeGuard.requireActiveTabMatch,
+					chainStatus: "BLOCKED",
+					finalDecision: "Controller chain outcome record blocked by expected tab guard.",
+					nextAction: writeGuard.blockers[0] ?? "Resolve expected tab guard blocker",
+					updatedFields: [],
+					handoffLedgerLength: 0,
+					blockers: [...writeGuard.blockers],
+					warnings: [...writeGuard.warnings, ...summary.warnings],
+					message: `Controller chain outcome record blocked: ${writeGuard.blockers[0] ?? "expected tab guard failed"}`,
+					recordedAt,
+					summary,
+				};
+			}
+			if (!summaryForRecord.activeTabId) {
 				return {
 					ok: false,
 					...getCommanderControllerContext(),
 					status: "BLOCKED",
 					activeTabId: null,
+					activeTabTitle: writeGuard.activeTabTitle,
+					expectedTabId: writeGuard.expectedTabId,
+					expectedTitle: writeGuard.expectedTitle,
+					requireActiveTabMatch: writeGuard.requireActiveTabMatch,
 					chainStatus: summary.chainStatus,
 					finalDecision: summary.finalDecision,
 					nextAction: summary.nextAction,
 					updatedFields: [],
 					handoffLedgerLength: 0,
 					blockers: ["active tab not found"],
-					warnings: summary.warnings,
+					warnings: [...writeGuard.warnings, ...summary.warnings],
 					message: "Controller chain outcome record blocked: active tab not found",
 					recordedAt,
 					summary,
@@ -5837,7 +6030,7 @@ export function CommanderTab({
 
 			const baseSession = ensureCommanderSessionForActiveTab();
 			const { session: nextSession, updatedFields } =
-				applyControllerChainOutcomeToSession(baseSession, summary);
+				applyControllerChainOutcomeToSession(baseSession, summaryForRecord);
 			if (updatedFields.length > 0) {
 				sessionRef.current = nextSession;
 				setSession(nextSession);
@@ -5854,27 +6047,32 @@ export function CommanderTab({
 				ok: true,
 				...getCommanderControllerContext(),
 				status: "RECORDED",
-				activeTabId: summary.activeTabId,
+				activeTabId: summaryForRecord.activeTabId,
+				activeTabTitle: writeGuard.activeTabTitle,
+				expectedTabId: writeGuard.expectedTabId,
+				expectedTitle: writeGuard.expectedTitle,
+				requireActiveTabMatch: writeGuard.requireActiveTabMatch,
 				chainStatus: summary.chainStatus,
 				finalDecision: summary.finalDecision,
 				nextAction: summary.nextAction,
 				updatedFields,
 				handoffLedgerLength: ledger.length,
 				blockers: [...summary.blockers],
-				warnings: [...summary.warnings],
+				warnings: [...writeGuard.warnings, ...summary.warnings],
 				message:
 					updatedFields.length > 0
 						? "Controller chain outcome recorded in Commander Session"
 						: "Controller chain outcome was already recorded",
 				recordedAt,
 				session: nextSession,
-				summary,
+				summary: summaryForRecord,
 			};
 		},
 		[
 			ensureCommanderSessionForActiveTab,
 			getCommanderControllerContext,
 			getControllerChainSummaryController,
+			getExpectedTabWriteGuard,
 			handleSessionApplied,
 			transfer.buildHandoffLedger,
 		],

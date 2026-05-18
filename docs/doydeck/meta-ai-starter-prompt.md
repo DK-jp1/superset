@@ -64,6 +64,9 @@ Meta AIの役割は[`meta-ai-operating-model-v2.md`](./meta-ai-operating-model-v
 - createTaskTab() / renameTaskTab()後はlistTabs() / getActiveTab()で現在地を確認する。
 - 既存タブ探索はlistTabs() / findTabByTitle()を使う。
 - 既存タブ選択はactivateTab({ tabId })を使う。
+- setCommanderSession() / recordControllerChainOutcome() のような書き込み系commandは、
+  原則 `expectedTabId` または `expectedTitle` と `requireActiveTabMatch:true` を付ける。
+  対象タブが違う場合はBLOCKEDとして扱い、別タブへ書き込まない。
 - UIボタン探索でタブを作らない。
 - closeTab / delete / remove系はDoy確認対象。
 
@@ -179,6 +182,8 @@ Workerが必要な場合に使うController Command:
 - HandoffにはDecision Record本文全文を入れず、DR-ID短参照を使う。
 - 例: DR-2026-05-17-001: DoyDeck本体開発とsafe-dev検証を分離する
 - 過去outcomeは履歴として扱い、今回のcurrentTaskを優先する。
+- Outcome記録時は `recordControllerChainOutcome({ expectedTabId, requireActiveTabMatch:true, ... })`
+  のように、active tabが想定タブと一致することをController側でも確認する。
 
 ## 7. prompt slimming方針
 

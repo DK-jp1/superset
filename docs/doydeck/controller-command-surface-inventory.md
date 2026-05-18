@@ -97,7 +97,7 @@ Implemented:
 | Tab / Workspace | `activateTab(input)` | implemented | Activates an existing workspace tab by `tabId`; no Browser AI / Worker readiness scan. |
 | Tab / Workspace | `renameTaskTab(input)` | implemented | Renames an existing workspace tab by `tabId`; no delete/close behavior. |
 | Session | `getCommanderSession()` | implemented | Returns current Commander session. |
-| Session | `setCommanderSession(input)` | implemented | Updates supported Commander session fields. Supports `resetForNewTask`, `replace`, and `clearRecordedOutcome` to avoid carrying previous task outcome sections into a new task. |
+| Session | `setCommanderSession(input)` | implemented | Updates supported Commander session fields. Supports `resetForNewTask`, `replace`, `clearRecordedOutcome`, and expected-tab guards (`expectedTabId` / `expectedTitle` / `requireActiveTabMatch`). |
 | Handoff | `buildHandoffLedger()` | implemented | Builds Handoff Ledger from current session/context. |
 | Handoff | `getHandoffLedger()` | implemented | Alias for `buildHandoffLedger`. |
 | Browser AI | `prepareBrowserAiReady(input?)` | implemented | Browser-AI-only provider preparation. Can navigate to ChatGPT / Claude / Gemini when explicitly requested; does not require worker binding. |
@@ -126,8 +126,8 @@ Implemented:
 | Browser AI | `getBrowserAiLastSubmission()` | implemented | Last Browser AI submission state. |
 | Browser AI | `getBrowserAiSubmissionState()` | implemented | Alias for `getBrowserAiLastSubmission`. |
 | Outcome | `getControllerChainSummary(input?)` | implemented | Summarizes current chain state. Supports Browser-AI-only outcome mode. |
-| Outcome | `recordControllerChainOutcome(input?)` | implemented | Records Controller chain outcome into Handoff/session state. |
-| Outcome | `updateHandoffLedgerWithControllerOutcome(input?)` | implemented | Alias for `recordControllerChainOutcome`. |
+| Outcome | `recordControllerChainOutcome(input?)` | implemented | Records Controller chain outcome into Handoff/session state. Supports expected-tab guards before mutating session state. |
+| Outcome | `updateHandoffLedgerWithControllerOutcome(input?)` | implemented | Alias for `recordControllerChainOutcome`; same expected-tab guard behavior. |
 
 ## 4. Operation coverage matrix
 
