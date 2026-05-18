@@ -6,6 +6,11 @@ This document inventories the current `window.__doydeckCommanderController`
 surface and identifies where Meta AI, Browser AI, Codex, and Claude Code still
 need a native Controller Command instead of UI exploration.
 
+For new Meta AI / Codex / Claude Code sessions, start from
+[`meta-ai-starter-prompt.md`](./meta-ai-starter-prompt.md). It tells the agent
+to discover this command surface first with `getControllerCommandInventory()`,
+`listTabs()`, and `getActiveTab()` before attempting UI exploration.
+
 ## 1. なぜUI探索をprimary pathにしないのか
 
 DoyDeckの通常操作は、UIクリック探索ではなくController Command / API-like

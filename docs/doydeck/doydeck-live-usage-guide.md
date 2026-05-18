@@ -303,6 +303,9 @@ Priority G: Auto Loop監視UI / stop reason表示
 
 DoyDeckでtaskを始める前に確認する。
 
+- 新規Meta AI / Codex / Claude Codeセッションには
+  [`meta-ai-starter-prompt.md`](./meta-ai-starter-prompt.md)を貼り、最初に
+  `getControllerCommandInventory()`、`listTabs()`、`getActiveTab()`で現在地を確認する。
 - Browser AI providerがChatGPTまたはClaude。
 - Browser AI ready。
 - Browser AI composer injection ready。
