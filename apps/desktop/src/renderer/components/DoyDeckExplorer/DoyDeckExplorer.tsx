@@ -23,6 +23,7 @@ import {
 	ChevronRight,
 	Copy,
 	FileQuestion,
+	FolderOpen,
 	ListPlus,
 	PanelTopOpen,
 	RefreshCw,
@@ -211,6 +212,7 @@ function IconButton({
 					variant="ghost"
 					size="icon"
 					className="size-7 shrink-0"
+					aria-label={label}
 					disabled={disabled}
 					onClick={onClick}
 				>
@@ -264,6 +266,7 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		workspaceId,
 	});
 	const resolvePathMutation = electronTrpc.doydeckExplorer.resolvePath.useMutation();
+	const openInFinderMutation = electronTrpc.external.openInFinder.useMutation();
 
 	const roots = rootsQuery.data?.roots ?? [];
 	const selectedRoot = roots.find((root) => root.id === rootId);
@@ -651,6 +654,22 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		}
 	};
 
+	const handleOpenInFinder = async () => {
+		if (!selectedPath) return;
+		try {
+			const resolved = await resolvePathMutation.mutateAsync({
+				workspaceId,
+				path: selectedPath,
+			});
+			await openInFinderMutation.mutateAsync(resolved.absolutePath);
+			toast.success("Opened in Finder");
+		} catch (error) {
+			toast.error("Could not open in Finder", {
+				description: getErrorMessage(error),
+			});
+		}
+	};
+
 	const handleAddToSession = () => {
 		if (!selectedCommanderPath) return;
 		addSelectedPathToCommanderSession(workspaceId, selectedCommanderPath);
@@ -933,6 +952,16 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 							onClick={handleOpenInCenterPreview}
 						/>
 						<IconButton
+							icon={FolderOpen}
+							label="Open in Finder"
+							disabled={
+								!selectedPath ||
+								resolvePathMutation.isPending ||
+								openInFinderMutation.isPending
+							}
+							onClick={() => void handleOpenInFinder()}
+						/>
+						<IconButton
 							icon={ListPlus}
 							label="Add to Session"
 							disabled={!selectedCommanderPath}
@@ -1003,6 +1032,13 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 									Send Path to Terminal
 								</DropdownMenuItem>
 								<DropdownMenuSeparator />
+								<DropdownMenuItem
+									disabled={!selectedPath}
+									onSelect={() => void handleOpenInFinder()}
+								>
+									<FolderOpen className="size-3.5" />
+									Open in Finder
+								</DropdownMenuItem>
 								<DropdownMenuItem
 									disabled={!selectedPath}
 									onSelect={() => {
