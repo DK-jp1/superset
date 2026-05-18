@@ -3160,9 +3160,15 @@ export function usePromptTransfer({
 		if (!workerResponsePreview.visible || !workerResponsePreview.text.trim()) {
 			return;
 		}
-		const ok = await sendWorkerResponseToBrowserAI(workerResponsePreview.text);
+		const expectedTabId = workspaceId
+			? useTabsStore.getState().activeTabIds[workspaceId] ?? null
+			: null;
+		const ok = await sendWorkerResponseToBrowserAI(workerResponsePreview.text, {
+			expectedWorkspaceId: workspaceId,
+			expectedTabId,
+		});
 		if (ok) setWorkerResponsePreview(EMPTY_WORKER_RESPONSE_PREVIEW);
-	}, [workerResponsePreview]);
+	}, [workerResponsePreview, workspaceId]);
 
 	useEffect(() => {
 		if (autoRelayMode !== "loop") return;
@@ -3291,9 +3297,14 @@ export function usePromptTransfer({
 		setAutoLoopPhase("sending-browser-ai");
 		setAutoLoopLastAction("Sending Worker response to Browser AI");
 		void (async () => {
+			const expectedTabId = workspaceId
+				? useTabsStore.getState().activeTabIds[workspaceId] ?? null
+				: null;
 			const ok = await sendWorkerResponseToBrowserAI(text, {
 				autoLoop: true,
 				envelopeDetected: workerResponsePreview.reasons.includes("envelope matched"),
+				expectedWorkspaceId: workspaceId,
+				expectedTabId,
 			});
 			if (!ok) {
 				stopAutoLoop("browser injection failed");
@@ -3316,6 +3327,7 @@ export function usePromptTransfer({
 		getLiveUrl,
 		stopAutoLoop,
 		workerResponsePreview,
+		workspaceId,
 	]);
 
 	const showSessionDraft = useCallback(

@@ -9,6 +9,9 @@ import type { AssistantCaptureSnapshot } from "./hooks/usePromptTransfer";
 import { DOYDECK_WORKER_RESPONSE_ENVELOPE_TEMPLATE } from "./hooks/useCommanderPrompts";
 
 interface CommanderBridge {
+	ownerKey: string;
+	workspaceId: string;
+	activeTabId: string | null;
 	injectIntoPage: (script: string) => Promise<unknown>;
 	getLiveUrl: () => string;
 	onAutoCaptureTrigger?: (options: {
@@ -24,7 +27,8 @@ export function registerCommanderBridge(b: CommanderBridge): void {
 	bridge = b;
 }
 
-export function unregisterCommanderBridge(): void {
+export function unregisterCommanderBridge(ownerKey?: string): void {
+	if (ownerKey && bridge?.ownerKey !== ownerKey) return;
 	bridge = null;
 }
 
@@ -32,11 +36,39 @@ export function getCommanderBridge(): CommanderBridge | null {
 	return bridge;
 }
 
+interface CommanderBridgeExpectedTarget {
+	expectedWorkspaceId?: string | null;
+	expectedTabId?: string | null;
+}
+
+function getCommanderBridgeTargetBlocker(
+	currentBridge: CommanderBridge,
+	expected?: CommanderBridgeExpectedTarget,
+): string | null {
+	const expectedWorkspaceId = expected?.expectedWorkspaceId?.trim() || null;
+	const expectedTabId = expected?.expectedTabId?.trim() || null;
+
+	if (expectedWorkspaceId && currentBridge.workspaceId !== expectedWorkspaceId) {
+		return `Commander bridge workspace mismatch: expected ${expectedWorkspaceId}, got ${currentBridge.workspaceId}`;
+	}
+	if (expectedTabId && currentBridge.activeTabId !== expectedTabId) {
+		return `Commander bridge tab mismatch: expected ${expectedTabId}, got ${currentBridge.activeTabId ?? "none"}`;
+	}
+	return null;
+}
+
 export async function sendSelectionToBrowserAI(
 	selectedText: string,
+	expected?: CommanderBridgeExpectedTarget,
 ): Promise<void> {
 	if (!bridge) {
 		toast.error("Commander タブを開いてください — Browser AI が未初期化です");
+		return;
+	}
+	const targetBlocker = getCommanderBridgeTargetBlocker(bridge, expected);
+	if (targetBlocker) {
+		console.warn("[S3.11] sendSelectionToBrowserAI blocked:", targetBlocker);
+		toast.error("Browser AI送信先タブが一致しません — active tabを確認してください");
 		return;
 	}
 
@@ -101,21 +133,10 @@ ${selectedText}`;
 				triggeredAt: Date.now(),
 			});
 		} else if (result === "injected") {
-			toast.success(
+			toast.warning(
 				`${getProviderLabel(provider)} に挿入しました — 手動で送信してください`,
 			);
-			if (!baseline) {
-				console.log(
-					"[S3.11] skipping auto-capture because pre-send baseline is missing",
-				);
-				return;
-			}
-			console.log("[S3.11] calling onAutoCaptureTrigger (injected)");
-			bridge.onAutoCaptureTrigger?.({
-				baseline,
-				prompt,
-				triggeredAt: Date.now(),
-			});
+			console.log("[S3.11] injected without submit; skipping auto-capture");
 		} else {
 			console.log(
 				"[S3.11] result is neither submitted nor injected, skipping auto-capture",
@@ -132,7 +153,12 @@ ${selectedText}`;
 
 export async function sendWorkerResponseToBrowserAI(
 	workerResponse: string,
-	options?: { autoLoop?: boolean; envelopeDetected?: boolean },
+	options?: {
+		autoLoop?: boolean;
+		envelopeDetected?: boolean;
+		expectedWorkspaceId?: string | null;
+		expectedTabId?: string | null;
+	},
 ): Promise<boolean> {
 	console.log("[S3.13] send worker response to browser ai clicked");
 	console.log("[S3.13] worker response length =", workerResponse.length);
@@ -140,6 +166,12 @@ export async function sendWorkerResponseToBrowserAI(
 	if (!bridge) {
 		console.log("[S3.13] inject result = failed");
 		toast.error("Commander タブを開いてください — Browser AI が未初期化です");
+		return false;
+	}
+	const targetBlocker = getCommanderBridgeTargetBlocker(bridge, options);
+	if (targetBlocker) {
+		console.warn("[S3.13] sendWorkerResponseToBrowserAI blocked:", targetBlocker);
+		toast.error("Browser AI送信先タブが一致しません — active tabを確認してください");
 		return false;
 	}
 
@@ -216,17 +248,11 @@ ${workerResponse}`;
 		}
 
 		if (result === "injected") {
-			toast.success(
+			toast.warning(
 				`${getProviderLabel(provider)} に挿入しました — 手動で送信してください`,
 			);
-			if (baseline) {
-				bridge.onAutoCaptureTrigger?.({
-					baseline,
-					prompt,
-					triggeredAt: Date.now(),
-				});
-			}
-			return true;
+			console.log("[S3.13] injected without submit; skipping auto-capture");
+			return false;
 		}
 
 		await navigator.clipboard.writeText(prompt);

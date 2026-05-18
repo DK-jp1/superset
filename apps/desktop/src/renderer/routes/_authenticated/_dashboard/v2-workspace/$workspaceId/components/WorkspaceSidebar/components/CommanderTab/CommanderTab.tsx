@@ -2164,8 +2164,11 @@ export function CommanderTab({
 			"[S3.11] calling sendSelectionToBrowserAI, text length =",
 			text.length,
 		);
-		sendSelectionToBrowserAI(text);
-	}, [activeTerminal]);
+		sendSelectionToBrowserAI(text, {
+			expectedWorkspaceId: workspaceId,
+			expectedTabId: activeTabId,
+		});
+	}, [activeTabId, activeTerminal, workspaceId]);
 
 	const handleBindActiveTerminalToTab = useCallback(() => {
 		if (!workspaceId || !activeTabId || !activeTerminalInfo) {
@@ -6686,18 +6689,33 @@ export function CommanderTab({
 		],
 	);
 
+	const commanderBridgeOwnerKey = useMemo(
+		() => `${workspaceId}:${activeTabId ?? "no-active-tab"}`,
+		[activeTabId, workspaceId],
+	);
+
 	useEffect(() => {
 		console.log(
 			"[S3.11] registerCommanderBridge with onAutoCaptureTrigger =",
 			typeof handleAutoCaptureTrigger,
 		);
 		registerCommanderBridge({
+			ownerKey: commanderBridgeOwnerKey,
+			workspaceId,
+			activeTabId,
 			injectIntoPage: webview.injectIntoPage,
 			getLiveUrl: webview.getLiveUrl,
 			onAutoCaptureTrigger: handleAutoCaptureTrigger,
 		});
-		return () => unregisterCommanderBridge();
-	}, [webview.injectIntoPage, webview.getLiveUrl, handleAutoCaptureTrigger]);
+		return () => unregisterCommanderBridge(commanderBridgeOwnerKey);
+	}, [
+		activeTabId,
+		commanderBridgeOwnerKey,
+		handleAutoCaptureTrigger,
+		webview.getLiveUrl,
+		webview.injectIntoPage,
+		workspaceId,
+	]);
 
 	useEffect(() => {
 		if (!workspaceId.trim()) return;
