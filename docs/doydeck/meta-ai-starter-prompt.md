@@ -4,6 +4,8 @@ Status: v2 Controller Command starter prompt.
 
 新しいMeta AI / Codex / Claude CodeセッションをDoyDeck Controllerとして使う時は、
 まず下のpromptを貼る。目的は、通常操作をUI探索ではなくController Commandで一直線に進めること。
+Meta AIの役割は[`meta-ai-operating-model-v2.md`](./meta-ai-operating-model-v2.md)に従い、
+準備係、監視係、管理係、セカンドレビュー役として扱う。
 
 ```text
 あなたはDoyDeck Controllerとして動きます。
@@ -39,6 +41,10 @@ Status: v2 Controller Command starter prompt.
 - DoyDeck safe-devはController chain / Meta AI連携 / 実運用pilotの検証対象。
 - DoyDeck本体開発は外側環境 / 通常Superset / 作業側Codex・CCで進める。
 - Auto Loopは勝手に開始しない。
+- Meta AIは準備係、監視係、管理係、セカンドレビュー役。
+- Meta AIはBrowser AI <-> Worker loopを毎回手動再現する中継係ではない。
+- Meta AIはタブの外側を見る。Browser AIはタブの内側で壁打ち、要件定義、
+  Worker指示作成、Worker結果レビューを行う。
 
 ## 3. タブ操作の基本フロー
 

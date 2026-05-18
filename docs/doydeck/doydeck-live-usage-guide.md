@@ -128,17 +128,22 @@ Doy確認ゲート付きで扱う。
 
 ## 5. 実運用時の標準フロー
 
+Meta AIの詳しい役割は[`meta-ai-operating-model-v2.md`](./meta-ai-operating-model-v2.md)に従う。
+Meta AIは準備係、監視係、管理係、セカンドレビュー役であり、
+Browser AI <-> Worker loopを毎回手動で再現する中継係ではない。
+
 標準フロー:
 
-1. Doyが目的を渡す。
-2. Browser AI / ChatGPTが要件整理する。
-3. Worker AIが調査、実装、検証する。
-4. Worker AIがself-reviewする。
-5. Browser AI / 別文脈AIがreviewする。
-6. Meta AI / ControllerがSTOP、次指示、Doy確認事項を分類する。
-7. Handoff LedgerへOutcomeを記録する。
-8. 必要ならDecision Ledgerへ判断を記録する。
-9. Doyは最後に成果物、検証結果、Doy確認事項を見る。
+1. DoyがMeta AIへ雑に目的や複数タスクを渡す。
+2. Meta AIがタスク候補を整理し、DoyDeckに入れるものを提案する。
+3. Doyがタブ化とLoop開始を判断する。
+4. Meta AIがController Commandでタブ、Browser AI、Worker、Handoffを準備する。
+5. Doyがタブ内でBrowser AIと壁打ちする。
+6. Browser AIが要件定義、Worker指示文作成、Worker結果レビューを行う。
+7. Worker AIが調査、実装、検証、self-reviewを行う。
+8. Meta AIがLoop状態、異常、Doy確認境界、Outcome記録を監視する。
+9. 必要ならDecision Ledgerへ判断を記録する。
+10. Doyは最後に成果物、検証結果、Doy確認事項を見る。
 
 開発環境での対応:
 
@@ -152,7 +157,13 @@ DoyDeck内運用での対応:
 - 実装AI: Worker AI。
   - 作業側Codex。
   - 作業側CC / Claude Code。
+- Meta AI: タブの外側を見る準備 / 監視 / セカンドレビュー役。
 - Doy: 最終判断者。
+
+入口の分離:
+
+- Meta AI入口: 複数タスク整理、タブ化候補提案、Doy確認後の準備、全体監視。
+- Browser AI入口: 1タブ内の壁打ち、要件定義、Worker指示文作成、Worker結果レビュー。
 
 ## 6. タスク粒度
 

@@ -10,6 +10,11 @@ Handoff Ledger. Meta AI monitors state, moves information through the controller
 chain, classifies outcomes, stops at permission boundaries, and records what
 happened.
 
+Current live-operation role split is defined in
+[`meta-ai-operating-model-v2.md`](./meta-ai-operating-model-v2.md). Meta AI is
+the preparation / monitoring / second-review layer; Browser AI remains the
+in-tab wall-discussion and Worker-instruction layer.
+
 S8.1/S8.2のようにController accessorsを順番に呼び出すsmokeは、部品検証と
 pilot検証のための手順である。実運用でMeta AIが毎回send/read系accessorを手動で
 順番実行し、Auto Loopの代替エンジンとして振る舞うことは目的ではない。

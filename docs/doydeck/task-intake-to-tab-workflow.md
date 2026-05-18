@@ -6,6 +6,12 @@ This document defines how Meta AI / Codex should turn Doy's rough list of
 things to do into a small set of proposed DoyDeck work tabs. It is a docs-only
 MVP. Controller accessors, MCP tools, DB storage, and UI are future work.
 
+Meta AI follows the role split in
+[`meta-ai-operating-model-v2.md`](./meta-ai-operating-model-v2.md): it prepares,
+monitors, manages, and second-reviews. It does not replace Browser AI's in-tab
+wall discussion or manually recreate the Browser AI <-> Worker loop as normal
+operation.
+
 ## 1. 目的
 
 Doyが複数のやりたいことを雑に投げた時、Meta AIはすぐに全部を作業タブ化しない。
@@ -44,6 +50,8 @@ Doyが複数タスクを投げたら、Meta AIは以下の順で動く。
 - Doyの入力をそのまま全部タブにしない。
 - 「まず整理案を出す」ことを標準にする。
 - タブ作成はDoyの明示OK後に行う。
+- Browser AIはタブ内の壁打ち、要件定義、Worker指示文作成を担当する。
+- Meta AIはタブの外側で準備、監視、セカンドレビューを担当する。
 
 ## 3. タブ化すべきもの
 
