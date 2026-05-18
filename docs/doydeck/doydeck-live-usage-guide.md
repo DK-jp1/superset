@@ -155,6 +155,13 @@ DoyDeck内運用での対応:
 
 ## 6. タスク粒度
 
+雑な複数タスク:
+
+- すぐに全部を作業タブ化しない。
+- まず[`task-intake-to-tab-workflow.md`](./task-intake-to-tab-workflow.md)に沿って、
+  DoyDeckに入れる候補 / 入れない候補 / 優先度 / 推奨tab titleを整理する。
+- Doyが確認した候補だけ`createTaskTab()` / `renameTaskTab()`で作る。
+
 低リスク:
 
 - そのままDoyDeckで実行してよい。

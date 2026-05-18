@@ -11,6 +11,11 @@ For new Meta AI / Codex / Claude Code sessions, start from
 to discover this command surface first with `getControllerCommandInventory()`,
 `listTabs()`, and `getActiveTab()` before attempting UI exploration.
 
+For rough multi-task intake, use
+[`task-intake-to-tab-workflow.md`](./task-intake-to-tab-workflow.md) before
+creating tabs. Meta AI should propose tab candidates first and create only the
+tabs Doy confirms.
+
 ## 1. なぜUI探索をprimary pathにしないのか
 
 DoyDeckの通常操作は、UIクリック探索ではなくController Command / API-like
@@ -206,9 +211,18 @@ P1 missing or partial:
 - Decision Record accessor
   - Return DR-ID references and short summaries for Handoff prompts.
   - Purpose: avoid pasting full Decision Record text into every prompt.
+- `analyzeTaskIntake(input?)`
+  - Split Doy's rough multi-task input into task candidates.
+  - Purpose: avoid turning every rough note into a DoyDeck tab.
+- `proposeTaskTabs(input?)`
+  - Return create / do-not-create candidates, priorities, reasons, and proposed tab titles.
+  - Purpose: let Doy confirm the right tabs before `createTaskTab()`.
 
 P2 missing:
 
+- `createProposedTaskTabs(input?)`
+  - Create only Doy-approved proposed tabs.
+  - Purpose: batch tab creation after explicit confirmation.
 - `getVisibleStateSnapshot(input?)`
   - Read-only visible snapshot / element summary for visual sanity check.
   - Purpose: avoid Computer Use for basic UI state confirmation.
@@ -239,9 +253,12 @@ P1: 実運用で頻繁に使うが回避可能なもの。
 
 - `sendTargetDocsReviewToBrowserAI(input)`
 - Decision Record accessor
+- `analyzeTaskIntake(input?)`
+- `proposeTaskTabs(input?)`
 
 P2: 便利だが後回しでよいもの。
 
+- `createProposedTaskTabs(input?)`
 - `getVisibleStateSnapshot(input?)`
 - command timing helper。
 
@@ -266,6 +283,12 @@ Candidate 2: `sendTargetDocsReviewToBrowserAI(input)`
 
 - Browser-AI-only target docs reviewを短いpromptで実行しやすくする。
 - 対象docs本文を必要な時だけ渡し、固定ルールの過剰投入を避ける。
+
+Candidate 3: task intake proposal accessors
+
+- `analyzeTaskIntake(input?)`でDoyの雑な複数タスクを候補へ分解する。
+- `proposeTaskTabs(input?)`で作成候補 / 作らない候補 / 優先度 / 推奨tab titleを返す。
+- 実際のtab作成はDoy確認後にする。
 
 ## 8. やらないこと
 

@@ -61,6 +61,12 @@ Status: v2 Controller Command starter prompt.
 - UIボタン探索でタブを作らない。
 - closeTab / delete / remove系はDoy確認対象。
 
+雑な複数タスクを渡された場合:
+- すぐに全部をタブ化しない。
+- まずDoyDeckに入れる候補 / 入れない候補 / 優先度 / 推奨tab titleを提案する。
+- DoyがOKした候補だけcreateTaskTab() / renameTaskTab()で作る。
+- 詳細はtask-intake-to-tab-workflow.mdに従う。
+
 ## 4. Browser AI-onlyフロー
 
 Worker不要の要件整理、docsレビュー、壁打ちはBrowser AI-onlyで進める。
@@ -225,3 +231,4 @@ Doy確認事項がない場合は「Doy確認事項なし」と明記する。
 - [Controller Command Surface Inventory](./controller-command-surface-inventory.md)
 - [DoyDeck Live Usage Guide](./doydeck-live-usage-guide.md)
 - [Doy Feedback / Decision Ledger](./doy-feedback-decision-ledger.md)
+- [Task Intake to Tab Workflow](./task-intake-to-tab-workflow.md)
