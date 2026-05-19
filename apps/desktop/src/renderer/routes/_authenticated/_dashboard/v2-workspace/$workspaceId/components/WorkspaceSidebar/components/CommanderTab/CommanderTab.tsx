@@ -1212,6 +1212,9 @@ interface CommanderControllerLatestReplyResult
 	latestReplyText: string;
 	latestReplyLength: number;
 	latestReplyFingerprint: string | null;
+	latestAssistantReplyText?: string;
+	latestAssistantReplyLength?: number;
+	latestAssistantReplyFingerprint?: string | null;
 	assistantCount: number | null;
 	hasCodexInstruction: boolean;
 	hasStopSignal: boolean;
@@ -6275,6 +6278,11 @@ export function CommanderTab({
 					readAt,
 				};
 			}
+			const latestReplyAliases = {
+				latestAssistantReplyText: latestState.latestText,
+				latestAssistantReplyLength: latestState.latestText.length,
+				latestAssistantReplyFingerprint: latestState.latestFingerprint,
+			};
 
 			if (latestState.isResponding) {
 				const readAt = new Date().toISOString();
@@ -6297,6 +6305,7 @@ export function CommanderTab({
 					latestReplyText: latestState.latestText,
 					latestReplyLength: latestState.latestText.length,
 					latestReplyFingerprint: latestState.latestFingerprint,
+					...latestReplyAliases,
 					assistantCount: latestState.assistantCount,
 					hasCodexInstruction: false,
 					hasStopSignal: false,
@@ -6337,6 +6346,7 @@ export function CommanderTab({
 					latestReplyText: latestState.latestText,
 					latestReplyLength: latestState.latestText.length,
 					latestReplyFingerprint: latestState.latestFingerprint,
+					...latestReplyAliases,
 					assistantCount: latestState.assistantCount,
 					hasCodexInstruction: false,
 					hasStopSignal: false,
@@ -6373,6 +6383,7 @@ export function CommanderTab({
 					latestReplyText: "",
 					latestReplyLength: 0,
 					latestReplyFingerprint: latestState.latestFingerprint,
+					...latestReplyAliases,
 					assistantCount: latestState.assistantCount,
 					hasCodexInstruction: false,
 					hasStopSignal: false,
@@ -6415,6 +6426,7 @@ export function CommanderTab({
 				latestReplyText: latestState.latestText,
 				latestReplyLength: latestState.latestText.length,
 				latestReplyFingerprint: latestState.latestFingerprint,
+				...latestReplyAliases,
 				assistantCount: latestState.assistantCount,
 				hasCodexInstruction: Boolean(codexInstruction.instruction),
 				hasStopSignal: Boolean(stopSignal.signal),
@@ -6439,12 +6451,12 @@ export function CommanderTab({
 				message: getBrowserAiLatestReplyMessage("READY", blockers, warnings),
 				readAt,
 			};
-			}, [
-				activeTabId,
-				getCommanderControllerContext,
-				syncBrowserAiSubmissionAfterLatestReplyRead,
-				webview.currentUrl,
-				webview.getLiveUrl,
+		}, [
+			activeTabId,
+			getCommanderControllerContext,
+			syncBrowserAiSubmissionAfterLatestReplyRead,
+			webview.currentUrl,
+			webview.getLiveUrl,
 			webview.getRuntimeSnapshot,
 			webview.injectIntoPage,
 			workspaceId,

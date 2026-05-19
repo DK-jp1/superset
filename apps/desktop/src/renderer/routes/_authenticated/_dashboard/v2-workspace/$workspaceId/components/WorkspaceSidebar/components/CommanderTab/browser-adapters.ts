@@ -219,7 +219,11 @@ const LATEST_REPLY_STATE_SCRIPTS: Record<BrowserProvider, string> = {
 })()`,
 	claude: `(function() {
   ${LATEST_REPLY_STATE_HELPER}
-  return toLatestReplyState(document.querySelectorAll('div.font-claude-response'));
+  var primary = toLatestReplyState(document.querySelectorAll('div.font-claude-response'));
+  if (primary.latestText) return primary;
+  var fallback = toLatestReplyState(document.querySelectorAll('p.font-claude-response-body, [class*="font-claude-response"] .standard-markdown'));
+  if (fallback.latestText) return fallback;
+  return primary;
 })()`,
 	gemini: `(function() {
   ${LATEST_REPLY_STATE_HELPER}
