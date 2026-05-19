@@ -111,6 +111,25 @@ Worker instructions should be short and concrete:
 - Verification.
 - Report format.
 
+The Worker report format must require a DONE_TAG / END_REPORT block with these
+sections:
+
+- `実施内容`
+- `変更ファイル`
+- `成果物path`
+- `スクショpath`
+- `確認結果`
+- `build結果`
+- `Playwright結果`
+- `console/pageerror`
+- `未実装`
+- `Doy確認事項`
+- `次にやるなら`
+
+Every section must be filled with either real content or `なし`; placeholders
+must not remain. Artifact and screenshot paths must be real paths and must not
+include secrets, `.env`, `local.db`, `app-state.json`, `node_modules`, or `.git`.
+
 If a Worker or Meta AI will call a write Controller Command, Browser AI should
 include the guarded-write requirement in the instruction:
 
@@ -176,12 +195,19 @@ When reviewing Worker output, Browser AI should check:
 - Whether the change is over-scoped.
 - Whether safety conditions were respected.
 - Whether smoke checks actually validate the issue.
+- Whether reported artifact paths or screenshot paths were attached as real
+  files before the final review.
+- Whether Browser AI actually referenced those attached files.
 - Whether a Doy confirmation item remains.
 - Whether the next action is STOP, another Worker instruction, or Doy confirmation.
 
 Completion wording:
 
+- If attached artifacts were reviewed, include `AI_REFERENCED_FILE: yes` and
+  the referenced filenames. If they were not actually readable, include
+  `AI_REFERENCED_FILE: no` and do not treat the review as complete.
 - Use `STOP` or `次のWorker指示は不要` when no further Worker instruction is needed.
+- Use `Workerへ渡す指示:` when a scoped follow-up Worker instruction is needed.
 - Use `Doy確認事項なし` when no Doy confirmation is needed.
 
 ## 8. Relation to Meta AI

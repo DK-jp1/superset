@@ -57,6 +57,22 @@ function isSupportedWorkerReportedArtifactPath(value: string): boolean {
 	return WORKER_REPORTED_ARTIFACT_EXTENSIONS.has(extension);
 }
 
+function isWorkerReportSectionLabelCandidate(value: string): boolean {
+	return [
+		"実施内容",
+		"変更ファイル",
+		"成果物path",
+		"スクショpath",
+		"確認結果",
+		"build結果",
+		"playwright結果",
+		"console/pageerror",
+		"未実装",
+		"doy確認事項",
+		"次にやるなら",
+	].includes(value.trim().toLowerCase());
+}
+
 function getWorkerReportedArtifactPriority(path: string, line: string): number {
 	let priority = 0;
 	if (/review-screenshots|screenshots/i.test(path)) priority += 30;
@@ -113,6 +129,7 @@ export function extractWorkerReportedArtifactPathCandidates(
 		for (const rawCandidate of collectRawPathCandidates(line)) {
 			const path = stripCandidatePath(rawCandidate);
 			if (!path) continue;
+			if (isWorkerReportSectionLabelCandidate(path)) continue;
 			const key = path.toLowerCase();
 			if (WORKER_REPORTED_ARTIFACT_DANGEROUS_PATH.test(path)) {
 				if (!skipped.has(key)) {

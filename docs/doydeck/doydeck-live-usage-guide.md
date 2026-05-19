@@ -229,7 +229,12 @@ promptは短く、現在taskを中心にする。
   - 検証。
   - 報告形式。
 - Worker完了報告はDONE_TAGからEND_REPORTまでの形式にし、
-  `実施内容`, `変更ファイル`, `Doy確認事項`を必須にする。
+  `実施内容`, `変更ファイル`, `成果物path`, `スクショpath`, `確認結果`,
+  `build結果`, `Playwright結果`, `console/pageerror`, `未実装`,
+  `Doy確認事項`, `次にやるなら`を必須にする。
+- 該当なしでも`なし`と書かせ、placeholderを残させない。
+- 成果物path / スクショpathは実在pathだけにし、secret, `.env`,
+  `local.db`, `app-state.json`, `node_modules`, `.git`を入れさせない。
 - END_REPORT後に追加説明を書かせない。
 - placeholderや指示テンプレechoをWorker報告として扱わない。
 - Browser AIへWorker報告を返す前に`workerReportValid`を確認する。
@@ -303,7 +308,9 @@ Worker完了後は、Browser AIにテキスト要約だけを返すのではな�
 注意:
 
 - `ATTACH_ATTEMPTED`や`FILE_INPUT_SET`だけでは成功扱いしない。
-- `ATTACHMENT_UI_REFLECTED`、filename/chip表示、またはBrowser AI返信で現物参照を確認する。
+- `ATTACHMENT_UI_REFLECTED`、filename/chip表示、Browser AI返信内の
+  `AI_REFERENCED_FILE: yes`またはfilename言及で現物参照を確認する。
+- Browser AIが現物を参照できていない場合は、テキストレビューだけで完成扱いにしない。
 - `.env`, token, cookie, secret, `local.db`, `app-state.json`, `node_modules`, `.git`を含むpathは添付候補から除外する。
 - Auto Loop本体は勝手に開始しない。Loop中のartifact送信はController commandで明示する。
 - PDF/OCR/zip、複数ファイルUXの細部、添付済みファイルの長期registry UIはfuture。

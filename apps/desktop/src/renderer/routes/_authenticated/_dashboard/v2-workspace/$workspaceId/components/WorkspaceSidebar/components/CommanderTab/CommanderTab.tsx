@@ -10097,9 +10097,13 @@ function buildLoopArtifactsBrowserAiReviewPrompt({
 		"添付された現物ファイルとLoop成果物をレビューしてください。",
 		[
 			"判断:",
+			"- まず添付ファイルを実際に参照できたか確認し、返信内に `AI_REFERENCED_FILE: yes` または `AI_REFERENCED_FILE: no` を書く",
+			"- yesの場合は参照したfilenameを短く列挙する",
+			"- 添付UI反映だけで現物を読めていない場合は、成功扱いせず `AI_REFERENCED_FILE: no` と理由を書く",
 			"- 仕様とのズレ、UI崩れ、未完了、検証不足があれば指摘する",
-			"- vスコープ内の追加修正なら、次Worker指示を短く具体的に出す",
-			"- 問題なければ STOP / 次のWorker指示は不要 と明記する",
+			"- vスコープ内の追加修正なら、`Workerへ渡す指示:` から始めて次Worker指示を短く具体的に出す",
+			"- 問題なければ `STOP` / `次のWorker指示は不要` と明記する",
+			"- Doy確認が不要なら `Doy確認事項なし` と明記する",
 			"- scope拡大、DB/API/認証/credentials/deploy/destructive操作、大きな仕様/UX判断はDoy確認事項に分ける",
 		].join("\n"),
 	];
@@ -10217,8 +10221,18 @@ function detectBrowserAiReferencedFiles(input: {
 	const aiReferencedFileNames = input.fileNames.filter((fileName) =>
 		normalizedReply.includes(fileName.toLowerCase()),
 	);
+	const explicitReferenceYes =
+		/(?:AI_REFERENCED_FILE|aiReferencedFile|添付(?:ファイル)?参照)\s*[:：]\s*(?:yes|true|あり|有|参照済み)/i.test(
+			input.replyText,
+		);
+	const explicitReferenceNo =
+		/(?:AI_REFERENCED_FILE|aiReferencedFile|添付(?:ファイル)?参照)\s*[:：]\s*(?:no|false|なし|無し|未参照|不可)/i.test(
+			input.replyText,
+		);
 	return {
-		aiReferencedFile: aiReferencedFileNames.length > 0,
+		aiReferencedFile:
+			aiReferencedFileNames.length > 0 ||
+			(explicitReferenceYes && !explicitReferenceNo),
 		aiReferencedFileNames,
 	};
 }
@@ -13528,6 +13542,11 @@ function buildSendBoundWorkerResponseToBrowserAiPrompt({
 		`workerType: ${workerType || "unknown"}`,
 		`workerIdentityOk: ${workerIdentityOk ? "yes" : "no"}`,
 		`response summary: ${summary || "not recorded"}`,
+		"",
+		"Artifact review rule:",
+		"Worker報告に成果物path / スクショpathが含まれる場合、テキストだけで最終OKにしないでください。",
+		"DoyDeckが現物添付レビューを実行できるよう、添付ファイルを参照できた場合は `AI_REFERENCED_FILE: yes`、参照できない場合は `AI_REFERENCED_FILE: no` と理由を書いてください。",
+		"現物レビュー後、追加作業が必要なら `Workerへ渡す指示:`、不要なら `STOP` を明記してください。",
 		"",
 		"--- Worker Signals ---",
 		`hasError: ${hasError ? "yes" : "no"}`,

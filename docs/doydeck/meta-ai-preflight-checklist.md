@@ -121,8 +121,15 @@ Stop before starting Auto Loop if any of these is true:
 - [ ] Worker send target is the arm-time bound Worker.
 - [ ] Worker response DONE_TAG marker is visible.
 - [ ] Worker response END_REPORT marker is visible.
-- [ ] Report body contains required sections: `実施内容`, `変更ファイル`, `Doy確認事項`.
+- [ ] Report body contains required sections: `実施内容`, `変更ファイル`,
+  `成果物path`, `スクショpath`, `確認結果`, `build結果`, `Playwright結果`,
+  `console/pageerror`, `未実装`, `Doy確認事項`, `次にやるなら`.
+- [ ] Artifact / screenshot paths are real paths or `なし`; secret/local DB paths
+  are not listed.
 - [ ] Worker response is returned to Browser AI.
+- [ ] If artifact paths exist, real files are attached before final Browser AI
+  review.
+- [ ] Browser AI reply states `AI_REFERENCED_FILE: yes/no`.
 - [ ] Browser AI returns a final decision, next instruction, or STOP.
 - [ ] Handoff Ledger is updated after loop stop.
 

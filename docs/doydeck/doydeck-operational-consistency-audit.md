@@ -1,6 +1,7 @@
 # DoyDeck Operational Consistency Audit
 
-Status: 2026-05-19 consistency audit after Safe Improvement Batch.
+Status: 2026-05-19 consistency audit, refreshed after Artifact Review Loop
+Worker-reported artifact attachment.
 
 Purpose: keep DoyDeck usable as a live work surface by checking that docs,
 prompts, Controller Commands, Browser AI, Worker, Handoff, Outcome, safety, and
@@ -16,6 +17,8 @@ Reviewed:
 - Worker launch policy.
 - Controller Command inventory and Commander prompt generation.
 - Browser AI submission and Worker report prompt contracts.
+- Artifact Review Loop, Explorer attachment, and Worker-reported artifact
+  extraction/review commands.
 - Safety guard tests and Worker report validation tests.
 
 `clawpatch` was not available on PATH, so this audit used local `rg`, source
@@ -51,14 +54,19 @@ typecheck.
 | Task tab creation | Older docs implied every rough task could become a tab immediately. | Clarified propose-first, Doy-approved tab creation. |
 | Safety guard matrix | Smoke matrix still said fixture coverage needed for harmless `remove` / `削除`. | Updated matrix to reflect existing tests and hard blocker boundaries. |
 | Browser AI short prompt | Backlog still treated short prompt command as missing. | Marked `sendBrowserAiPrompt()` implemented and moved remaining priority to prompt-size warning / target-doc review. |
+| Artifact review prompt | Browser AI review prompt did not require an explicit real-file reference signal. | Added `AI_REFERENCED_FILE: yes/no`, filename, STOP / `Workerへ渡す指示:`, and `Doy確認事項なし` requirements. |
+| Worker report artifact contract | Worker report template and validation still allowed reports without artifact/build/Playwright/console fields. | Expanded the DONE_TAG contract and validation to require artifact paths, screenshot paths, build/test evidence, missing work, and next-step fields. |
+| Worker-result review path | Some runbook wording still implied text-only Worker response review. | Updated the flow to prefer `sendWorkerReportedArtifactsToBrowserAI()` / `sendLoopArtifactsToBrowserAI()` when Worker reports artifact paths. |
 
 ## 4. Smoke / Test Evidence
 
 - `commander-safety.test.ts`: false-positive coverage for screenshot names,
   `removeFromArray`, UI `削除` labels, plus actual delete/remove shell blockers.
 - `commander-worker-report.test.ts`: DONE_TAG prompt echo, submitted template
-  echo, footer/noise after END_REPORT, missing required sections, idle-only
+  echo, footer/noise after END_REPORT, expanded required sections, idle-only
   text, and placeholder reports.
+- `commander-worker-artifacts.test.ts`: Worker-reported artifact path extraction,
+  sensitive path skip, and unsupported file skip.
 - `commander-bridge.test.ts`: injected-only Browser AI sends do not auto-capture
   and tab mismatch is blocked.
 - Controller smoke: `getControllerCommandInventory()` returned the short prompt
@@ -101,7 +109,12 @@ Before a live DoyDeck task:
    sends.
 5. Use `getWorkerInputReadiness()` and `getTaskRunStatus()` before and during
    Worker work.
-6. Require DONE_TAG / END_REPORT Worker reports and validate `workerReportValid`
+6. Require DONE_TAG / END_REPORT Worker reports with artifact/build/Playwright
+   fields and validate `workerReportValid`
    before Browser AI review.
-7. Use `recordControllerChainOutcome()` with expected-tab guard.
-8. Stop for Doy only at the hard gates above or after repeated failed recovery.
+7. If Worker reports artifact paths, attach real files with
+   `sendWorkerReportedArtifactsToBrowserAI()` before final Browser AI review.
+8. Require Browser AI to state `AI_REFERENCED_FILE: yes/no`, then STOP or
+   `Workerへ渡す指示:`.
+9. Use `recordControllerChainOutcome()` with expected-tab guard.
+10. Stop for Doy only at the hard gates above or after repeated failed recovery.

@@ -353,21 +353,27 @@ Meta AIは:
 
 Meta AIは:
 
-1. Worker Response envelopeを検出する。
-2. 必須セクションを確認する。
-3. git diff / QA / 未解決を読む。
-4. Handoff Ledgerへ反映する。
+1. DONE_TAG / END_REPORT Worker報告を検出する。
+2. DONE_TAG / END_REPORT内の必須セクションを確認する。
+3. `成果物path` / `スクショpath` / build / Playwright / console/pageerror / 未実装 / Doy確認事項を読む。
+4. Worker報告に成果物pathがあれば、`collectWorkerReportedArtifacts()`で存在確認とskip理由を整理する。
+5. Handoff Ledgerへ反映する。
 
 ### 8.6 Browser AIへ返す
 
-Meta AIはWorker結果をBrowser AIへ返し、レビューさせる。
+Meta AIはWorker結果をBrowser AIへ返し、成果物pathがある場合は
+`sendWorkerReportedArtifactsToBrowserAI()`または`sendLoopArtifactsToBrowserAI()`で
+現物ファイルを実添付してレビューさせる。テキスト貼付だけを現物レビュー成功扱いしない。
 
 Browser AIは:
 
 - 成果を確認する。
+- 添付ファイルを参照できた場合は`AI_REFERENCED_FILE: yes`とfilenameを返す。
+- 添付ファイルを参照できない場合は`AI_REFERENCED_FILE: no`と理由を返す。
 - 安全条件を確認する。
-- 次アクションを出す。
+- 次アクションが必要なら`Workerへ渡す指示:`から始める。
 - 追加作業不要なら `STOP` または `次のWorker指示は不要` と返す。
+- Doy確認が不要なら`Doy確認事項なし`と返す。
 
 ### 8.7 次アクションまたはSTOP
 

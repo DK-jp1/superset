@@ -178,10 +178,19 @@ Workerが必要な場合に使うController Command:
 - sendInstructionToBoundWorker()は原則requirePreflight:trueで使う。
 - no-op / worker-only smokeではrecordControllerChainOutcome()にworker-only/noop-smoke相当のmodeを渡し、Browser AI review未取得をblocker扱いしない。
 - Worker完了報告はDONE_TAGからEND_REPORTまでの形式で要求する。
-- 必須sectionは `実施内容`, `変更ファイル`, `Doy確認事項`。
+- 必須sectionは `実施内容`, `変更ファイル`, `成果物path`, `スクショpath`,
+  `確認結果`, `build結果`, `Playwright結果`, `console/pageerror`, `未実装`,
+  `Doy確認事項`, `次にやるなら`。
+- 該当なしでも`なし`と書かせ、placeholderを残させない。
+- `成果物path` / `スクショpath`には実在pathだけを書かせる。
+- `.env`, token/cookie/secret, `local.db`, `app-state.json`, `node_modules`,
+  `.git`は成果物pathに入れさせない。
 - END_REPORT後に追加説明を書かせない。
 - placeholderや指示テンプレechoはWorker報告として扱わない。
 - Browser AIへWorker報告を返す前に `workerReportValid` を確認する。
+- Worker報告に成果物pathがある場合は、Browser AIへ現物添付レビューを行い、
+  `AI_REFERENCED_FILE: yes/no`, `STOP`, `Workerへ渡す指示:`,
+  `Doy確認事項なし`のいずれかを明確に返させる。
 
 ## 6. Handoff / Outcome / Decision
 

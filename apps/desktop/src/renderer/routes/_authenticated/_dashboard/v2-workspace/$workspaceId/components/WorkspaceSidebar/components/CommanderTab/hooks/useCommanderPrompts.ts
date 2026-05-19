@@ -8,25 +8,37 @@ export const DOYDECK_WORKER_RESPONSE_END =
 export const DOYDECK_WORKER_RESPONSE_ENVELOPE_TEMPLATE = `DONE_TAG:DOYDECK_WORKER_REPORT
 
 実施内容:
-- ...
+- なし
 
 変更ファイル:
-- ...
+- なし
+
+成果物path:
+- なし
+
+スクショpath:
+- なし
 
 確認結果:
-- ...
+- なし
 
-git diff --check結果:
-- PASS / FAIL
+build結果:
+- なし
 
-セルフレビュー:
-- ...
+Playwright結果:
+- なし
 
-未解決 / 次にやるなら:
-- ...
+console/pageerror:
+- なし
+
+未実装:
+- なし
 
 Doy確認事項:
-- なし / あり: ...
+- なし
+
+次にやるなら:
+- なし
 
 END_REPORT`;
 
@@ -93,6 +105,9 @@ Worker指示には基本的に以下を含めてください:
 
 Workerへの指示には、完了報告を必ず以下のDONE_TAG / END_REPORT形式で囲むように指定してください。
 END_REPORT後に追加説明を書かないようにしてください。
+placeholderを残さず、該当なしでも「なし」と書かせてください。
+成果物path / スクショpathには実在pathだけを書かせ、.env / token / cookie / secret / local.db / app-state.json / node_modules / .git は入れさせないでください。
+Worker報告に成果物path / スクショpathがある場合、Browser AIレビューは現物添付レビューを前提にしてください。
 
 ${DOYDECK_WORKER_RESPONSE_ENVELOPE_TEMPLATE}
 
@@ -100,6 +115,8 @@ Auto Loop時:
 - Workerへ渡す指示が必要なら必ず「Workerへ渡す指示:」で始める
 - 完了なら「次のWorker指示は不要」または「STOP」と明記する
 - Worker完了報告は必ずDONE_TAGからEND_REPORTまでの形式で囲ませる
+- Worker完了報告には成果物path、スクショpath、build結果、Playwright結果、console/pageerror、未実装、Doy確認事項、次にやるならを必ず含める
+- Worker報告内に成果物pathがある場合は、現物添付レビュー後にSTOPまたは次Worker指示を判断する
 - Worker出力のMarkdown見出しがTUI上で \`● 完了報告\` のように見えても、それだけで不合格扱いしない
 - 安全条件、成果、次アクションで判断する
 

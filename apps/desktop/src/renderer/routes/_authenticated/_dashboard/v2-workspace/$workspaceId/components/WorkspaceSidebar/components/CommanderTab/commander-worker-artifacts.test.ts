@@ -63,4 +63,27 @@ describe("commander worker reported artifact extraction", () => {
 			"report.pdf",
 		);
 	});
+
+	it("does not treat report section labels as path candidates", () => {
+		const result = extractWorkerReportedArtifactPathCandidates(
+			[
+				"DONE_TAG:ARTIFACT_REPORT",
+				"実施内容: smoke",
+				"変更ファイル: なし",
+				"成果物path: なし",
+				"スクショpath: なし",
+				"確認結果: なし",
+				"build結果: なし",
+				"Playwright結果: なし",
+				"console/pageerror: なし",
+				"未実装: なし",
+				"Doy確認事項: なし",
+				"次にやるなら: なし",
+				"END_REPORT",
+			].join("\n"),
+		);
+
+		expect(result.candidates).toEqual([]);
+		expect(result.skipped).toEqual([]);
+	});
 });

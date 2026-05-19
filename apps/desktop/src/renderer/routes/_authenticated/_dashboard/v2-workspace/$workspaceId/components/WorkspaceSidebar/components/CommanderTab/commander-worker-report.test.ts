@@ -15,6 +15,27 @@ const completeResponse = {
 	workerReportLooksComplete: true,
 };
 
+function buildWorkerReport(
+	lines: string[] = ["実施内容: current run completed."],
+	tag = "MY_REPORT",
+): string {
+	return [
+		`DONE_TAG:${tag}`,
+		...lines,
+		"変更ファイル: なし",
+		"成果物path: なし",
+		"スクショpath: なし",
+		"確認結果: なし",
+		"build結果: なし",
+		"Playwright結果: なし",
+		"console/pageerror: なし",
+		"未実装: なし",
+		"Doy確認事項: なし",
+		"次にやるなら: なし",
+		"END_REPORT",
+	].join("\n");
+}
+
 describe("commander worker DONE_TAG report extraction", () => {
 	it("ignores prompt-prefixed DONE_TAG echo lines", () => {
 		const text = [
@@ -28,13 +49,9 @@ describe("commander worker DONE_TAG report extraction", () => {
 	});
 
 	it("does not treat the submitted instruction template as the worker report", () => {
-		const instruction = [
-			"DONE_TAG:MY_REPORT",
+		const instruction = buildWorkerReport([
 			"実施内容: task run identity smokeです。",
-			"変更ファイル: なし",
-			"Doy確認事項: なし",
-			"END_REPORT",
-		].join("\n");
+		]);
 
 		expect(hasBoundWorkerDoneTagReportPromptEcho(instruction, instruction)).toBe(
 			true,
@@ -48,21 +65,13 @@ describe("commander worker DONE_TAG report extraction", () => {
 	});
 
 	it("extracts the second current-run DONE_TAG block as the worker report", () => {
-		const instruction = [
-			"DONE_TAG:MY_REPORT",
+		const instruction = buildWorkerReport([
 			"実施内容: task run identity smokeです。",
-			"変更ファイル: なし",
-			"Doy確認事項: なし",
-			"END_REPORT",
-		].join("\n");
-		const actualReport = [
-			"DONE_TAG:MY_REPORT",
+		]);
+		const actualReport = buildWorkerReport([
 			"実施内容: current run completed.",
-			"変更ファイル: なし",
 			"確認結果: COMPLETED",
-			"Doy確認事項: なし",
-			"END_REPORT",
-		].join("\n");
+		]);
 		const text = [instruction, "• Working", actualReport, "• 次のWorker指示は不要"].join(
 			"\n",
 		);
@@ -78,13 +87,7 @@ describe("commander worker DONE_TAG report extraction", () => {
 	});
 
 	it("validates structured DONE_TAG reports before Browser AI review", () => {
-		const reportText = [
-			"DONE_TAG:MY_REPORT",
-			"実施内容: current run completed.",
-			"変更ファイル: なし",
-			"Doy確認事項: なし",
-			"END_REPORT",
-		].join("\n");
+		const reportText = buildWorkerReport();
 
 		const result = validateWorkerReportForBrowserAiReview(
 			{
@@ -103,11 +106,7 @@ describe("commander worker DONE_TAG report extraction", () => {
 
 	it("cuts footer noise after END_REPORT out of extracted reports", () => {
 		const text = [
-			"DONE_TAG:MY_REPORT",
-			"実施内容: current run completed.",
-			"変更ファイル: なし",
-			"Doy確認事項: なし",
-			"END_REPORT",
+			buildWorkerReport(),
 			"⏵⏵ bypass permissions on · 1 shell ↓ to manage",
 			"報告完了。追加指示まで静止します。",
 		].join("\n");
@@ -129,6 +128,7 @@ describe("commander worker DONE_TAG report extraction", () => {
 			[
 				"DONE_TAG:MY_REPORT",
 				"実施内容: current run completed.",
+				"変更ファイル: なし",
 				"END_REPORT",
 			].join("\n"),
 		);
@@ -139,7 +139,7 @@ describe("commander worker DONE_TAG report extraction", () => {
 			"missing required worker report section",
 		);
 		expect(result.workerReportValidationWarnings.join(" ")).toContain(
-			"変更ファイル",
+			"成果物path",
 		);
 	});
 

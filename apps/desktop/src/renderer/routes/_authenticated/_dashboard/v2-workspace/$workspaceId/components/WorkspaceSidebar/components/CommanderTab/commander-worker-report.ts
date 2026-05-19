@@ -263,7 +263,15 @@ function getMissingRequiredWorkerReportSections(text: string): string[] {
 	const requiredSections = [
 		{ label: "実施内容", pattern: /(?:^|\n)\s*実施内容\s*[:：]/ },
 		{ label: "変更ファイル", pattern: /(?:^|\n)\s*変更ファイル\s*[:：]/ },
+		{ label: "成果物path", pattern: /(?:^|\n)\s*成果物path\s*[:：]/i },
+		{ label: "スクショpath", pattern: /(?:^|\n)\s*スクショpath\s*[:：]/i },
+		{ label: "確認結果", pattern: /(?:^|\n)\s*確認結果\s*[:：]/ },
+		{ label: "build結果", pattern: /(?:^|\n)\s*build結果\s*[:：]/i },
+		{ label: "Playwright結果", pattern: /(?:^|\n)\s*Playwright結果\s*[:：]/i },
+		{ label: "console/pageerror", pattern: /(?:^|\n)\s*console\/pageerror\s*[:：]/i },
+		{ label: "未実装", pattern: /(?:^|\n)\s*未実装\s*[:：]/ },
 		{ label: "Doy確認事項", pattern: /(?:^|\n)\s*Doy確認事項\s*[:：]/ },
+		{ label: "次にやるなら", pattern: /(?:^|\n)\s*次にやるなら\s*[:：]/ },
 	];
 	return requiredSections
 		.filter((section) => !section.pattern.test(text))
