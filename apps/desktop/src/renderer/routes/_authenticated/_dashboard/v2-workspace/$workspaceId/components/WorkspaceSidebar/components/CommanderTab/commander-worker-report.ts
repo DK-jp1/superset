@@ -194,6 +194,18 @@ export function validateWorkerReportForBrowserAiReview(
 				workerReportValidationWarnings: warnings,
 			};
 		}
+		const missingSections = getMissingRequiredWorkerReportSections(responseText);
+		if (missingSections.length > 0) {
+			warnings.push(
+				`missing required worker report sections: ${missingSections.join(", ")}`,
+			);
+			return {
+				workerReportValid: false,
+				workerReportValidationStatus: "FORMAT_INVALID",
+				workerReportValidationReason: `missing required worker report section: ${missingSections[0]}`,
+				workerReportValidationWarnings: warnings,
+			};
+		}
 		return {
 			workerReportValid: true,
 			workerReportValidationStatus: "VALID",
@@ -245,6 +257,17 @@ function isBoundWorkerPlaceholderReport(text: string): boolean {
 		/(?:ここに|以下に).{0,12}(?:記入|入力|貼り付け)/,
 		/(?:未記入|未入力|テンプレートのまま)/,
 	].some((pattern) => pattern.test(text));
+}
+
+function getMissingRequiredWorkerReportSections(text: string): string[] {
+	const requiredSections = [
+		{ label: "実施内容", pattern: /(?:^|\n)\s*実施内容\s*[:：]/ },
+		{ label: "変更ファイル", pattern: /(?:^|\n)\s*変更ファイル\s*[:：]/ },
+		{ label: "Doy確認事項", pattern: /(?:^|\n)\s*Doy確認事項\s*[:：]/ },
+	];
+	return requiredSections
+		.filter((section) => !section.pattern.test(text))
+		.map((section) => section.label);
 }
 
 function normalizeWorkerReportText(text: string): string {

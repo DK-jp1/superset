@@ -101,6 +101,48 @@ describe("commander worker DONE_TAG report extraction", () => {
 		);
 	});
 
+	it("cuts footer noise after END_REPORT out of extracted reports", () => {
+		const text = [
+			"DONE_TAG:MY_REPORT",
+			"実施内容: current run completed.",
+			"変更ファイル: なし",
+			"Doy確認事項: なし",
+			"END_REPORT",
+			"⏵⏵ bypass permissions on · 1 shell ↓ to manage",
+			"報告完了。追加指示まで静止します。",
+		].join("\n");
+
+		const report = extractBoundWorkerDoneTagReports(text).at(-1);
+
+		expect(report?.text).toContain("DONE_TAG:MY_REPORT");
+		expect(report?.text).toContain("END_REPORT");
+		expect(report?.text).not.toContain("bypass permissions");
+		expect(report?.text).not.toContain("追加指示まで静止");
+	});
+
+	it("rejects structured reports missing required sections", () => {
+		const result = validateWorkerReportForBrowserAiReview(
+			{
+				...completeResponse,
+				workerReportExtracted: true,
+			},
+			[
+				"DONE_TAG:MY_REPORT",
+				"実施内容: current run completed.",
+				"END_REPORT",
+			].join("\n"),
+		);
+
+		expect(result.workerReportValid).toBe(false);
+		expect(result.workerReportValidationStatus).toBe("FORMAT_INVALID");
+		expect(result.workerReportValidationReason).toContain(
+			"missing required worker report section",
+		);
+		expect(result.workerReportValidationWarnings.join(" ")).toContain(
+			"変更ファイル",
+		);
+	});
+
 	it("rejects prompt echo or waiting worker responses before Browser AI review", () => {
 		const result = validateWorkerReportForBrowserAiReview(
 			{
