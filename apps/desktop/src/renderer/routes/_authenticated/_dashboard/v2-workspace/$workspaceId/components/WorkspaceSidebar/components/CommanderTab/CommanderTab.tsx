@@ -12561,6 +12561,7 @@ function isCodexWorkerPlaceholderPromptLine(line: string): boolean {
 		/^([›>])\s+Find and fix a bug in @filename$/i,
 		/^([›>])\s+Write tests for @filename$/i,
 		/^([›>])\s+Explain this codebase$/i,
+		/^([›>])\s+Improve documentation in @filename$/i,
 	].some((pattern) => pattern.test(normalized));
 }
 

@@ -104,6 +104,7 @@ export function inferDoyDeckWorkerTypeFromText(
 		/\bCodex\b/i,
 		/\bcodex\b/i,
 		/\bmodel:\s*gpt-/i,
+		/\bgpt-\d+(?:\.\d+)?(?:[-.][a-z0-9]+)?\s+(?:low|medium|high|xhigh)\b/i,
 		/\bpermissions:\s*YOLO\s+mode\b/i,
 	];
 	if (
