@@ -140,7 +140,7 @@ interface AutoLoopArtifactReviewController {
 	) => Promise<unknown>;
 }
 
-function getAutoLoopArtifactReviewController():
+function getWindowAutoLoopArtifactReviewController():
 	| AutoLoopArtifactReviewController
 	| null {
 	if (typeof window === "undefined") return null;
@@ -157,10 +157,11 @@ function recordAutoLoopArtifactReviewOutcome(input: {
 	finalDecision: string;
 	nextAction: string;
 	notes: string;
-}): void {
-	const controller = getAutoLoopArtifactReviewController();
-	if (!controller?.recordControllerChainOutcome) return;
-	void controller
+}, controller?: AutoLoopArtifactReviewController | null): void {
+	const resolvedController =
+		controller ?? getWindowAutoLoopArtifactReviewController();
+	if (!resolvedController?.recordControllerChainOutcome) return;
+	void resolvedController
 		.recordControllerChainOutcome({
 			expectedTabId: input.expectedTabId,
 			requireActiveTabMatch: Boolean(input.expectedTabId),
@@ -1579,6 +1580,9 @@ interface UsePromptTransferParams {
 	onSetView: (view: CommanderView) => void;
 	workerPrompt: string;
 	reviewPrompt: string;
+	getAutoLoopArtifactReviewController?: () =>
+		| AutoLoopArtifactReviewController
+		| null;
 }
 
 export function usePromptTransfer({
@@ -1600,6 +1604,7 @@ export function usePromptTransfer({
 	onSetView,
 	workerPrompt,
 	reviewPrompt,
+	getAutoLoopArtifactReviewController,
 }: UsePromptTransferParams) {
 	const [formSendPreview, setFormSendPreview] = useState<{
 		text: string;
@@ -1648,6 +1653,15 @@ export function usePromptTransfer({
 	const [autoLoopStopReason, setAutoLoopStopReason] = useState<string | null>(
 		null,
 	);
+
+	const resolveAutoLoopArtifactReviewController = useCallback(():
+		| AutoLoopArtifactReviewController
+		| null => {
+		return (
+			getAutoLoopArtifactReviewController?.() ??
+			getWindowAutoLoopArtifactReviewController()
+		);
+	}, [getAutoLoopArtifactReviewController]);
 	const [autoLoopPhase, setAutoLoopPhaseState] =
 		useState<AutoLoopPhase>("idle");
 	const [autoLoopLastAction, setAutoLoopLastAction] = useState("");
@@ -3275,6 +3289,8 @@ export function usePromptTransfer({
 		const expectedTabId = workspaceId
 			? useTabsStore.getState().activeTabIds[workspaceId] ?? null
 			: null;
+		const artifactReviewController =
+			resolveAutoLoopArtifactReviewController();
 		const browserRequestedStop = isBrowserCompletionStop(
 			latestBrowserAiDirectionText || text,
 		);
@@ -3289,7 +3305,7 @@ export function usePromptTransfer({
 					finalDecision: "ARTIFACT_REVIEW_NOT_ESTABLISHED",
 					nextAction: "Stop bounded loop and reattach artifacts or request a valid artifact review.",
 					notes: artifactReviewStopReason,
-				});
+				}, artifactReviewController);
 				stopAutoLoop(artifactReviewStopReason);
 				return;
 			}
@@ -3306,7 +3322,7 @@ export function usePromptTransfer({
 					finalDecision: "ARTIFACT_REVIEW_NEXT_ACTION_MISSING",
 					nextAction: "Ask Browser AI for STOP or Workerへ渡す指示 before continuing.",
 					notes: reason,
-				});
+				}, artifactReviewController);
 				stopAutoLoop(reason);
 				return;
 			}
@@ -3320,7 +3336,7 @@ export function usePromptTransfer({
 					nextAction: "STOP",
 					notes:
 						"Browser AI reviewed attached Worker artifacts with AI_REFERENCED_FILE: yes and requested completion.",
-				});
+				}, artifactReviewController);
 			}
 			stopAutoLoop("Browser AI requested completion/stop");
 			return;
@@ -3344,7 +3360,7 @@ export function usePromptTransfer({
 				nextAction: "Send Browser AI scoped follow-up instruction to Worker.",
 				notes:
 					"Browser AI reviewed attached Worker artifacts with AI_REFERENCED_FILE: yes and provided Workerへ渡す指示.",
-			});
+			}, artifactReviewController);
 		}
 		autoLoopArtifactReviewExpectedRef.current = false;
 		const nextTurn = autoLoopTurn + 1;
@@ -3387,6 +3403,7 @@ export function usePromptTransfer({
 		getLiveUrl,
 		handleTerminalSubmitBeforeSend,
 		latestBrowserAiDirectionText,
+		resolveAutoLoopArtifactReviewController,
 		stopAutoLoop,
 	]);
 
@@ -3425,7 +3442,8 @@ export function usePromptTransfer({
 			const expectedTabId = workspaceId
 				? useTabsStore.getState().activeTabIds[workspaceId] ?? null
 				: null;
-			const artifactController = getAutoLoopArtifactReviewController();
+			const artifactController =
+				resolveAutoLoopArtifactReviewController();
 			let fallbackText = text;
 			if (
 				artifactController?.collectWorkerReportedArtifacts &&
@@ -3454,6 +3472,16 @@ export function usePromptTransfer({
 				}
 				if (artifactDecision.shouldSendArtifacts) {
 					setAutoLoopLastAction("Attaching Worker artifacts to Browser AI");
+					let artifactReviewBaseline: AssistantCaptureSnapshot | null = null;
+					try {
+						const baselineRaw = await injectIntoPage(
+							buildAssistantSnapshotScript(provider),
+						);
+						artifactReviewBaseline =
+							toAssistantCaptureSnapshot(baselineRaw);
+					} catch {
+						artifactReviewBaseline = null;
+					}
 					const artifactSendResult =
 						await artifactController.sendWorkerReportedArtifactsToBrowserAI({
 							workerReportText: text,
@@ -3484,6 +3512,11 @@ export function usePromptTransfer({
 					setAutoLoopLastAction(
 						summarizeAutoLoopArtifactSendResult(artifactSendResult),
 					);
+					void startAutoCapture({
+						baseline: artifactReviewBaseline,
+						prompt: "auto-loop-artifact-review-watch",
+						triggeredAt: Date.now(),
+					});
 					return;
 				}
 				if (artifactDecision.shouldFallbackToText) {
@@ -3534,6 +3567,9 @@ export function usePromptTransfer({
 		autoRelayMode,
 		currentUrl,
 		getLiveUrl,
+		injectIntoPage,
+		resolveAutoLoopArtifactReviewController,
+		startAutoCapture,
 		stopAutoLoop,
 		workerResponsePreview,
 		workspaceId,

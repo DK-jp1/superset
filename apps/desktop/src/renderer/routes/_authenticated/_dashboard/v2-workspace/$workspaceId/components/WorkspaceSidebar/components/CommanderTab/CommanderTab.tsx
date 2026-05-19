@@ -2445,6 +2445,15 @@ type CommanderControllerWindow = Window &
 		__doydeckCommanderController?: CommanderControllerCommands;
 	};
 
+type AutoLoopArtifactReviewControllerRef = Partial<
+	Pick<
+		CommanderControllerCommands,
+		| "collectWorkerReportedArtifacts"
+		| "sendWorkerReportedArtifactsToBrowserAI"
+		| "recordControllerChainOutcome"
+	>
+>;
+
 export function CommanderTab({
 	workspaceId,
 	fetchGitSummary,
@@ -2615,6 +2624,13 @@ export function CommanderTab({
 		return loadedSession;
 	}, [resolveActiveTabIdSnapshot, sessionPersistence]);
 
+	const autoLoopArtifactReviewControllerRef =
+		useRef<AutoLoopArtifactReviewControllerRef | null>(null);
+	const getAutoLoopArtifactReviewControllerForTransfer = useCallback(
+		() => autoLoopArtifactReviewControllerRef.current,
+		[],
+	);
+
 	const transfer = usePromptTransfer({
 		workspaceId,
 		fetchGitSummary,
@@ -2634,6 +2650,8 @@ export function CommanderTab({
 		onSetView: setView,
 		workerPrompt,
 		reviewPrompt,
+		getAutoLoopArtifactReviewController:
+			getAutoLoopArtifactReviewControllerForTransfer,
 	});
 
 	const handleAutoCaptureTrigger = useCallback(
@@ -8899,6 +8917,13 @@ export function CommanderTab({
 			transfer.buildHandoffLedger,
 		],
 	);
+
+	autoLoopArtifactReviewControllerRef.current = {
+		collectWorkerReportedArtifacts: collectWorkerReportedArtifactsController,
+		sendWorkerReportedArtifactsToBrowserAI:
+			sendWorkerReportedArtifactsToBrowserAiController,
+		recordControllerChainOutcome: recordControllerChainOutcomeController,
+	};
 
 	const commanderBridgeOwnerKey = useMemo(
 		() => `${workspaceId}:${activeTabId ?? "no-active-tab"}`,
