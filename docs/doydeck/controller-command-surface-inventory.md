@@ -117,6 +117,9 @@ Implemented:
 | Worker | `focusBoundWorkerPane(input?)` | implemented | Alias for `activateTerminalPaneForTab`. |
 | Browser AI | `sendHandoffToBrowserAI(input?)` | implemented | Sends current Handoff prompt to Browser AI. |
 | Browser AI | `sendBrowserAiPrompt(input?)` | implemented | Sends a short explicit Browser AI prompt without building a full Handoff. Supports expected-tab guards and UI reflection verification. |
+| Browser AI | `attachTargetFilesToBrowserAI(input?)` | implemented | Attaches supported Explorer files to Browser AI through the provider native file input and verifies filename/chip UI reflection. |
+| Browser AI | `sendTargetFilesReviewToBrowserAI(input?)` | implemented | Alias for `attachTargetFilesToBrowserAI`; can attach files and send a short review prompt. |
+| Browser AI | `attachSelectedExplorerFileToBrowserAI(input?)` | implemented | Alias used by the Explorer UI action for the selected file. |
 | Browser AI | `readBrowserAiLatestReply()` | implemented | Reads latest Browser AI assistant reply and classifications. |
 | Browser AI | `getBrowserAiLatestReply()` | implemented | Alias for `readBrowserAiLatestReply`. |
 | Worker | `sendInstructionToBoundWorker(input)` | implemented | Sends instruction to bound Codex / Claude worker with preflight guard. |
@@ -174,6 +177,7 @@ should be called with an expected-tab guard in normal operation:
 | Prepare Browser AI provider only | implemented | done | `prepareBrowserAiReady({ provider, dryRun, navigateIfNeeded })` readies ChatGPT / Claude / Gemini without worker binding. |
 | Send Handoff | implemented | done | `sendHandoffToBrowserAI()`. |
 | Send short prompt | implemented | done | `sendBrowserAiPrompt({ provider, prompt, expectedTabId, expectedTitle, requireActiveTabMatch })`. |
+| Attach Explorer files | implemented | done | `attachTargetFilesToBrowserAI({ targetPaths, provider, sendPromptAfterAttach })` uses the Browser AI native file input, blocks folders/unsupported files, and does not treat text fallback as success. |
 | Read latest reply | implemented | done | `getBrowserAiLatestReply()` / `readBrowserAiLatestReply()`. |
 | Get last submission | implemented | done | `getBrowserAiLastSubmission()`. |
 | Send target-doc Browser AI review | partially implemented | P1 | S9.2 support exists in prompt flow, but a narrower command could reduce prompt boilerplate. |
@@ -225,9 +229,12 @@ P0 missing or partial:
 
 P1 missing or partial:
 
-- `sendTargetDocsReviewToBrowserAI(input)`
-  - Browser-AI-only target docs review with prompt length/scope controls.
-  - Purpose: reduce prompt boilerplate and long-context mistakes.
+- Browser AI attachment follow-ups
+  - Multiple-file UX polish, PDF attachment validation, image review flow,
+    fallback text excerpt mode, attached-file list retrieval, and Auto Loop
+    reuse of already attached files.
+  - Purpose: keep real attachments as the primary path while making larger
+    review packages easier to manage.
 - Decision Record accessor
   - Return DR-ID references and short summaries for Handoff prompts.
   - Purpose: avoid pasting full Decision Record text into every prompt.
@@ -276,7 +283,7 @@ P0: 日常操作でUI探索が出るもの。
 
 P1: 実運用で頻繁に使うが回避可能なもの。
 
-- `sendTargetDocsReviewToBrowserAI(input)`
+- Browser AI attachment follow-ups
 - Decision Record accessor
 - `analyzeTaskIntake(input?)`
 - `proposeTaskTabs(input?)`
@@ -309,10 +316,10 @@ Candidate 2: Decision Record accessor
 - HandoffからDR-ID短参照を使いやすくする。
 - Decision Record本文を毎回promptに入れず、必要な短い前提だけを扱う。
 
-Candidate 3: `sendTargetDocsReviewToBrowserAI(input)`
+Candidate 3: Browser AI attachment follow-ups
 
-- Browser-AI-only target docs reviewを短いpromptで実行しやすくする。
-- 対象docs本文を必要な時だけ渡し、固定ルールの過剰投入を避ける。
+- 複数ファイル、PDF、画像review、fallback text excerpt、添付済みファイル一覧取得を整理する。
+- 実添付をprimary pathにし、provider制約時だけfallbackを使う。
 
 Candidate 3: task intake proposal accessors
 
@@ -356,9 +363,9 @@ Visual sanity checkは以下の場合に使う。
 
 ## 10. 次に実装すべきcommandトップ5
 
-1. `sendTargetDocsReviewToBrowserAI(input)`
-   - 理由: Browser-AI-only target docs reviewを短いpromptで実行しやすくする。
-   - 種別: Browser-AI-only send helper。
+1. Browser AI attachment follow-ups
+   - 理由: PDF/画像/複数ファイル/添付済みファイル一覧を実運用で扱いやすくする。
+   - 種別: Browser-AI attachment helper。
    - リスク: medium-low。
 
 2. Handoff / prompt-size warning fields
@@ -385,8 +392,8 @@ Visual sanity checkは以下の場合に使う。
 
 Recommended S9.9 / S10 entry:
 
-1. `sendTargetDocsReviewToBrowserAI(input)`
-   - Browser-AI-only target docs reviewを短く安全に実行する。
+1. Browser AI attachment follow-ups
+   - PDF/画像/複数ファイル/添付済みファイル一覧を短く安全に扱う。
 2. Handoff / prompt-size warning fields
    - Browser AI送信前にprompt sizeとstale historyを警告する。
 3. Decision Record accessor

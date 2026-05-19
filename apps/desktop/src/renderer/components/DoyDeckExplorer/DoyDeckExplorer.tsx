@@ -26,6 +26,7 @@ import {
 	FolderOpen,
 	ListPlus,
 	PanelTopOpen,
+	Paperclip,
 	RefreshCw,
 	Terminal as TerminalIcon,
 	UploadCloud,
@@ -42,6 +43,7 @@ import {
 import { FileIcon } from "renderer/screens/main/components/WorkspaceView/RightSidebar/FilesView/utils";
 import {
 	addSelectedPathToCommanderSession,
+	attachSelectedPathToBrowserAI,
 	sendSelectedPathToBrowserAI,
 	sendSelectedPathToTerminalPreview,
 } from "renderer/stores/doydeck-commander-actions";
@@ -680,6 +682,15 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		void sendSelectedPathToBrowserAI(workspaceId, selectedCommanderPath);
 	};
 
+	const handleAttachToBrowserAI = () => {
+		if (!selectedCommanderPath) return;
+		if (selectedCommanderPath.type !== "file") {
+			toast.info("Browser AI実添付は単一ファイルのみ対応です");
+			return;
+		}
+		void attachSelectedPathToBrowserAI(workspaceId, selectedCommanderPath);
+	};
+
 	const handleSendPathToTerminalPreview = () => {
 		if (!selectedCommanderPath) return;
 		sendSelectedPathToTerminalPreview(workspaceId, selectedCommanderPath);
@@ -967,6 +978,14 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 							disabled={!selectedCommanderPath}
 							onClick={handleAddToSession}
 						/>
+						<IconButton
+							icon={Paperclip}
+							label="Attach to Browser AI"
+							disabled={
+								!selectedCommanderPath || selectedCommanderPath.type !== "file"
+							}
+							onClick={handleAttachToBrowserAI}
+						/>
 						<Tooltip>
 							<TooltipTrigger asChild>
 								<Button
@@ -1023,6 +1042,16 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 								>
 									<Bot className="size-3.5" />
 									Send Path to Browser AI
+								</DropdownMenuItem>
+								<DropdownMenuItem
+									disabled={
+										!selectedCommanderPath ||
+										selectedCommanderPath.type !== "file"
+									}
+									onSelect={handleAttachToBrowserAI}
+								>
+									<Paperclip className="size-3.5" />
+									Attach to Browser AI
 								</DropdownMenuItem>
 								<DropdownMenuItem
 									disabled={!selectedCommanderPath}

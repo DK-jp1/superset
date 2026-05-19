@@ -1,5 +1,12 @@
 export type BrowserProvider = "chatgpt" | "claude" | "gemini";
 
+export interface BrowserAiAttachmentFilePayload {
+	name: string;
+	mimeType: string;
+	byteLength: number;
+	dataBase64: string;
+}
+
 const PROVIDER_HOSTS: Record<BrowserProvider, string[]> = {
 	chatgpt: ["chatgpt.com", "chat.openai.com"],
 	claude: ["claude.ai"],
@@ -425,6 +432,12 @@ function findSubmitTarget(selectors) {
     description: ''
   };
 }
+function hasProviderUsageLimit() {
+  var bodyText = String(document.body ? document.body.innerText || document.body.textContent || '' : '')
+    .replace(/\\s+/g, ' ')
+    .trim();
+  return /利用制限に達しました|メッセージの制限に達しました|limit reached|message limit|usage limit/i.test(bodyText);
+}
 function setComposerText(el, text) {
   el.focus();
   if (el.matches && el.matches('textarea,input')) {
@@ -474,6 +487,7 @@ export function buildComposerReadinessScript(
   var composerEditable = Boolean(composer && isEditable(composer));
   var composerReady = Boolean(composerFound && composerVisible && composerEditable);
   var submitTargetReady = Boolean(submitButton && submitTarget.status === 'ready');
+  var usageLimitVisible = hasProviderUsageLimit();
   var injectionBlockers = [];
   if (!composerReady) {
     injectionBlockers.push(
@@ -493,7 +507,7 @@ export function buildComposerReadinessScript(
     composerInjectionReady: composerReady,
     submitTargetReady: submitTargetReady,
     composerSelectorStatus: composerTarget.selector || composerTarget.status,
-    submitSelectorStatus: submitTarget.selector || submitTarget.status,
+    submitSelectorStatus: usageLimitVisible ? 'usage_limited' : submitTarget.selector || submitTarget.status,
     injectionTargetStatus: composerReady ? 'ready' : composerTarget.status,
     injectionBlockers: injectionBlockers,
     ready: composerReady,
@@ -503,7 +517,9 @@ export function buildComposerReadinessScript(
         ? 'composer injection target not visible'
         : !composerEditable
           ? 'composer injection target not editable'
-          : submitTargetReady
+          : usageLimitVisible
+            ? 'browser ai provider usage limit visible'
+            : submitTargetReady
             ? 'composer and submit target ready'
             : 'composer injection target ready; submit target will be verified after insertion'
   };
@@ -519,6 +535,7 @@ export function buildInjectionWithSubmitScript(
 	const submitSelectors = JSON.stringify(SUBMIT_SELECTORS[provider]);
 	return `(function() {
   ${COMPOSER_TARGET_HELPER}
+  if (hasProviderUsageLimit()) return "blocked_usage_limit";
   var composerTarget = findComposerTarget(${composerSelectors});
   var el = composerTarget.element;
   if (!el) return "not_found";
@@ -535,7 +552,7 @@ export function buildInjectionWithSubmitScript(
         return;
       }
       attempts += 1;
-      if (attempts < 10) {
+      if (attempts < 24) {
         setTimeout(trySubmit, 250);
         return;
       }
@@ -693,6 +710,162 @@ export function buildSubmissionReflectionStateScript(
     latestAssistantText: latestAssistantText,
     latestAssistantFingerprint: fingerprintText(latestAssistantText),
     isResponding: isResponseInProgress()
+  };
+})()`;
+}
+
+export function buildBrowserAiFileAttachmentScript(
+	files: BrowserAiAttachmentFilePayload[],
+	provider: BrowserProvider,
+): string {
+	const escapedFiles = JSON.stringify(files);
+	const escapedProvider = JSON.stringify(provider);
+	const originalFileCount = files.length;
+	return `(async function() {
+  var files = ${escapedFiles};
+  var provider = ${escapedProvider};
+  var originalFileCount = ${originalFileCount};
+  function isVisible(el) {
+    if (!el) return false;
+    var rect = el.getBoundingClientRect();
+    var style = window.getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 &&
+      style.visibility !== 'hidden' &&
+      style.display !== 'none' &&
+      !el.closest('[hidden], [aria-hidden="true"]');
+  }
+  function describeElement(el) {
+    if (!el) return '';
+    var bits = [String(el.tagName || '').toLowerCase()];
+    var id = el.getAttribute('id');
+    var testId = el.getAttribute('data-testid');
+    var aria = el.getAttribute('aria-label');
+    var accept = el.getAttribute('accept');
+    var multiple = el.hasAttribute('multiple') ? 'multiple' : '';
+    if (id) bits.push('#' + id);
+    if (testId) bits.push('[data-testid="' + testId + '"]');
+    if (aria) bits.push('[aria-label="' + aria + '"]');
+    if (accept) bits.push('[accept="' + accept + '"]');
+    if (multiple) bits.push('[multiple]');
+    return bits.join('');
+  }
+  function base64ToUint8Array(base64) {
+    var binary = atob(base64);
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+  function findFileInput() {
+    var inputs = Array.prototype.slice.call(document.querySelectorAll('input[type="file"]'));
+    var candidates = inputs.filter(function(input) {
+      return !input.disabled && input.getAttribute('aria-disabled') !== 'true' && !input.webkitdirectory;
+    });
+    candidates.sort(function(left, right) {
+      var leftVisible = isVisible(left) ? 1 : 0;
+      var rightVisible = isVisible(right) ? 1 : 0;
+      return rightVisible - leftVisible;
+    });
+    return {
+      inputs: inputs.map(describeElement),
+      element: candidates[0] || null,
+      description: candidates[0] ? describeElement(candidates[0]) : '',
+    };
+  }
+  function normalizeText(value) {
+    return String(value || '').replace(/\\s+/g, ' ').trim();
+  }
+  function collectVisibleFileNameMatches(names) {
+    var bodyText = normalizeText(document.body ? document.body.innerText || document.body.textContent || '' : '');
+    return names.filter(function(name) { return bodyText.indexOf(name) !== -1; });
+  }
+  var target = findFileInput();
+  if (!target.element) {
+    return {
+      status: 'file_input_not_found',
+      provider: provider,
+      inputSet: false,
+      fileInputFound: false,
+      fileInputDescription: '',
+      checkedInputs: target.inputs,
+      fileInputFileNames: [],
+      attachedFileNamesVisible: [],
+      attachmentUiReflected: false,
+      warnings: [],
+      blockers: ['browser ai file input not found']
+    };
+  }
+  if (!target.element.multiple && files.length > 1) {
+    files = files.slice(0, 1);
+  }
+  var dataTransfer = new DataTransfer();
+  files.forEach(function(file) {
+    var bytes = base64ToUint8Array(file.dataBase64);
+    dataTransfer.items.add(new File([bytes], file.name, {
+      type: file.mimeType || 'application/octet-stream',
+      lastModified: Date.now()
+    }));
+  });
+  target.element.files = dataTransfer.files;
+  target.element.dispatchEvent(new Event('input', { bubbles: true }));
+  target.element.dispatchEvent(new Event('change', { bubbles: true }));
+  var names = files.map(function(file) { return file.name; });
+  var inputNames = Array.prototype.slice.call(target.element.files || []).map(function(file) { return file.name; });
+  return await new Promise(function(resolve) {
+    var attempts = 0;
+    function poll() {
+      var visible = collectVisibleFileNameMatches(names);
+      if (visible.length >= names.length || attempts >= 20) {
+        resolve({
+          status: visible.length >= names.length ? 'ui_reflected' : 'file_input_set',
+          provider: provider,
+          inputSet: inputNames.length > 0,
+          fileInputFound: true,
+          fileInputDescription: target.description,
+          checkedInputs: target.inputs,
+          fileInputFileNames: inputNames,
+          attachedFileNamesVisible: visible,
+          attachmentUiReflected: visible.length >= names.length,
+          warnings: target.element.multiple ? [] : (files.length < originalFileCount ? ['file input accepted one file only'] : []),
+          blockers: visible.length >= names.length ? [] : ['attached filename was not visible in Browser AI UI']
+        });
+        return;
+      }
+      attempts += 1;
+      setTimeout(poll, 250);
+    }
+    setTimeout(poll, 250);
+  });
+})()`;
+}
+
+export function buildBrowserAiAttachmentStateScript(
+	fileNames: string[],
+	provider: BrowserProvider,
+): string {
+	const escapedNames = JSON.stringify(fileNames);
+	const escapedProvider = JSON.stringify(provider);
+	return `(function() {
+  var names = ${escapedNames};
+  var provider = ${escapedProvider};
+  function normalizeText(value) {
+    return String(value || '').replace(/\\s+/g, ' ').trim();
+  }
+  var bodyText = normalizeText(document.body ? document.body.innerText || document.body.textContent || '' : '');
+  var inputs = Array.prototype.slice.call(document.querySelectorAll('input[type="file"]'));
+  var inputFileNames = [];
+  inputs.forEach(function(input) {
+    Array.prototype.slice.call(input.files || []).forEach(function(file) {
+      inputFileNames.push(file.name);
+    });
+  });
+  var visible = names.filter(function(name) { return bodyText.indexOf(name) !== -1; });
+  return {
+    provider: provider,
+    attachmentUiReflected: visible.length >= names.length && names.length > 0,
+    attachedFileNamesVisible: visible,
+    fileInputFileNames: inputFileNames,
+    fileInputFileCount: inputFileNames.length,
+    checkedFileNameCount: names.length
   };
 })()`;
 }

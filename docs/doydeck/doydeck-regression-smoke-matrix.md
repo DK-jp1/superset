@@ -100,7 +100,9 @@ long Auto Loop run.
 | Select folder and open in Finder | Finder opens folder. |
 | Missing path | Safe error; no destructive action. |
 | No selection | Button/menu disabled. |
-| Browser AI file review | Not implemented yet; should be explicit backlog, not ad hoc copy/paste. |
+| Browser AI file attachment | `Attach to Browser AI` / `attachTargetFilesToBrowserAI()` attaches supported file and verifies filename/chip UI reflection. |
+| Browser AI file review prompt | Optional review prompt reaches `UI_REFLECTED`, `WAITING_REPLY`, or `REPLIED`; text fallback alone is not success. |
+| Folder / missing path / unsupported type attachment | BLOCKED or skipped with clear reason; no Worker send or Auto Loop start. |
 
 ## 9. Docs / Prompt Contract
 

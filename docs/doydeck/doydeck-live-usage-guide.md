@@ -45,6 +45,7 @@ Doy確認ゲート付きで扱う。
 - Browser AI-onlyレビュー
   - Worker不要のHandoffレビュー。
   - docs本文をadditional contextとして渡すレビュー。
+  - Explorerで選択した対応ファイルをBrowser AIへ実添付してレビューする。
   - STOP / 次アクション / Doy確認事項の分類。
   - タブ内の振る舞いは[`browser-ai-behavior-policy.md`](./browser-ai-behavior-policy.md)に従う。
 - Workerへのdocs-only指示
@@ -238,6 +239,40 @@ promptは短く、現在taskを中心にする。
 - Browser AIへ初期contextを渡す時は、このタブの目的、現在地、参照docs、
   やること / やらないこと、Doy確認事項、次に壁打ちすべき論点、
   Browser AIの振る舞いを短く含める。
+- Explorerの添付対象ファイルがある場合は、promptへ全文貼り付ける前に
+  `attachTargetFilesToBrowserAI()`またはExplorerの`Attach to Browser AI`を使う。
+  実添付では、`attachmentUiReflected:true`またはfilename/chip表示を確認してから
+  review promptやWorker指示生成へ進む。
+- 実添付がprovider制約で不可能な場合だけ、fallback text excerptを別途検討する。
+  テキスト貼り付けだけを「実添付完了」と扱わない。
+
+## 7.1 Explorer file attachment to Browser AI
+
+DoyがUI上で仕様書、スクショ、docs、handoffを見つけた場合、まずExplorerから
+Browser AIへ実ファイル添付する。
+
+標準フロー:
+
+1. Explorerで単一ファイルを選択する。
+2. `Attach to Browser AI`を実行する。
+3. Controller側では`attachTargetFilesToBrowserAI({ targetPaths, expectedTabId, requireActiveTabMatch:true })`を使う。
+4. Browser AIのfilename/chip表示を確認する。
+5. 必要なら短いreview promptを送る。
+6. Browser AIが添付資料を前提にWorker指示案またはレビューを返す。
+7. bounded loop / Auto Loopでは、添付資料を前提にしたWorker指示とWorker結果レビューを継続する。
+
+対象:
+
+- `.md`, `.txt`, `.json`, `.ts`, `.tsx`, `.js`, `.jsx`, `.png`, `.jpg`, `.jpeg`。
+- フォルダ、未対応拡張子、大きすぎるファイルはBLOCKEDまたはwarning。
+- PDF、複数ファイルUX、画像レビューの細部、添付済みファイル一覧取得はfuture。
+
+Loop方針:
+
+- 添付資料を前提にBrowser AIがWorker指示を作る。
+- vスコープ内の追加Worker指示はDoy確認なしで継続してよい。
+- scope拡大、DB/API/認証/credentials/deploy/destructive操作、
+  大きな仕様/UX判断はDoy確認で止める。
 
 ## 8. Worker launch policy
 

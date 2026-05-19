@@ -4,6 +4,9 @@ import type { CommanderSelectedPath } from "renderer/routes/_authenticated/_dash
 interface DoyDeckCommanderActionBridge {
 	addSelectedPathToSession: (pathInfo: CommanderSelectedPath) => void;
 	sendPathToBrowserAI: (pathInfo: CommanderSelectedPath) => Promise<void>;
+	attachSelectedPathToBrowserAI: (
+		pathInfo: CommanderSelectedPath,
+	) => Promise<void>;
 	sendPathToTerminalPreview: (pathInfo: CommanderSelectedPath) => void;
 }
 
@@ -38,6 +41,16 @@ export async function sendSelectedPathToBrowserAI(
 	const bridge = getBridge(workspaceId);
 	if (!bridge) return false;
 	await bridge.sendPathToBrowserAI(pathInfo);
+	return true;
+}
+
+export async function attachSelectedPathToBrowserAI(
+	workspaceId: string | undefined,
+	pathInfo: CommanderSelectedPath,
+): Promise<boolean> {
+	const bridge = getBridge(workspaceId);
+	if (!bridge) return false;
+	await bridge.attachSelectedPathToBrowserAI(pathInfo);
 	return true;
 }
 

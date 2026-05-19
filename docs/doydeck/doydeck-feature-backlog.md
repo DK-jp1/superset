@@ -37,7 +37,16 @@ Priority guide:
 | Context Pack generation | Create scoped context bundles for Browser AI / Worker. | Reduces prompt length and stale history while preserving relevant facts. | Missing. | P2 | Later | Prompt-size warning and target-doc review command. | prompt slimming. | Generate pack with currentTask, target files, DR-ID refs, recent outcomes, and exclusions. | Browser AI review receives pack and does not need full Handoff history. |
 | "雑に話すだけで準備" flow | Rough Doy input becomes proposed tabs, Browser AI ready, and Worker readiness after approval. | Reduces short-time copy/paste. | Docs-only task intake flow exists. | P2 | Later after command helpers | Task intake commands and guarded writes. | task intake workflow. | Add `analyzeTaskIntake` and `proposeTaskTabs` before any auto-create. | Sample multi-task input returns create / not-create / later candidates. |
 | Browser AI initial context prime | Prime Browser AI at tab start with behavior policy and current task. | Browser AI should act as wall-discussion partner immediately. | Template exists in docs; no command. | P2 | Later | Browser AI short prompt command. | Browser AI behavior policy. | `primeBrowserAiForTab({ tabId, context })` with guarded send and verification. | New tab receives concise context and replies with useful next questions. |
-| File to Browser AI review path | Send selected Explorer file/path content to Browser AI for review. | Finder open helps humans; AI review still needs a native path. | Missing. | P2 | Later | File selection, max-size rules, provider submission verification. | Explorer / file handling. | Add read-only file summary + explicit send command; no arbitrary shell. | Select a small docs file and get Browser AI review. |
+| File to Browser AI review path | Attach selected Explorer files to Browser AI for review. | Finder open helps humans; AI review needs real attachments, not only copied paths or pasted text. | Implemented for supported single-file Explorer action and Controller command. | done | Done | File selection, max-size/type rules, provider submission verification. | Explorer / file handling. | `attachTargetFilesToBrowserAI()` prepares supported files and uses Browser AI native file input; Explorer exposes `Attach to Browser AI`. | Select a small docs file, verify filename/chip UI reflection, send review prompt, and read Browser AI reply. |
+
+## File Attachment Follow-ups
+
+- Multiple-file UX polish.
+- PDF attachment validation; no OCR or PDF text extraction yet.
+- Image attachment review flow for screenshots and visual specs.
+- Fallback text excerpt mode only when provider real attachment is impossible.
+- Auto Loop / bounded loop reuse of already attached files across Worker review turns.
+- Read-only attached-file inventory such as `getBrowserAiAttachedFiles(input?)`.
 
 ## Top 5 Recommended Next Implementations
 

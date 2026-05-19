@@ -38,6 +38,7 @@ const TEXT_MAX_PREVIEW_BYTES = 1024 * 1024;
 const MEDIA_MAX_PREVIEW_BYTES = 10 * 1024 * 1024;
 const OFFICE_MAX_PREVIEW_BYTES = 10 * 1024 * 1024;
 export const DOYDECK_NATIVE_FILE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+const DOYDECK_BROWSER_AI_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 const OFFICE_MAX_OUTPUT_CHARS = 80 * 1024;
 const OFFICE_MAX_ZIP_ENTRIES = 1000;
 const PPTX_MAX_SLIDES = 80;
@@ -82,6 +83,22 @@ const UNSUPPORTED_OFFICE_EXTENSIONS = new Set([
 	"pptm",
 	"xlsm",
 ]);
+
+const BROWSER_AI_ATTACHMENT_MIME_TYPES: Record<string, string> = {
+	md: "text/markdown",
+	txt: "text/plain",
+	json: "application/json",
+	ts: "text/typescript",
+	tsx: "text/tsx",
+	js: "text/javascript",
+	jsx: "text/jsx",
+	png: "image/png",
+	jpg: "image/jpeg",
+	jpeg: "image/jpeg",
+};
+const BROWSER_AI_ATTACHMENT_EXTENSIONS = new Set(
+	Object.keys(BROWSER_AI_ATTACHMENT_MIME_TYPES),
+);
 
 function getExtension(filePath: string): string {
 	return path.extname(filePath).slice(1).toLowerCase();
@@ -513,6 +530,55 @@ export function validateDoyDeckExplorerNativeFileDragSync(input: {
 	return { targetPath, byteLength: stats.size };
 }
 
+async function prepareBrowserAiAttachmentFile(input: {
+	workspaceId?: string;
+	filePath: string;
+}) {
+	const targetPath = resolveExplorerNavigationPath(input.filePath, input.workspaceId);
+	if (EXCLUDED_ENTRY_NAMES.has(path.basename(targetPath))) {
+		throw new Error("This path is not available in DoyDeck Explorer");
+	}
+
+	const stats = await fs.lstat(targetPath);
+	if (!stats.isFile()) {
+		throw new Error("Browser AI attachment supports files only");
+	}
+	if (stats.size > DOYDECK_BROWSER_AI_ATTACHMENT_MAX_BYTES) {
+		throw new Error(
+			`File is too large for Browser AI attachment (${stats.size} bytes, max ${DOYDECK_BROWSER_AI_ATTACHMENT_MAX_BYTES})`,
+		);
+	}
+
+	const extension = getExtension(targetPath);
+	if (!BROWSER_AI_ATTACHMENT_EXTENSIONS.has(extension)) {
+		throw new Error(
+			`Unsupported Browser AI attachment type: ${extension || "none"}`,
+		);
+	}
+
+	const root = findContainingRoot(targetPath, input.workspaceId);
+	if (!root?.absolutePath) {
+		throw new Error("Path is outside the available DoyDeck Explorer roots");
+	}
+	const realPath = normalizeAbsolutePath(await fs.realpath(targetPath));
+	if (!isPathWithinRoot(root.absolutePath, realPath)) {
+		throw new Error("Symlink target is outside the selected Explorer root");
+	}
+
+	const buffer = await fs.readFile(realPath);
+	return {
+		absolutePath: targetPath,
+		realPath,
+		name: path.basename(targetPath),
+		extension,
+		mimeType:
+			BROWSER_AI_ATTACHMENT_MIME_TYPES[extension] ||
+			"application/octet-stream",
+		byteLength: stats.size,
+		dataBase64: buffer.toString("base64"),
+	};
+}
+
 export const createDoyDeckExplorerRouter = () => {
 	return router({
 		getRoots: publicProcedure
@@ -732,6 +798,38 @@ export const createDoyDeckExplorerRouter = () => {
 					mimeType: "text/plain",
 					byteLength: buffer.byteLength,
 					maxBytes,
+				};
+			}),
+
+		prepareBrowserAiAttachments: publicProcedure
+			.input(
+				z.object({
+					workspaceId: z.string().optional(),
+					paths: z.array(z.string()).min(1).max(5),
+				}),
+			)
+			.query(async ({ input }) => {
+				const prepared = [];
+				const skipped = [];
+				for (const filePath of input.paths) {
+					try {
+						prepared.push(
+							await prepareBrowserAiAttachmentFile({
+								workspaceId: input.workspaceId,
+								filePath,
+							}),
+						);
+					} catch (error) {
+						skipped.push({
+							path: filePath,
+							reason: getErrorMessage(error),
+						});
+					}
+				}
+				return {
+					maxBytes: DOYDECK_BROWSER_AI_ATTACHMENT_MAX_BYTES,
+					prepared,
+					skipped,
 				};
 			}),
 	});

@@ -2,6 +2,7 @@ import { Button } from "@superset/ui/button";
 import { toast } from "@superset/ui/sonner";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LuLoader, LuX } from "react-icons/lu";
+import { electronTrpc } from "renderer/lib/electron-trpc";
 import { registerDoyDeckCommanderActionBridge } from "renderer/stores/doydeck-commander-actions";
 import {
 	evaluateDoyDeckWorkerIdentity,
@@ -37,6 +38,8 @@ import {
 import { useCommanderWebview } from "./useCommanderWebview";
 import {
 	buildComposerReadinessScript,
+	buildBrowserAiAttachmentStateScript,
+	buildBrowserAiFileAttachmentScript,
 	buildInjectionWithSubmitScript,
 	buildLatestReplyStateScript,
 	buildSubmissionReflectionStateScript,
@@ -984,6 +987,95 @@ interface CommanderControllerSendBrowserAiPromptResult
 	expectedBrowserAiSlotKey: string | null;
 }
 
+type CommanderControllerAttachFilesStatus =
+	| "ATTACHED"
+	| "ATTACHED_WITH_NOTES"
+	| "NOT_ATTACHED"
+	| CommanderControllerBrowserAiSubmissionVerificationStatus
+	| "DRY_RUN"
+	| "BLOCKED"
+	| "FAILED";
+
+type CommanderControllerAttachmentStatus =
+	| "UI_REFLECTED"
+	| "FILE_INPUT_SET"
+	| "NOT_ATTACHED"
+	| "FAILED";
+
+interface CommanderControllerAttachFilesInput {
+	provider?: unknown;
+	expectedTabId?: unknown;
+	expectedTitle?: unknown;
+	requireActiveTabMatch?: unknown;
+	targetPaths?: unknown;
+	reviewPrompt?: unknown;
+	sendPromptAfterAttach?: unknown;
+	loopContext?: unknown;
+	dryRun?: unknown;
+}
+
+interface CommanderControllerAttachedFileSummary {
+	absolutePath: string;
+	name: string;
+	mimeType: string;
+	byteLength: number;
+}
+
+interface CommanderControllerSkippedFileSummary {
+	path: string;
+	reason: string;
+}
+
+interface CommanderControllerAttachFilesResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerAttachFilesStatus;
+	activeTabId: string | null;
+	activeTabTitle: string | null;
+	expectedTabId: string | null;
+	expectedTitle: string | null;
+	requireActiveTabMatch: boolean;
+	provider: string | null;
+	browserAiProvider: string;
+	browserAiReady: boolean;
+	browserAiSlotOk: boolean;
+	targetPathCount: number;
+	attachedFileCount: number;
+	skippedFileCount: number;
+	attachedFiles: CommanderControllerAttachedFileSummary[];
+	skippedFiles: CommanderControllerSkippedFileSummary[];
+	attachmentStatus: CommanderControllerAttachmentStatus;
+	attachmentUiReflected: boolean;
+	attachedFileNamesVisible: string[];
+	fileInputFileNames: string[];
+	fileInputFound: boolean;
+	fileInputDescription: string | null;
+	submissionStatus: CommanderControllerBrowserAiSubmissionVerificationStatus | null;
+	uiReflected: boolean | null;
+	assistantReplyObserved: boolean | null;
+	visualVerificationUsed: boolean;
+	loopReady: boolean;
+	reviewPromptLength: number;
+	promptLength: number;
+	payloadLength: number;
+	injectionResult: string | null;
+	sentAt: string | null;
+	blockers: string[];
+	warnings: string[];
+	nextRequiredAction: string;
+	message: string;
+	browserAiComposer: CommanderControllerBrowserAiReadiness;
+	composerReady: boolean;
+	composerInjectionReady: boolean;
+	submitTargetReady: boolean;
+	composerSelectorStatus: string;
+	submitSelectorStatus: string;
+	injectionTargetStatus: string;
+	injectionBlockers: string[];
+	browserAiUrl: string;
+	browserAiSlotKey: string | null;
+	expectedBrowserAiSlotKey: string | null;
+}
+
 type CommanderControllerLatestReplyStatus =
 	| "READY"
 	| "WAITING"
@@ -1224,7 +1316,8 @@ interface CommanderControllerSendWorkerResponseResult
 type CommanderControllerBrowserAiSubmissionType =
 	| "handoff"
 	| "worker-response"
-	| "short-prompt";
+	| "short-prompt"
+	| "file-review";
 type CommanderControllerBrowserAiSubmissionRecordStatus =
 	| "SUBMITTED"
 	| "UI_REFLECTED"
@@ -1506,6 +1599,48 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 				"Uses the same UI reflection verification as Handoff sends.",
 				"Pass expectedTabId / expectedTitle / requireActiveTabMatch:true for tab-scoped prompts.",
 			],
+		},
+		{
+			name: "attachTargetFilesToBrowserAI",
+			category: "Browser AI",
+			access: "write",
+			implemented: true,
+			description:
+				"Attach Explorer target files to the Browser AI provider using the provider's native file attachment UI.",
+			typicalUse:
+				"Give Claude or ChatGPT real files before Browser AI review, Worker instruction generation, or bounded loop review.",
+			requiresDoyConfirmation: false,
+			riskLevel: "medium",
+			notes: [
+				"Supports guarded tab writes with expectedTabId / expectedTitle / requireActiveTabMatch:true.",
+				"Verifies filename/chip UI reflection before treating attachment as ready.",
+				"Does not start Auto Loop, send Worker instructions, or treat text-paste fallback as completion.",
+			],
+		},
+		{
+			name: "sendTargetFilesReviewToBrowserAI",
+			category: "Browser AI",
+			access: "write",
+			implemented: true,
+			description: "Alias for attachTargetFilesToBrowserAI.",
+			typicalUse:
+				"Attach selected files and optionally send a short Browser AI review prompt.",
+			requiresDoyConfirmation: false,
+			riskLevel: "medium",
+			notes: ["Same safety scope as attachTargetFilesToBrowserAI."],
+		},
+		{
+			name: "attachSelectedExplorerFileToBrowserAI",
+			category: "Browser AI",
+			access: "write",
+			implemented: true,
+			description:
+				"Alias for attaching the current Explorer-selected file to Browser AI.",
+			typicalUse:
+				"Doy UI action from Explorer: attach the selected file for Browser AI wall discussion.",
+			requiresDoyConfirmation: false,
+			riskLevel: "medium",
+			notes: ["Single-file UI path; folders are blocked."],
 		},
 		{
 			name: "readBrowserAiLatestReply",
@@ -2014,6 +2149,15 @@ interface CommanderControllerCommands {
 	sendBrowserAiPrompt: (
 		input?: CommanderControllerSendBrowserAiPromptInput,
 	) => Promise<CommanderControllerSendBrowserAiPromptResult>;
+	attachTargetFilesToBrowserAI: (
+		input?: CommanderControllerAttachFilesInput,
+	) => Promise<CommanderControllerAttachFilesResult>;
+	sendTargetFilesReviewToBrowserAI: (
+		input?: CommanderControllerAttachFilesInput,
+	) => Promise<CommanderControllerAttachFilesResult>;
+	attachSelectedExplorerFileToBrowserAI: (
+		input?: CommanderControllerAttachFilesInput,
+	) => Promise<CommanderControllerAttachFilesResult>;
 	readBrowserAiLatestReply: () => Promise<CommanderControllerLatestReplyResult>;
 	getBrowserAiLatestReply: () => Promise<CommanderControllerLatestReplyResult>;
 	sendInstructionToBoundWorker: (
@@ -2053,6 +2197,7 @@ export function CommanderTab({
 	workspaceId: string;
 	fetchGitSummary?: () => Promise<HandoffGitSummary>;
 }) {
+	const trpcUtils = electronTrpc.useUtils();
 	const [view, setView] = useState<CommanderView>("browser");
 	const [state, setState] = useState<CommanderState>({
 		goal: "",
@@ -5180,6 +5325,463 @@ export function CommanderTab({
 			workspaceId,
 		]);
 
+	const attachTargetFilesToBrowserAiController =
+		useCallback(async (
+			input?: CommanderControllerAttachFilesInput,
+		): Promise<CommanderControllerAttachFilesResult> => {
+			const blockers: string[] = [];
+			const warnings: string[] = [];
+			const normalizedInput = normalizeAttachFilesToBrowserAiInput(input);
+			const writeGuard = getExpectedTabWriteGuard(
+				{
+					expectedTabId: normalizedInput.expectedTabId,
+					expectedTitle: normalizedInput.expectedTitle,
+					requireActiveTabMatch: normalizedInput.requireActiveTabMatch,
+				},
+				"attachTargetFilesToBrowserAI",
+			);
+			blockers.push(...writeGuard.blockers);
+			warnings.push(...writeGuard.warnings);
+			const activeTabIdSnapshot = writeGuard.activeTabId ?? activeTabId;
+			const runtime = webview.getRuntimeSnapshot();
+			const liveUrl = webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
+			const provider = detectProvider(liveUrl);
+			const activeProviderLabel = runtime.providerLabel || getProviderLabel(provider);
+			const requestedProvider = normalizedInput.provider || null;
+			const expectedBrowserAiSlotKey = buildCommanderBrowserSlotKey({
+				workspaceId,
+				activeTabId: activeTabIdSnapshot,
+			});
+			const browserAiSlotOk =
+				Boolean(activeTabIdSnapshot) &&
+				runtime.browserSlotKey === expectedBrowserAiSlotKey &&
+				runtime.activeTabId === activeTabIdSnapshot;
+			const composerReadiness = await readBrowserAiComposerReadiness({
+				provider,
+				injectIntoPage: webview.injectIntoPage,
+			});
+			const composerDiagnostics =
+				getBrowserAiComposerDiagnosticFields(composerReadiness);
+			const browserAiReady =
+				Boolean(provider) &&
+				runtime.status === "available" &&
+				runtime.bridgeAvailable &&
+				composerReadiness.composerInjectionReady;
+
+			if (!activeTabIdSnapshot) blockers.push("active tab not found");
+			if (normalizedInput.targetPaths.length === 0) {
+				blockers.push("targetPaths is required");
+			}
+			if (!provider) blockers.push("browser ai provider not ready");
+			if (
+				requestedProvider &&
+				activeProviderLabel.toLowerCase() !== requestedProvider.toLowerCase()
+			) {
+				blockers.push(
+					`browser ai provider mismatch: requested=${requestedProvider}, active=${activeProviderLabel}`,
+				);
+			}
+			if (runtime.status !== "available") {
+				blockers.push("browser ai runtime unavailable");
+			}
+			if (!runtime.bridgeAvailable) {
+				blockers.push("browser ai bridge unavailable");
+			}
+			if (!browserAiSlotOk) blockers.push("browser ai slot mismatch");
+			const composerBlocker = getBrowserAiComposerBlocker(composerReadiness);
+			if (provider && composerBlocker) {
+				blockers.push(composerBlocker);
+			}
+			const submitWarning = getBrowserAiSubmitWarning(composerReadiness);
+			if (submitWarning) warnings.push(submitWarning);
+			if (runtime.visualStatus === "NEEDS_FIX") {
+				warnings.push(`browser ai visual status needs fix: ${runtime.visualReason}`);
+			}
+
+			const emptyResult = {
+				...getCommanderControllerContext(),
+				activeTabId: activeTabIdSnapshot,
+				activeTabTitle: writeGuard.activeTabTitle,
+				expectedTabId: writeGuard.expectedTabId,
+				expectedTitle: writeGuard.expectedTitle,
+				requireActiveTabMatch: writeGuard.requireActiveTabMatch,
+				provider: requestedProvider,
+				browserAiProvider: activeProviderLabel,
+				browserAiReady,
+				browserAiSlotOk,
+				targetPathCount: normalizedInput.targetPaths.length,
+				attachedFileCount: 0,
+				skippedFileCount: 0,
+				attachedFiles: [] as CommanderControllerAttachedFileSummary[],
+				skippedFiles: [] as CommanderControllerSkippedFileSummary[],
+				attachmentStatus: "NOT_ATTACHED" as CommanderControllerAttachmentStatus,
+				attachmentUiReflected: false,
+				attachedFileNamesVisible: [] as string[],
+				fileInputFileNames: [] as string[],
+				fileInputFound: false,
+				fileInputDescription: null,
+				submissionStatus: null,
+				uiReflected: null,
+				assistantReplyObserved: null,
+				visualVerificationUsed: false,
+				loopReady: false,
+				reviewPromptLength: 0,
+				promptLength: 0,
+				payloadLength: 0,
+				injectionResult: null,
+				sentAt: null,
+				blockers,
+				warnings,
+				nextRequiredAction: "Attach selected Explorer files to Browser AI.",
+				browserAiComposer: composerReadiness,
+				...composerDiagnostics,
+				browserAiUrl: liveUrl,
+				browserAiSlotKey: runtime.browserSlotKey,
+				expectedBrowserAiSlotKey,
+			};
+
+			if (blockers.length > 0 || !provider) {
+				const message = getAttachBrowserAiFilesBlockedMessage(blockers);
+				return {
+					ok: false,
+					...emptyResult,
+					status: "BLOCKED",
+					message,
+				};
+			}
+
+			let preparedResult: Awaited<
+				ReturnType<
+					typeof trpcUtils.doydeckExplorer.prepareBrowserAiAttachments.fetch
+				>
+			>;
+			try {
+				preparedResult =
+					await trpcUtils.doydeckExplorer.prepareBrowserAiAttachments.fetch({
+						workspaceId,
+						paths: normalizedInput.targetPaths,
+					});
+			} catch (error) {
+				const message =
+					error instanceof Error
+						? `Browser AI attachment preparation failed: ${error.message}`
+						: "Browser AI attachment preparation failed";
+				return {
+					ok: false,
+					...emptyResult,
+					status: "FAILED",
+					message,
+					blockers: [...blockers, message],
+				};
+			}
+
+			const attachedFiles = preparedResult.prepared.map((file) => ({
+				absolutePath: file.absolutePath,
+				name: file.name,
+				mimeType: file.mimeType,
+				byteLength: file.byteLength,
+			}));
+			const skippedFiles = preparedResult.skipped.map((file) => ({
+				path: file.path,
+				reason: file.reason,
+			}));
+			if (preparedResult.skipped.length > 0) {
+				warnings.push(
+					...preparedResult.skipped.map(
+						(file) => `skipped ${file.path}: ${file.reason}`,
+					),
+				);
+			}
+			if (preparedResult.prepared.length === 0) {
+				const message = "No supported Browser AI attachment files were prepared.";
+				return {
+					ok: false,
+					...emptyResult,
+					status: "BLOCKED",
+					attachedFiles,
+					skippedFiles,
+					skippedFileCount: skippedFiles.length,
+					warnings,
+					blockers: [...blockers, message],
+					message,
+				};
+			}
+
+			const reviewPrompt =
+				normalizedInput.reviewPrompt ||
+				buildBrowserAiAttachmentReviewPrompt({
+					files: attachedFiles,
+					loopContext: normalizedInput.loopContext,
+				});
+			const shouldSendPrompt =
+				normalizedInput.sendPromptAfterAttach && reviewPrompt.trim().length > 0;
+			const preparedPayloadLength = preparedResult.prepared.reduce(
+				(sum, file) => sum + file.byteLength,
+				0,
+			);
+			const baseResult = {
+				...emptyResult,
+				attachedFileCount: attachedFiles.length,
+				skippedFileCount: skippedFiles.length,
+				attachedFiles,
+				skippedFiles,
+				warnings,
+				reviewPromptLength: reviewPrompt.length,
+				promptLength: reviewPrompt.length,
+				payloadLength: preparedPayloadLength,
+			};
+
+			if (normalizedInput.dryRun) {
+				return {
+					ok: true,
+					...baseResult,
+					status: "DRY_RUN",
+					message: "Browser AI attachment dry run ready.",
+					nextRequiredAction:
+						"Rerun with dryRun:false to attach files to Browser AI.",
+				};
+			}
+
+			let attachmentResult: BrowserAiAttachmentResult;
+			try {
+				attachmentResult = normalizeBrowserAiAttachmentResult(
+					await webview.injectIntoPage(
+						buildBrowserAiFileAttachmentScript(
+							preparedResult.prepared.map((file) => ({
+								name: file.name,
+								mimeType: file.mimeType,
+								byteLength: file.byteLength,
+								dataBase64: file.dataBase64,
+							})),
+							provider,
+						),
+					),
+				);
+			} catch (error) {
+				const message =
+					error instanceof Error
+						? `Browser AI attachment failed: ${error.message}`
+						: "Browser AI attachment failed";
+				return {
+					ok: false,
+					...baseResult,
+					status: "FAILED",
+					attachmentStatus: "FAILED",
+					message,
+					blockers: [...blockers, message],
+				};
+			}
+
+			const attachmentWarnings = [...warnings, ...attachmentResult.warnings];
+			const attachmentBlockers = [...blockers, ...attachmentResult.blockers];
+			const attachmentUiReflected = attachmentResult.attachmentUiReflected;
+			const attachmentStatus: CommanderControllerAttachmentStatus =
+				attachmentUiReflected
+					? "UI_REFLECTED"
+					: attachmentResult.inputSet
+						? "FILE_INPUT_SET"
+						: "NOT_ATTACHED";
+			if (!attachmentUiReflected) {
+				const message =
+					attachmentStatus === "FILE_INPUT_SET"
+						? "Browser AI file input was set, but filename chip was not visible."
+						: "Browser AI file attachment was not reflected in the UI.";
+				return {
+					ok: false,
+					...baseResult,
+					status: "NOT_ATTACHED",
+					attachmentStatus,
+					attachmentUiReflected,
+					attachedFileNamesVisible: attachmentResult.attachedFileNamesVisible,
+					fileInputFileNames: attachmentResult.fileInputFileNames,
+					fileInputFound: attachmentResult.fileInputFound,
+					fileInputDescription: attachmentResult.fileInputDescription,
+					blockers: [...attachmentBlockers, message],
+					warnings: attachmentWarnings,
+					message,
+					nextRequiredAction:
+						"Verify the Browser AI attachment UI before sending a review prompt.",
+				};
+			}
+
+			if (!shouldSendPrompt) {
+				return {
+					ok: true,
+					...baseResult,
+					status:
+						skippedFiles.length > 0 ? "ATTACHED_WITH_NOTES" : "ATTACHED",
+					attachmentStatus,
+					attachmentUiReflected,
+					attachedFileNamesVisible: attachmentResult.attachedFileNamesVisible,
+					fileInputFileNames: attachmentResult.fileInputFileNames,
+					fileInputFound: attachmentResult.fileInputFound,
+					fileInputDescription: attachmentResult.fileInputDescription,
+					loopReady: true,
+					blockers: attachmentBlockers,
+					warnings: attachmentWarnings,
+					message: "Browser AI file attachment reflected in UI.",
+					nextRequiredAction:
+						"Send a review prompt or start Browser AI wall discussion with the attached file context.",
+				};
+			}
+
+			let latestReplyBeforeSubmit: BrowserAiLatestReplyState | null = null;
+			await delay(provider === "chatgpt" ? 2_500 : 1_000);
+			try {
+				latestReplyBeforeSubmit = normalizeBrowserAiLatestReplyState(
+					await webview.injectIntoPage(buildLatestReplyStateScript(provider)),
+				);
+			} catch {
+				attachmentWarnings.push(
+					"browser ai latest reply baseline unavailable before file review prompt submit",
+				);
+			}
+
+			try {
+				const result = await webview.injectIntoPage(
+					buildInjectionWithSubmitScript(reviewPrompt, provider),
+				);
+				const injectionResult = typeof result === "string" ? result : "unknown";
+				if (injectionResult === "submitted") {
+					const sentAt = new Date().toISOString();
+					const verification = await verifyBrowserAiSubmissionReflection({
+						provider,
+						prompt: reviewPrompt,
+						injectIntoPage: webview.injectIntoPage,
+						latestReplyBeforeSubmit,
+						type: "file-review",
+					});
+					const submissionWarnings = [
+						...attachmentWarnings,
+						...verification.warnings,
+					];
+					const attachmentState = normalizeBrowserAiAttachmentState(
+						await webview.injectIntoPage(
+							buildBrowserAiAttachmentStateScript(
+								attachedFiles.map((file) => file.name),
+								provider,
+							),
+						),
+					);
+					const finalAttachmentUiReflected =
+						attachmentState.attachmentUiReflected || attachmentUiReflected;
+					const message =
+						verification.status === "NOT_REFLECTED"
+							? `${getProviderLabel(provider)}への添付file review prompt送信は試行されましたがUI反映を確認できません`
+							: `${getProviderLabel(provider)}への添付file review prompt送信状態: ${verification.status}`;
+					recordBrowserAiSubmissionControllerState({
+						activeTabId: activeTabIdSnapshot,
+						type: "file-review",
+						browserAiProvider: activeProviderLabel,
+						browserAiReady,
+						browserAiSlotOk,
+						...composerDiagnostics,
+						promptLength: reviewPrompt.length,
+						payloadLength: preparedPayloadLength,
+						sentAt,
+						injectionResult,
+						status: verification.status,
+						submissionStatus: verification.status,
+						uiReflected: verification.uiReflected,
+						assistantReplyObserved: verification.assistantReplyObserved,
+						visualVerificationUsed: true,
+						submissionVerificationReason: verification.reason,
+						nextRequiredAction: verification.nextRequiredAction,
+						message,
+						warnings: submissionWarnings,
+						blockers: attachmentBlockers,
+						assistantCountBeforeSubmit:
+							latestReplyBeforeSubmit?.assistantCount ?? null,
+						latestAssistantReplyFingerprintBeforeSubmit:
+							latestReplyBeforeSubmit?.latestFingerprint ?? null,
+					});
+					return {
+						ok:
+							finalAttachmentUiReflected &&
+							getBrowserAiSubmissionStatusOk(verification.status),
+						...baseResult,
+						status: verification.status,
+						attachmentStatus: finalAttachmentUiReflected
+							? "UI_REFLECTED"
+							: attachmentStatus,
+						attachmentUiReflected: finalAttachmentUiReflected,
+						attachedFileNamesVisible:
+							attachmentState.attachedFileNamesVisible.length > 0
+								? attachmentState.attachedFileNamesVisible
+								: attachmentResult.attachedFileNamesVisible,
+						fileInputFileNames:
+							attachmentState.fileInputFileNames.length > 0
+								? attachmentState.fileInputFileNames
+								: attachmentResult.fileInputFileNames,
+						fileInputFound: attachmentResult.fileInputFound,
+						fileInputDescription: attachmentResult.fileInputDescription,
+						submissionStatus: verification.status,
+						uiReflected: verification.uiReflected,
+						assistantReplyObserved: verification.assistantReplyObserved,
+						visualVerificationUsed: true,
+						loopReady:
+							finalAttachmentUiReflected &&
+							getBrowserAiSubmissionStatusOk(verification.status),
+						injectionResult,
+						sentAt,
+						blockers: attachmentBlockers,
+						warnings: submissionWarnings,
+						message,
+						nextRequiredAction: verification.nextRequiredAction,
+					};
+				}
+				const message =
+					injectionResult === "injected"
+						? "Browser AI file review prompt was injected but not submitted"
+						: `Browser AI file review prompt submit failed: ${injectionResult}`;
+				return {
+					ok: false,
+					...baseResult,
+					status: "FAILED",
+					attachmentStatus,
+					attachmentUiReflected,
+					attachedFileNamesVisible: attachmentResult.attachedFileNamesVisible,
+					fileInputFileNames: attachmentResult.fileInputFileNames,
+					fileInputFound: attachmentResult.fileInputFound,
+					fileInputDescription: attachmentResult.fileInputDescription,
+					injectionResult,
+					blockers: [...attachmentBlockers, message],
+					warnings: attachmentWarnings,
+					message,
+				};
+			} catch (error) {
+				const message =
+					error instanceof Error
+						? `Browser AI file review prompt failed: ${error.message}`
+						: "Browser AI file review prompt failed";
+				return {
+					ok: false,
+					...baseResult,
+					status: "FAILED",
+					attachmentStatus,
+					attachmentUiReflected,
+					attachedFileNamesVisible: attachmentResult.attachedFileNamesVisible,
+					fileInputFileNames: attachmentResult.fileInputFileNames,
+					fileInputFound: attachmentResult.fileInputFound,
+					fileInputDescription: attachmentResult.fileInputDescription,
+					blockers: [...attachmentBlockers, message],
+					warnings: attachmentWarnings,
+					message,
+				};
+			}
+		}, [
+			activeTabId,
+			getCommanderControllerContext,
+			getExpectedTabWriteGuard,
+			recordBrowserAiSubmissionControllerState,
+			trpcUtils,
+			webview.currentUrl,
+			webview.getLiveUrl,
+			webview.getRuntimeSnapshot,
+			webview.injectIntoPage,
+			workspaceId,
+		]);
+
 	const readBrowserAiLatestReplyController =
 		useCallback(async (): Promise<CommanderControllerLatestReplyResult> => {
 			const blockers: string[] = [];
@@ -7172,9 +7774,38 @@ export function CommanderTab({
 		return registerDoyDeckCommanderActionBridge(workspaceId, {
 			addSelectedPathToSession: transfer.handleAddSelectedPathToSession,
 			sendPathToBrowserAI: transfer.handleSendPathToBrowserAI,
+			attachSelectedPathToBrowserAI: async (pathInfo) => {
+				if (pathInfo.type !== "file") {
+					toast.error("Browser AI実添付は単一ファイルのみ対応です");
+					return;
+				}
+				const result = await attachTargetFilesToBrowserAiController({
+					targetPaths: [pathInfo.absolutePath],
+					expectedTabId: activeTabId ?? "",
+					requireActiveTabMatch: true,
+					sendPromptAfterAttach: true,
+					loopContext: {
+						mode: "manual",
+						purpose: `Explorer selected file review: ${pathInfo.displayName}`,
+						allowWorkerInstruction: true,
+						runToCompletion: true,
+					},
+				});
+				if (result.ok) {
+					toast.success("Attached file to Browser AI", {
+						description: result.message,
+					});
+				} else {
+					toast.error("Browser AI attachment failed", {
+						description: result.message,
+					});
+				}
+			},
 			sendPathToTerminalPreview: transfer.handleSendPathToTerminalPreview,
 		});
 	}, [
+		activeTabId,
+		attachTargetFilesToBrowserAiController,
 		workspaceId,
 		transfer.handleAddSelectedPathToSession,
 		transfer.handleSendPathToBrowserAI,
@@ -7219,6 +7850,10 @@ export function CommanderTab({
 			focusBoundWorkerPane: activateTerminalPaneForTabController,
 			sendHandoffToBrowserAI: sendHandoffToBrowserAiController,
 			sendBrowserAiPrompt: sendBrowserAiPromptController,
+			attachTargetFilesToBrowserAI: attachTargetFilesToBrowserAiController,
+			sendTargetFilesReviewToBrowserAI: attachTargetFilesToBrowserAiController,
+			attachSelectedExplorerFileToBrowserAI:
+				attachTargetFilesToBrowserAiController,
 			readBrowserAiLatestReply: readBrowserAiLatestReplyController,
 			getBrowserAiLatestReply: readBrowserAiLatestReplyController,
 			sendInstructionToBoundWorker: sendInstructionToBoundWorkerController,
@@ -7267,6 +7902,7 @@ export function CommanderTab({
 		activateTerminalPaneForTabController,
 		sendHandoffToBrowserAiController,
 		sendBrowserAiPromptController,
+		attachTargetFilesToBrowserAiController,
 		readBrowserAiLatestReplyController,
 		sendInstructionToBoundWorkerController,
 		readBoundWorkerLatestResponseController,
@@ -7970,6 +8606,227 @@ function normalizeSendBrowserAiPromptControllerInput(
 			record.requireActiveTabMatch,
 		),
 	};
+}
+
+interface BrowserAiAttachmentResult {
+	status: string;
+	inputSet: boolean;
+	fileInputFound: boolean;
+	fileInputDescription: string | null;
+	fileInputFileNames: string[];
+	attachedFileNamesVisible: string[];
+	attachmentUiReflected: boolean;
+	warnings: string[];
+	blockers: string[];
+}
+
+interface BrowserAiAttachmentState {
+	attachmentUiReflected: boolean;
+	attachedFileNamesVisible: string[];
+	fileInputFileNames: string[];
+	fileInputFileCount: number;
+	checkedFileNameCount: number;
+}
+
+interface BrowserAiAttachmentLoopContext {
+	mode: "manual" | "bounded-loop" | "auto-loop" | "";
+	purpose: string;
+	allowWorkerInstruction: boolean | null;
+	runToCompletion: boolean | null;
+}
+
+function normalizeAttachFilesToBrowserAiInput(
+	input: unknown,
+): {
+	provider: string;
+	expectedTabId: string;
+	expectedTitle: string;
+	requireActiveTabMatch: boolean | null;
+	targetPaths: string[];
+	reviewPrompt: string;
+	sendPromptAfterAttach: boolean;
+	loopContext: BrowserAiAttachmentLoopContext;
+	dryRun: boolean;
+} {
+	if (!input || typeof input !== "object") {
+		return {
+			provider: "",
+			expectedTabId: "",
+			expectedTitle: "",
+			requireActiveTabMatch: null,
+			targetPaths: [],
+			reviewPrompt: "",
+			sendPromptAfterAttach: false,
+			loopContext: normalizeBrowserAiAttachmentLoopContext(null),
+			dryRun: false,
+		};
+	}
+	const record = input as CommanderControllerAttachFilesInput & {
+		targetPath?: unknown;
+	};
+	const targetPaths = normalizeControllerStringArray(record.targetPaths);
+	const targetPath = normalizeControllerTextInput(record.targetPath);
+	if (targetPath) targetPaths.push(targetPath);
+	return {
+		provider: normalizeControllerTextInput(record.provider),
+		expectedTabId: normalizeControllerTextInput(record.expectedTabId),
+		expectedTitle: normalizeControllerTextInput(record.expectedTitle),
+		requireActiveTabMatch: normalizeControllerBooleanInput(
+			record.requireActiveTabMatch,
+		),
+		targetPaths: Array.from(new Set(targetPaths)),
+		reviewPrompt: normalizeControllerTextInput(record.reviewPrompt),
+		sendPromptAfterAttach:
+			normalizeControllerBooleanInput(record.sendPromptAfterAttach) === true,
+		loopContext: normalizeBrowserAiAttachmentLoopContext(record.loopContext),
+		dryRun: normalizeControllerBooleanInput(record.dryRun) === true,
+	};
+}
+
+function normalizeBrowserAiAttachmentLoopContext(
+	value: unknown,
+): BrowserAiAttachmentLoopContext {
+	if (!value || typeof value !== "object") {
+		return {
+			mode: "",
+			purpose: "",
+			allowWorkerInstruction: null,
+			runToCompletion: null,
+		};
+	}
+	const record = value as {
+		mode?: unknown;
+		purpose?: unknown;
+		allowWorkerInstruction?: unknown;
+		runToCompletion?: unknown;
+	};
+	const rawMode = normalizeControllerTextInput(record.mode).toLowerCase();
+	const mode: BrowserAiAttachmentLoopContext["mode"] =
+		rawMode === "manual" ||
+		rawMode === "bounded-loop" ||
+		rawMode === "auto-loop"
+			? rawMode
+			: "";
+	return {
+		mode,
+		purpose: normalizeControllerTextInput(record.purpose),
+		allowWorkerInstruction: normalizeControllerBooleanInput(
+			record.allowWorkerInstruction,
+		),
+		runToCompletion: normalizeControllerBooleanInput(record.runToCompletion),
+	};
+}
+
+function normalizeBrowserAiAttachmentResult(
+	value: unknown,
+): BrowserAiAttachmentResult {
+	if (!value || typeof value !== "object") {
+		return {
+			status: "invalid_result",
+			inputSet: false,
+			fileInputFound: false,
+			fileInputDescription: null,
+			fileInputFileNames: [],
+			attachedFileNamesVisible: [],
+			attachmentUiReflected: false,
+			warnings: [],
+			blockers: ["browser ai attachment result invalid"],
+		};
+	}
+	const record = value as Partial<BrowserAiAttachmentResult> & {
+		checkedInputs?: unknown;
+	};
+	return {
+		status: normalizeControllerTextInput(record.status) || "unknown",
+		inputSet: record.inputSet === true,
+		fileInputFound: record.fileInputFound === true,
+		fileInputDescription:
+			normalizeControllerTextInput(record.fileInputDescription) || null,
+		fileInputFileNames: normalizeControllerStringArray(
+			record.fileInputFileNames,
+		),
+		attachedFileNamesVisible: normalizeControllerStringArray(
+			record.attachedFileNamesVisible,
+		),
+		attachmentUiReflected: record.attachmentUiReflected === true,
+		warnings: normalizeControllerStringArray(record.warnings),
+		blockers: normalizeControllerStringArray(record.blockers),
+	};
+}
+
+function normalizeBrowserAiAttachmentState(
+	value: unknown,
+): BrowserAiAttachmentState {
+	if (!value || typeof value !== "object") {
+		return {
+			attachmentUiReflected: false,
+			attachedFileNamesVisible: [],
+			fileInputFileNames: [],
+			fileInputFileCount: 0,
+			checkedFileNameCount: 0,
+		};
+	}
+	const record = value as Partial<BrowserAiAttachmentState>;
+	return {
+		attachmentUiReflected: record.attachmentUiReflected === true,
+		attachedFileNamesVisible: normalizeControllerStringArray(
+			record.attachedFileNamesVisible,
+		),
+		fileInputFileNames: normalizeControllerStringArray(record.fileInputFileNames),
+		fileInputFileCount:
+			typeof record.fileInputFileCount === "number"
+				? record.fileInputFileCount
+				: 0,
+		checkedFileNameCount:
+			typeof record.checkedFileNameCount === "number"
+				? record.checkedFileNameCount
+				: 0,
+	};
+}
+
+function buildBrowserAiAttachmentReviewPrompt({
+	files,
+	loopContext,
+}: {
+	files: CommanderControllerAttachedFileSummary[];
+	loopContext: BrowserAiAttachmentLoopContext;
+}): string {
+	const fileLines = files.map(
+		(file) => `- ${file.name} (${file.mimeType}, ${file.byteLength} bytes)`,
+	);
+	const sections = [
+		"添付ファイルを前提に、このタブ内の作業をレビューしてください。",
+		`添付ファイル:\n${fileLines.join("\n")}`,
+	];
+	if (loopContext.purpose) {
+		sections.push(`目的:\n${loopContext.purpose}`);
+	}
+	sections.push(
+		[
+			"期待する振る舞い:",
+			"- 添付ファイルを実際に参照した前提で要点を確認する",
+			"- 必要ならWorker向けの短く具体的な指示案を作る",
+			"- Workerへ送る前提が足りない場合は、選択肢と推奨案を出す",
+			"- scope内の低リスク追加修正はDoy確認なしで進められる形にする",
+			"- scope拡大、DB/API/認証/credentials/deploy/destructive操作、大きな仕様/UX判断はDoy確認事項として分ける",
+		].join("\n"),
+	);
+	if (loopContext.mode) {
+		sections.push(
+			[
+				`Loop context: ${loopContext.mode}`,
+				`allowWorkerInstruction: ${loopContext.allowWorkerInstruction === true}`,
+				`runToCompletion: ${loopContext.runToCompletion === true}`,
+			].join("\n"),
+		);
+	}
+	return sections.join("\n\n");
+}
+
+function getAttachBrowserAiFilesBlockedMessage(blockers: string[]): string {
+	const firstBlocker = blockers[0];
+	if (firstBlocker) return `Browser AI file attachment blocked: ${firstBlocker}`;
+	return "Browser AI file attachment blocked";
 }
 
 function appendBrowserAiHandoffPromptContext(
