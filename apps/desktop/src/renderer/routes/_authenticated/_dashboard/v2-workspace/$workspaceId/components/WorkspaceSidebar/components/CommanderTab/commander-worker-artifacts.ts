@@ -120,12 +120,60 @@ function collectRawPathCandidates(line: string): string[] {
 	return [...raw];
 }
 
+function looksLikeWorkerArtifactLineContinuation(
+	currentLine: string,
+	nextLine: string,
+): boolean {
+	const current = currentLine.trimEnd();
+	const next = nextLine.trim();
+	if (!current || !next) return false;
+	if (isWorkerReportSectionLabelCandidate(next)) return false;
+	if (next.length > 120) return false;
+	const currentHasPathSignal =
+		WORKER_REPORTED_ARTIFACT_KEYWORD.test(current) ||
+		/(?:~\/|\/|\.{1,2}\/|[A-Za-z0-9_.-]+\/)/.test(current);
+	if (!currentHasPathSignal) return false;
+	const nextLooksLikePathTail =
+		/^[A-Za-z0-9_.-]+(?:\.[A-Za-z0-9]{1,8})?(?:\s|$)/.test(next);
+	if (!nextLooksLikePathTail) return false;
+	const currentEndsAtSoftBreak = /[-_/\\]$/.test(current);
+	const nextHasSupportedExtension = isSupportedWorkerReportedArtifactPath(
+		stripCandidatePath(next.split(/\s+/)[0] ?? next),
+	);
+	return currentEndsAtSoftBreak || nextHasSupportedExtension;
+}
+
+function joinSoftWrappedWorkerArtifactLines(lines: string[]): string[] {
+	const expanded: string[] = [];
+	for (let index = 0; index < lines.length; index += 1) {
+		const original = lines[index] ?? "";
+		expanded.push(original);
+		let combined = original.trimEnd();
+		for (let offset = 1; offset <= 2; offset += 1) {
+			const next = lines[index + offset];
+			if (
+				typeof next !== "string" ||
+				!looksLikeWorkerArtifactLineContinuation(combined, next)
+			) {
+				break;
+			}
+			const trimmedNext = next.trim();
+			const separator = /[-_/\\]$/.test(combined) ? "" : " ";
+			combined = `${combined}${separator}${trimmedNext}`;
+			expanded.push(combined);
+		}
+	}
+	return expanded;
+}
+
 export function extractWorkerReportedArtifactPathCandidates(
 	workerReportText: string,
 ): CommanderWorkerReportedArtifactExtractionResult {
 	const candidates = new Map<string, CommanderWorkerReportedArtifactCandidate>();
 	const skipped = new Map<string, CommanderWorkerReportedArtifactSkippedCandidate>();
-	const lines = workerReportText.replace(/\r\n?/g, "\n").split("\n");
+	const lines = joinSoftWrappedWorkerArtifactLines(
+		workerReportText.replace(/\r\n?/g, "\n").split("\n"),
+	);
 
 	for (const line of lines) {
 		for (const rawCandidate of collectRawPathCandidates(line)) {

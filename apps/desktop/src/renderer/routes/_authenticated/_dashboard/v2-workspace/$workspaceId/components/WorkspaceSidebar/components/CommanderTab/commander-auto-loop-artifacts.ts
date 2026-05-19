@@ -166,6 +166,18 @@ export function getAutoLoopArtifactReviewReplyAdvisoryReason(
 	return null;
 }
 
+export function getAutoLoopArtifactReviewPendingActionReason(
+	replyText: string,
+): string | null {
+	if (/AI_REFERENCED_FILE\s*:\s*no/i.test(replyText)) {
+		return "Browser AI did not reference attached artifacts";
+	}
+	if (!/AI_REFERENCED_FILE\s*:\s*yes/i.test(replyText)) {
+		return "Browser AI artifact review missing AI_REFERENCED_FILE: yes";
+	}
+	return null;
+}
+
 export function summarizeAutoLoopArtifactSendResult(
 	sendResult: AutoLoopWorkerArtifactSendLike,
 ): string {

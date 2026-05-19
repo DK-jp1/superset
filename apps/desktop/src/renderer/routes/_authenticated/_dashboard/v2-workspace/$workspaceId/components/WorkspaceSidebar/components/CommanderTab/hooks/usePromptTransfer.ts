@@ -45,6 +45,7 @@ import {
 } from "../browser-adapters";
 import {
 	classifyAutoLoopArtifactCollection,
+	getAutoLoopArtifactReviewPendingActionReason,
 	getAutoLoopArtifactReviewReplyAdvisoryReason,
 	getAutoLoopArtifactReviewReplyStopReason,
 	getAutoLoopArtifactSendAdvisoryReason,
@@ -3316,6 +3317,25 @@ export function usePromptTransfer({
 						"Artifact review advisory recorded; continuing bounded Loop",
 				});
 			}
+			const artifactReviewPendingActionReason =
+				getAutoLoopArtifactReviewPendingActionReason(text);
+			if (artifactReviewPendingActionReason) {
+				autoLoopTerminalFingerprintRef.current = fingerprint;
+				recordAutoLoopArtifactReviewOutcome({
+					expectedTabId,
+					chainStatus: "BLOCKED",
+					finalDecision: "ARTIFACT_REVIEW_PENDING",
+					nextAction:
+						"Reattach Worker artifacts to Browser AI or request a valid artifact review before sending another Worker turn.",
+					notes: artifactReviewPendingActionReason,
+				}, artifactReviewController);
+				recordAutoLoopAdvisory(artifactReviewPendingActionReason, {
+					lastAction:
+						"Artifact review pending; waiting for valid Browser AI artifact review instead of sending Worker",
+				});
+				setAutoLoopPhase("waiting-browser-ai");
+				return;
+			}
 			if (
 				/AI_REFERENCED_FILE\s*:\s*yes/i.test(text) &&
 				!browserRequestedStop &&
@@ -3323,6 +3343,7 @@ export function usePromptTransfer({
 			) {
 				const reason =
 					"Browser AI artifact review missing STOP or next Worker instruction";
+				autoLoopTerminalFingerprintRef.current = fingerprint;
 				recordAutoLoopArtifactReviewOutcome({
 					expectedTabId,
 					chainStatus: "PASS",

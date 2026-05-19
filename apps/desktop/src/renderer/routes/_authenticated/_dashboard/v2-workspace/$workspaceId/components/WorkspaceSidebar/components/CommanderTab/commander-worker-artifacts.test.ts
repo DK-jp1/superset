@@ -90,4 +90,31 @@ describe("commander worker reported artifact extraction", () => {
 		expect(result.candidates).toEqual([]);
 		expect(result.skipped).toEqual([]);
 	});
+
+	it("rejoins terminal soft-wrapped screenshot paths", () => {
+		const result = extractWorkerReportedArtifactPathCandidates(
+			[
+				"DONE_TAG:MYGOALIST_V07_REPORT",
+				"スクショpath:",
+				"/Users/gest01/Documents/mygoalist/artifacts/mygoalist-v07/dark-addy-sheet-open-visible-after-",
+				"  fix.png",
+				"/Users/gest01/Documents/mygoalist/artifacts/mygoalist-v07/light-addy-sheet-open-visible-after-",
+				"  fix.png",
+				"次にやるなら:",
+				"Auto Loop / Artifact Reviewで dark-addy-sheet-open-visible-after-fix.png と light-addy-sheet-",
+				"  open-visible-after-fix.png を現物レビューして最終STOP判定。",
+				"END_REPORT",
+			].join("\n"),
+		);
+
+		expect(result.candidates.map((candidate) => candidate.path)).toContain(
+			"/Users/gest01/Documents/mygoalist/artifacts/mygoalist-v07/dark-addy-sheet-open-visible-after-fix.png",
+		);
+		expect(result.candidates.map((candidate) => candidate.path)).toContain(
+			"/Users/gest01/Documents/mygoalist/artifacts/mygoalist-v07/light-addy-sheet-open-visible-after-fix.png",
+		);
+		expect(result.candidates.map((candidate) => candidate.path)).toContain(
+			"light-addy-sheet-open-visible-after-fix.png",
+		);
+	});
 });

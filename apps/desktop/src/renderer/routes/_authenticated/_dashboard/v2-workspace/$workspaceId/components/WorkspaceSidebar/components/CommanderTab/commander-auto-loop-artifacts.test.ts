@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
 	classifyAutoLoopArtifactCollection,
 	getAutoLoopArtifactReviewReplyAdvisoryReason,
+	getAutoLoopArtifactReviewPendingActionReason,
 	getAutoLoopArtifactReviewReplyStopReason,
 	getAutoLoopArtifactSendAdvisoryReason,
 	getAutoLoopArtifactSendStopReason,
@@ -126,6 +127,24 @@ describe("commander auto loop artifact review routing", () => {
 		expect(
 			getAutoLoopArtifactReviewReplyStopReason(
 				"AI_REFERENCED_FILE: yes\nSTOP\nDoy確認事項なし",
+			),
+		).toBeNull();
+	});
+
+	it("holds artifact review replies without confirmed file references before Worker send", () => {
+		expect(
+			getAutoLoopArtifactReviewPendingActionReason(
+				"AI_REFERENCED_FILE: no\nWorkerへ渡す指示: attach the screenshots and retry review",
+			),
+		).toContain("did not reference");
+		expect(
+			getAutoLoopArtifactReviewPendingActionReason(
+				"まだSTOPしない。現物画像が添付されていません。\nWorkerへ渡す指示: スクショを添付してください",
+			),
+		).toContain("missing AI_REFERENCED_FILE");
+		expect(
+			getAutoLoopArtifactReviewPendingActionReason(
+				"AI_REFERENCED_FILE: yes\nWorkerへ渡す指示: fix the visible layout issue",
 			),
 		).toBeNull();
 	});
