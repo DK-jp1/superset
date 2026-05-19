@@ -58,7 +58,9 @@ export interface CachedTerminal {
 }
 
 const cache = new Map<string, CachedTerminal>();
-const MAX_OUTPUT_LOG_LENGTH = 2_000_000;
+// Keep enough terminal history for Worker report extraction while avoiding
+// multi-pane long-session growth in the renderer process.
+const MAX_OUTPUT_LOG_LENGTH = 1_000_000;
 
 interface OutputLog {
 	baseOffset: number;

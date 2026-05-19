@@ -763,6 +763,13 @@ interface CommanderControllerTerminalOutputSnapshotResult
 	message: string;
 }
 
+interface CommanderControllerBoundWorkerLatestResponseTextFields {
+	rawOutputText: string;
+	outputText: string;
+	screenText: string;
+	viewportText: string;
+}
+
 type CommanderControllerBoundWorkerCompletionStatus =
 	| "READY"
 	| "RUNNING"
@@ -7032,6 +7039,14 @@ export function CommanderTab({
 				workerReportPreview,
 				staleReportIgnored,
 			} = extractedResponse;
+			const returnedTextFields =
+				createBoundWorkerLatestResponseTextFieldsForReturn({
+					rawOutputText,
+					outputText,
+					screenText,
+					viewportText,
+				});
+			warnings.push(...returnedTextFields.warnings);
 			const workerReportFields = {
 				workerReportExtracted,
 				workerReportSource,
@@ -7051,10 +7066,7 @@ export function CommanderTab({
 					ok: false,
 					...baseResult,
 					status: "WAITING",
-					rawOutputText,
-					outputText,
-					screenText,
-					viewportText,
+					...returnedTextFields.fields,
 					deltaText,
 					analyzedResponseText: "",
 					latestResponseText: "",
@@ -7101,10 +7113,7 @@ export function CommanderTab({
 					ok: false,
 					...baseResult,
 					status: "WAITING",
-					rawOutputText,
-					outputText,
-					screenText,
-					viewportText,
+					...returnedTextFields.fields,
 					deltaText,
 					analyzedResponseText,
 					latestResponseText,
@@ -7167,10 +7176,7 @@ export function CommanderTab({
 				ok: true,
 				...baseResult,
 				status: "READY",
-				rawOutputText,
-				outputText,
-				screenText,
-				viewportText,
+				...returnedTextFields.fields,
 				deltaText,
 				analyzedResponseText,
 				latestResponseText,
@@ -11934,7 +11940,11 @@ function evaluateCodexWorkerInputReadiness(
 
 function isCodexWorkerPlaceholderPromptLine(line: string): boolean {
 	const normalized = line.replace(/\s+/g, " ").trim();
-	return /^([›>])\s+Find and fix a bug in @filename$/i.test(normalized);
+	return [
+		/^([›>])\s+Find and fix a bug in @filename$/i,
+		/^([›>])\s+Write tests for @filename$/i,
+		/^([›>])\s+Explain this codebase$/i,
+	].some((pattern) => pattern.test(normalized));
 }
 
 function hashControllerText(text: string): string {
@@ -11962,6 +11972,41 @@ function extractDoneTagName(text: string): string | null {
 function limitWorkerOutputText(text: string, maxLength = 50_000): string {
 	if (text.length <= maxLength) return text;
 	return text.slice(text.length - maxLength);
+}
+
+const COMMANDER_CONTROLLER_DIAGNOSTIC_TEXT_LIMIT = 80_000;
+
+function createBoundWorkerLatestResponseTextFieldsForReturn(fields: {
+	rawOutputText: string;
+	outputText: string;
+	screenText: string;
+	viewportText: string;
+}): {
+	fields: CommanderControllerBoundWorkerLatestResponseTextFields;
+	warnings: string[];
+} {
+	const warnings: string[] = [];
+	const limitField = (
+		value: string,
+		fieldName: keyof CommanderControllerBoundWorkerLatestResponseTextFields,
+	): string => {
+		if (value.length <= COMMANDER_CONTROLLER_DIAGNOSTIC_TEXT_LIMIT) {
+			return value;
+		}
+		warnings.push(
+			`${fieldName} truncated to last ${COMMANDER_CONTROLLER_DIAGNOSTIC_TEXT_LIMIT} chars for Controller response payload`,
+		);
+		return value.slice(-COMMANDER_CONTROLLER_DIAGNOSTIC_TEXT_LIMIT);
+	};
+	return {
+		fields: {
+			rawOutputText: limitField(fields.rawOutputText, "rawOutputText"),
+			outputText: limitField(fields.outputText, "outputText"),
+			screenText: limitField(fields.screenText, "screenText"),
+			viewportText: limitField(fields.viewportText, "viewportText"),
+		},
+		warnings,
+	};
 }
 
 function getBoundWorkerReportPreview(text: string): string {
