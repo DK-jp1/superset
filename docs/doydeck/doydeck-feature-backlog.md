@@ -25,6 +25,7 @@ Priority guide:
 | Worker report contract / FORMAT_INVALID expansion | Enforce DONE_TAG report quality before Browser AI review. | Browser AI should not review prompt echo, placeholders, or footer-noise reports. | Implemented. | done | Done | Existing `commander-worker-report.ts`. | DONE_TAG extraction and footer/noise. | Required section validation and END_REPORT-aftertext fixture coverage. | Fixture tests for valid report, placeholder, missing section, END_REPORT footer. |
 | Destructive guard false positive test pack | Prevent harmless words from blocking Worker instructions. | `remove` in screenshot names and UI copy caused false stops. | Implemented. | done | Done | Existing `commander-safety.test.ts`. | dangerous guard false positive. | Tests cover screenshot path, `removeFromArray`, UI "削除" labels, and true destructive shell commands. | Unit test pass; actual `rm -rf` still blocks. |
 | DoyDeck-native task status watcher continued smoke | Keep Worker completion status reliable across long tasks. | External scripts previously misdetected RUNNING/COMPLETED. | `getTaskRunStatus` exists and current smoke passed. | P1 | Now as regression | Existing Worker pane and no-op task. | task-run identity and state reset. | Add repeatable smoke script or fixture for NOT_SUBMITTED -> RUNNING -> COMPLETED. | No-op DONE_TAG task reports current-run completion without previous state leak. |
+| Claude worker input residue recovery action | Recover from prompt-echo-residue / feedback / recap states without unsafe guessing. | Current safe-dev smoke can correctly BLOCK a Claude pane with `❯ continue`, but there is no safe recovery action yet. | Detection implemented; recovery remains Doy-gated. | P1 | Next safety slice | Visual sanity check and Doy confirmation before clear/restart/dismiss. | Final readiness audit. | Add a diagnose-first recovery helper that reports visible state and requires confirmation before any mutating action. | Reproduce residue, confirm BLOCKED, recover through an approved route, then confirm readiness becomes READY or READY_WITH_NOTES. |
 | Worker identity regression hardening | Keep Codex / Claude recognition precise as terminal UI changes. | Shell/unknown panes must not be treated as Workers, while real Codex/Claude panes should be detected without UI exploration. | Implemented with recognized worker listing and bind guards; needs ongoing fixture coverage. | P2 | Later test slice | Representative Codex, Claude, shell, and unknown output fixtures. | Worker identity / bind / race condition. | Extract worker identity detection into fixture-testable helpers, or add controller fixture smoke around representative pane text. | Fixture matrix returns Codex/Claude recognized and shell/unknown ignored. |
 | Worker completion badge / status dot | Show completion state in UI without Doy scanning terminal output. | Doy should see task state immediately. | Missing. | P2 | Later UI slice | Reliable `getTaskRunStatus`. | Meta AI monitoring model. | Add small status dot/badge near bound worker or Handoff panel. | Completed Worker shows badge; running/stalled states update without Auto Loop start. |
 | SSH / remote worker activity indicator | Show remote/Windows Worker status and whether it is routine or Doy-confirmed. | Doy sometimes wants Windows Claude only when explicitly requested. | Worker launch policy is docs-only. | P2 | Later | Remote launch policy and identity detection. | worker launch policy. | Add worker source fields and readiness text for local vs SSH. | Local Claude default remains high effort; Windows command used only when requested. |
@@ -52,11 +53,11 @@ Priority guide:
 
 ## Top 5 Recommended Next Implementations
 
-1. Handoff / prompt-size warning fields.
-2. `sendTargetDocsReviewToBrowserAI(input)` as a scoped docs review command.
-3. Decision Record accessor.
-4. Browser AI provider thread reset / new thread design.
-5. Worker identity regression hardening fixtures.
+1. Claude worker input residue recovery action.
+2. Handoff / prompt-size warning fields.
+3. `sendTargetDocsReviewToBrowserAI(input)` as a scoped docs review command.
+4. Decision Record accessor.
+5. Browser AI provider thread reset / new thread design.
 
 ## Items To Keep Doy-Gated
 

@@ -6,6 +6,9 @@ This guide explains what DoyDeck can be used for today, what remains pilot-only,
 and where Doy confirmation is still required. It summarizes the S7 through S9.7
 controller, Supervisor pilot, Browser AI, Codex, and Claude Code work.
 
+For the latest controlled-live readiness decision and remaining P1 findings,
+see [`doydeck-final-readiness-audit.md`](./doydeck-final-readiness-audit.md).
+
 ## 1. 現在の結論
 
 DoyDeckは、低リスクdocs、調査、Browser AIレビュー用途では実運用OK。

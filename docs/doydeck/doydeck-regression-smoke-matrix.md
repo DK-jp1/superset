@@ -52,6 +52,7 @@ long Auto Loop run.
 | `getWorkerInputReadiness({ paneId })` on ready Codex/Claude | READY or READY_WITH_NOTES with worker identity details. |
 | Visible unsent prompt residue | BLOCKED / not input ready. |
 | Default Codex placeholder prompt | Not treated as user residue. |
+| Claude prompt residue such as `❯ continue` | `getWorkerInputReadiness()` returns BLOCKED; do not send until Doy confirms recovery or a clean Worker is selected. |
 
 ## 5. Worker Status / Run Identity
 
@@ -110,6 +111,7 @@ long Auto Loop run.
 | Worker-reported artifact Browser AI review | `sendWorkerReportedArtifactsToBrowserAI()` attaches extracted files and sends Browser AI review prompt without starting Auto Loop or sending Worker instructions. Browser AI should reply with `AI_REFERENCED_FILE: yes/no` plus `STOP` or `Workerへ渡す指示:`. |
 | Worker report without artifact paths | `collectWorkerReportedArtifacts()` returns no attachable files and a warning/blocker path for artifact review rather than treating text-only review as real-file review. |
 | Bounded-loop Worker artifact route | When Auto Loop sees a Worker response preview with attachable DONE_TAG artifact paths, it calls Worker-reported artifact collection/send before the legacy text review path. No-artifact reports fall back to text review with an explicit "text-only" note. |
+| Bounded-loop artifact review E2E | Worker-reported artifact path is attached through `sendWorkerReportedArtifactsToBrowserAI()`, Browser AI replies with `AI_REFERENCED_FILE: yes`, and the loop resolves to STOP without `artifact attachment command unavailable`. |
 
 ## 9. Docs / Prompt Contract
 
@@ -126,5 +128,6 @@ long Auto Loop run.
 - Run sections 1, 2, 3, 4, and 5 for CommanderTab runtime changes.
 - Run sections 1, 3, and 6 for Browser AI submission or Worker report changes.
 - Run sections 1, 7, and relevant Worker sections for safety classifier changes.
+- Run sections 1, 3, 6, and 8 for Artifact Review Loop changes.
 - Run sections 1 and 8 for Explorer/file handling changes.
 - Run sections 1 and 9 for docs-only prompt/role changes.
