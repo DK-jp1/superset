@@ -116,6 +116,7 @@ Implemented:
 | Worker | `activateWorkerPane(input?)` | implemented | Alias for `activateTerminalPaneForTab`. |
 | Worker | `focusBoundWorkerPane(input?)` | implemented | Alias for `activateTerminalPaneForTab`. |
 | Browser AI | `sendHandoffToBrowserAI(input?)` | implemented | Sends current Handoff prompt to Browser AI. |
+| Browser AI | `sendBrowserAiPrompt(input?)` | implemented | Sends a short explicit Browser AI prompt without building a full Handoff. Supports expected-tab guards and UI reflection verification. |
 | Browser AI | `readBrowserAiLatestReply()` | implemented | Reads latest Browser AI assistant reply and classifications. |
 | Browser AI | `getBrowserAiLatestReply()` | implemented | Alias for `readBrowserAiLatestReply`. |
 | Worker | `sendInstructionToBoundWorker(input)` | implemented | Sends instruction to bound Codex / Claude worker with preflight guard. |
@@ -172,6 +173,7 @@ should be called with an expected-tab guard in normal operation:
 | Browser AI readiness alias | implemented | done | `getBrowserAiSendReadiness()`. |
 | Prepare Browser AI provider only | implemented | done | `prepareBrowserAiReady({ provider, dryRun, navigateIfNeeded })` readies ChatGPT / Claude / Gemini without worker binding. |
 | Send Handoff | implemented | done | `sendHandoffToBrowserAI()`. |
+| Send short prompt | implemented | done | `sendBrowserAiPrompt({ provider, prompt, expectedTabId, expectedTitle, requireActiveTabMatch })`. |
 | Read latest reply | implemented | done | `getBrowserAiLatestReply()` / `readBrowserAiLatestReply()`. |
 | Get last submission | implemented | done | `getBrowserAiLastSubmission()`. |
 | Send target-doc Browser AI review | partially implemented | P1 | S9.2 support exists in prompt flow, but a narrower command could reduce prompt boilerplate. |
@@ -235,6 +237,9 @@ P1 missing or partial:
 - `proposeTaskTabs(input?)`
   - Return create / do-not-create candidates, priorities, reasons, and proposed tab titles.
   - Purpose: let Doy confirm the right tabs before `createTaskTab()`.
+- Handoff / prompt-size warning fields
+  - Warn before sending oversized or stale Handoff content to Browser AI.
+  - Purpose: keep Browser AI prompts short enough for task-local review.
 
 P2 missing:
 
@@ -294,12 +299,17 @@ P3: 危険または仕様未確定。
 
 次に実装するなら、state-onlyで副作用が小さいもの、またはread-only diagnosticsを優先する。
 
-Candidate 1: Decision Record accessor
+Candidate 1: Handoff / prompt-size warning fields
+
+- Browser AI送信前にHandoff肥大化とstale historyを検出する。
+- `sendBrowserAiPrompt()`で短文送信はできるため、次は長文Handoff側の警告を優先する。
+
+Candidate 2: Decision Record accessor
 
 - HandoffからDR-ID短参照を使いやすくする。
 - Decision Record本文を毎回promptに入れず、必要な短い前提だけを扱う。
 
-Candidate 2: `sendTargetDocsReviewToBrowserAI(input)`
+Candidate 3: `sendTargetDocsReviewToBrowserAI(input)`
 
 - Browser-AI-only target docs reviewを短いpromptで実行しやすくする。
 - 対象docs本文を必要な時だけ渡し、固定ルールの過剰投入を避ける。
@@ -351,25 +361,25 @@ Visual sanity checkは以下の場合に使う。
    - 種別: Browser-AI-only send helper。
    - リスク: medium-low。
 
-2. Decision Record accessor
+2. Handoff / prompt-size warning fields
+   - 理由: Browser AI送信前にHandoff肥大化とstale historyを検出する。
+   - 種別: diagnostic warning。
+   - リスク: low。
+
+3. Decision Record accessor
    - 理由: Handoff LedgerからDR-ID短参照をController pathで扱えるようにする。
    - 種別: read-only Decision Ledger lookup。
    - リスク: low。
 
-3. `getVisibleStateSnapshot(input?)`
+4. `getVisibleStateSnapshot(input?)`
    - 理由: UI状態判断でtext logと画面表示が矛盾した時のvisual sanity checkをController pathに寄せる。
    - 種別: read-only diagnostics。
    - リスク: medium-low。
 
-4. command timing helper
+5. command timing helper
    - 理由: slow operation reportsをController pathで切り分けやすくする。
    - 種別: read-only/diagnostic wrapper。
    - リスク: medium-low。
-
-5. `closeTab(input)` dry-run design
-   - 理由: 実装はまだしないが、危険操作としてのguard設計が必要。
-   - 種別: design only。
-   - リスク: high。
 
 ## 11. 実装順の提案
 
@@ -377,9 +387,11 @@ Recommended S9.9 / S10 entry:
 
 1. `sendTargetDocsReviewToBrowserAI(input)`
    - Browser-AI-only target docs reviewを短く安全に実行する。
-2. Decision Record accessor
+2. Handoff / prompt-size warning fields
+   - Browser AI送信前にprompt sizeとstale historyを警告する。
+3. Decision Record accessor
    - HandoffからDecision Record短参照を使いやすくする。
-3. `getVisibleStateSnapshot(input?)`
+4. `getVisibleStateSnapshot(input?)`
    - UI状態判断のvisual sanity checkをController pathに寄せる。
 
 Stop before implementation if any candidate expands into:

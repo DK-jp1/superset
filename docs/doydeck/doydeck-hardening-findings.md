@@ -70,6 +70,14 @@ Current P0 fixed:
 - `sendBoundWorkerResponseToBrowserAI()` now validates `workerReportValid`
   before submission. Prompt echo, idle-only messages, incomplete responses, and
   placeholder template text are blocked as `FORMAT_INVALID` or `MISSING`.
+- Descriptive `remove` / `削除` text in screenshots, function names, or UI label
+  review instructions is covered by tests and remains allowed. Actual
+  `delete` / `remove` shell commands still block.
+- DONE_TAG reports now require the minimum review sections `実施内容`,
+  `変更ファイル`, and `Doy確認事項` before Browser AI review packaging.
+- `sendBrowserAiPrompt()` provides a short Browser AI send path that does not
+  require building a full Handoff Ledger, while keeping expected-tab guards and
+  UI reflection verification.
 
 Remaining watch items:
 
@@ -84,3 +92,5 @@ Remaining watch items:
 - Keep Handoff payloads short in hardening smoke reports. Prefer summary plus
   file path references; only include full source text as scoped
   `additionalContext` when the Browser AI review needs it.
+- Add prompt-size warnings for the remaining Handoff-oriented sends so long
+  history does not become the default path when a short prompt is sufficient.

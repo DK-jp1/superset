@@ -339,6 +339,14 @@ interface CommanderControllerSendHandoffInput {
 	additionalContextLabel?: unknown;
 }
 
+interface CommanderControllerSendBrowserAiPromptInput {
+	provider?: unknown;
+	prompt?: unknown;
+	expectedTabId?: unknown;
+	expectedTitle?: unknown;
+	requireActiveTabMatch?: unknown;
+}
+
 type CommanderControllerPreflightStatus =
 	| "READY"
 	| "READY_WITH_NOTES"
@@ -934,6 +942,48 @@ interface CommanderControllerSendHandoffResult
 	handoffMissingFields: string[];
 }
 
+type CommanderControllerSendBrowserAiPromptStatus =
+	| CommanderControllerBrowserAiSubmissionVerificationStatus
+	| "BLOCKED";
+
+interface CommanderControllerSendBrowserAiPromptResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerSendBrowserAiPromptStatus;
+	activeTabId: string | null;
+	activeTabTitle: string | null;
+	expectedTabId: string | null;
+	expectedTitle: string | null;
+	requireActiveTabMatch: boolean;
+	requestedProvider: string | null;
+	browserAiProvider: string;
+	browserAiReady: boolean;
+	browserAiSlotOk: boolean;
+	promptLength: number;
+	payloadLength: number;
+	blockers: string[];
+	warnings: string[];
+	message: string;
+	sentAt: string | null;
+	injectionResult: string | null;
+	submissionStatus: CommanderControllerBrowserAiSubmissionVerificationStatus | null;
+	uiReflected: boolean | null;
+	assistantReplyObserved: boolean | null;
+	visualVerificationUsed: boolean;
+	submissionVerificationReason: string | null;
+	nextRequiredAction: string;
+	browserAiComposer: CommanderControllerBrowserAiReadiness;
+	composerReady: boolean;
+	composerInjectionReady: boolean;
+	submitTargetReady: boolean;
+	composerSelectorStatus: string;
+	submitSelectorStatus: string;
+	injectionTargetStatus: string;
+	injectionBlockers: string[];
+	browserAiUrl: string;
+	browserAiSlotKey: string | null;
+	expectedBrowserAiSlotKey: string | null;
+}
+
 type CommanderControllerLatestReplyStatus =
 	| "READY"
 	| "WAITING"
@@ -1171,7 +1221,10 @@ interface CommanderControllerSendWorkerResponseResult
 	};
 }
 
-type CommanderControllerBrowserAiSubmissionType = "handoff" | "worker-response";
+type CommanderControllerBrowserAiSubmissionType =
+	| "handoff"
+	| "worker-response"
+	| "short-prompt";
 type CommanderControllerBrowserAiSubmissionRecordStatus =
 	| "SUBMITTED"
 	| "UI_REFLECTED"
@@ -1438,6 +1491,20 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			riskLevel: "medium",
 			notes: [
 				"Verifies UI reflection after composer injection; preflight should be checked first.",
+			],
+		},
+		{
+			name: "sendBrowserAiPrompt",
+			category: "Browser AI",
+			access: "write",
+			implemented: true,
+			description: "Send a short explicit prompt to Browser AI without building a full Handoff.",
+			typicalUse: "Ask a quick tab-scoped question or sanity check while avoiding Handoff prompt bloat.",
+			requiresDoyConfirmation: false,
+			riskLevel: "medium",
+			notes: [
+				"Uses the same UI reflection verification as Handoff sends.",
+				"Pass expectedTabId / expectedTitle / requireActiveTabMatch:true for tab-scoped prompts.",
 			],
 		},
 		{
@@ -1944,6 +2011,9 @@ interface CommanderControllerCommands {
 	sendHandoffToBrowserAI: (
 		input?: unknown,
 	) => Promise<CommanderControllerSendHandoffResult>;
+	sendBrowserAiPrompt: (
+		input?: CommanderControllerSendBrowserAiPromptInput,
+	) => Promise<CommanderControllerSendBrowserAiPromptResult>;
 	readBrowserAiLatestReply: () => Promise<CommanderControllerLatestReplyResult>;
 	getBrowserAiLatestReply: () => Promise<CommanderControllerLatestReplyResult>;
 	sendInstructionToBoundWorker: (
@@ -4832,6 +4902,284 @@ export function CommanderTab({
 			workspaceId,
 		]);
 
+	const sendBrowserAiPromptController =
+		useCallback(async (
+			input?: CommanderControllerSendBrowserAiPromptInput,
+		): Promise<CommanderControllerSendBrowserAiPromptResult> => {
+			const blockers: string[] = [];
+			const warnings: string[] = [];
+			const sendInput = normalizeSendBrowserAiPromptControllerInput(input);
+			const writeGuard = getExpectedTabWriteGuard(
+				{
+					expectedTabId: sendInput.expectedTabId,
+					expectedTitle: sendInput.expectedTitle,
+					requireActiveTabMatch: sendInput.requireActiveTabMatch,
+				},
+				"sendBrowserAiPrompt",
+			);
+			blockers.push(...writeGuard.blockers);
+			warnings.push(...writeGuard.warnings);
+			const activeTabIdSnapshot = writeGuard.activeTabId ?? activeTabId;
+			const runtime = webview.getRuntimeSnapshot();
+			const liveUrl = webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
+			const provider = detectProvider(liveUrl);
+			const activeProviderLabel = runtime.providerLabel || getProviderLabel(provider);
+			const requestedProvider = sendInput.provider || null;
+			const expectedBrowserAiSlotKey = buildCommanderBrowserSlotKey({
+				workspaceId,
+				activeTabId: activeTabIdSnapshot,
+			});
+			const browserAiSlotOk =
+				Boolean(activeTabIdSnapshot) &&
+				runtime.browserSlotKey === expectedBrowserAiSlotKey &&
+				runtime.activeTabId === activeTabIdSnapshot;
+			const composerReadiness = await readBrowserAiComposerReadiness({
+				provider,
+				injectIntoPage: webview.injectIntoPage,
+			});
+			const composerDiagnostics =
+				getBrowserAiComposerDiagnosticFields(composerReadiness);
+			const browserAiReady =
+				Boolean(provider) &&
+				runtime.status === "available" &&
+				runtime.bridgeAvailable &&
+				composerReadiness.composerInjectionReady;
+			const prompt = sendInput.prompt;
+
+			if (!activeTabIdSnapshot) blockers.push("active tab not found");
+			if (!prompt) blockers.push("prompt is required");
+			if (!provider) blockers.push("browser ai provider not ready");
+			if (
+				requestedProvider &&
+				activeProviderLabel.toLowerCase() !== requestedProvider.toLowerCase()
+			) {
+				blockers.push(
+					`browser ai provider mismatch: requested=${requestedProvider}, active=${activeProviderLabel}`,
+				);
+			}
+			if (runtime.status !== "available") {
+				blockers.push("browser ai runtime unavailable");
+			}
+			if (!runtime.bridgeAvailable) {
+				blockers.push("browser ai bridge unavailable");
+			}
+			const composerBlocker = getBrowserAiComposerBlocker(composerReadiness);
+			if (provider && composerBlocker) {
+				blockers.push(composerBlocker);
+			}
+			if (!browserAiSlotOk) blockers.push("browser ai slot mismatch");
+			const submitWarning = getBrowserAiSubmitWarning(composerReadiness);
+			if (submitWarning) warnings.push(submitWarning);
+			if (runtime.visualStatus === "NEEDS_FIX") {
+				warnings.push(`browser ai visual status needs fix: ${runtime.visualReason}`);
+			}
+
+			let latestReplyBeforeSubmit: BrowserAiLatestReplyState | null = null;
+			if (provider && runtime.status === "available" && runtime.bridgeAvailable) {
+				try {
+					latestReplyBeforeSubmit = normalizeBrowserAiLatestReplyState(
+						await webview.injectIntoPage(buildLatestReplyStateScript(provider)),
+					);
+				} catch {
+					warnings.push("browser ai latest reply baseline unavailable before submit");
+				}
+			}
+			const baseResult = {
+				...getCommanderControllerContext(),
+				activeTabId: activeTabIdSnapshot,
+				activeTabTitle: writeGuard.activeTabTitle,
+				expectedTabId: writeGuard.expectedTabId,
+				expectedTitle: writeGuard.expectedTitle,
+				requireActiveTabMatch: writeGuard.requireActiveTabMatch,
+				requestedProvider,
+				browserAiProvider: activeProviderLabel,
+				browserAiReady,
+				browserAiSlotOk,
+				promptLength: prompt.length,
+				payloadLength: prompt.length,
+				blockers,
+				warnings,
+				sentAt: null,
+				injectionResult: null,
+				submissionStatus: null,
+				uiReflected: null,
+				assistantReplyObserved: null,
+				visualVerificationUsed: false,
+				submissionVerificationReason: null,
+				nextRequiredAction: "Submit short prompt to Browser AI.",
+				browserAiComposer: composerReadiness,
+				...composerDiagnostics,
+				browserAiUrl: liveUrl,
+				browserAiSlotKey: runtime.browserSlotKey,
+				expectedBrowserAiSlotKey,
+			};
+
+			if (blockers.length > 0 || !provider) {
+				const message = getSendBrowserAiPromptBlockedMessage(blockers);
+				recordBrowserAiSubmissionControllerState({
+					activeTabId: activeTabIdSnapshot,
+					type: "short-prompt",
+					browserAiProvider: activeProviderLabel,
+					browserAiReady,
+					browserAiSlotOk,
+					...composerDiagnostics,
+					promptLength: prompt.length,
+					payloadLength: prompt.length,
+					sentAt: null,
+					injectionResult: null,
+					status: "BLOCKED",
+					message,
+					warnings: [...warnings],
+					blockers: [...blockers],
+					assistantCountBeforeSubmit:
+						latestReplyBeforeSubmit?.assistantCount ?? null,
+					latestAssistantReplyFingerprintBeforeSubmit:
+						latestReplyBeforeSubmit?.latestFingerprint ?? null,
+				});
+				return {
+					ok: false,
+					...baseResult,
+					status: "BLOCKED",
+					message,
+				};
+			}
+
+			try {
+				const result = await webview.injectIntoPage(
+					buildInjectionWithSubmitScript(prompt, provider),
+				);
+				const injectionResult = typeof result === "string" ? result : "unknown";
+				if (injectionResult === "submitted") {
+					const sentAt = new Date().toISOString();
+					const verification = await verifyBrowserAiSubmissionReflection({
+						provider,
+						prompt,
+						injectIntoPage: webview.injectIntoPage,
+						latestReplyBeforeSubmit,
+						type: "short-prompt",
+					});
+					const submissionWarnings = [...warnings, ...verification.warnings];
+					const message =
+						verification.status === "NOT_REFLECTED"
+							? `${getProviderLabel(provider)}への短文prompt送信は試行されましたがUI反映を確認できません`
+							: `${getProviderLabel(provider)}への短文prompt送信状態: ${verification.status}`;
+					recordBrowserAiSubmissionControllerState({
+						activeTabId: activeTabIdSnapshot,
+						type: "short-prompt",
+						browserAiProvider: activeProviderLabel,
+						browserAiReady,
+						browserAiSlotOk,
+						...composerDiagnostics,
+						promptLength: prompt.length,
+						payloadLength: prompt.length,
+						sentAt,
+						injectionResult,
+						status: verification.status,
+						submissionStatus: verification.status,
+						uiReflected: verification.uiReflected,
+						assistantReplyObserved: verification.assistantReplyObserved,
+						visualVerificationUsed: verification.visualVerificationUsed,
+						submissionVerificationReason: verification.reason,
+						nextRequiredAction: verification.nextRequiredAction,
+						message,
+						warnings: submissionWarnings,
+						blockers: [...blockers],
+						assistantCountBeforeSubmit:
+							latestReplyBeforeSubmit?.assistantCount ?? null,
+						latestAssistantReplyFingerprintBeforeSubmit:
+							latestReplyBeforeSubmit?.latestFingerprint ?? null,
+					});
+					return {
+						ok: getBrowserAiSubmissionStatusOk(verification.status),
+						...baseResult,
+						status: verification.status,
+						message,
+						warnings: submissionWarnings,
+						sentAt,
+						injectionResult,
+						submissionStatus: verification.status,
+						uiReflected: verification.uiReflected,
+						assistantReplyObserved: verification.assistantReplyObserved,
+						visualVerificationUsed: verification.visualVerificationUsed,
+						submissionVerificationReason: verification.reason,
+						nextRequiredAction: verification.nextRequiredAction,
+					};
+				}
+				const message =
+					injectionResult === "injected"
+						? "Browser AI prompt was injected but not submitted"
+						: `Browser AI prompt submit failed: ${injectionResult}`;
+				recordBrowserAiSubmissionControllerState({
+					activeTabId: activeTabIdSnapshot,
+					type: "short-prompt",
+					browserAiProvider: activeProviderLabel,
+					browserAiReady,
+					browserAiSlotOk,
+					...composerDiagnostics,
+					promptLength: prompt.length,
+					payloadLength: prompt.length,
+					sentAt: null,
+					injectionResult,
+					status: "FAILED",
+					message,
+					warnings: [...warnings],
+					blockers: [...blockers],
+					assistantCountBeforeSubmit:
+						latestReplyBeforeSubmit?.assistantCount ?? null,
+					latestAssistantReplyFingerprintBeforeSubmit:
+						latestReplyBeforeSubmit?.latestFingerprint ?? null,
+				});
+				return {
+					ok: false,
+					...baseResult,
+					status: "FAILED",
+					message,
+					injectionResult,
+				};
+			} catch (error) {
+				const message =
+					error instanceof Error
+						? `Browser AI prompt submit failed: ${error.message}`
+						: "Browser AI prompt submit failed";
+				recordBrowserAiSubmissionControllerState({
+					activeTabId: activeTabIdSnapshot,
+					type: "short-prompt",
+					browserAiProvider: activeProviderLabel,
+					browserAiReady,
+					browserAiSlotOk,
+					...composerDiagnostics,
+					promptLength: prompt.length,
+					payloadLength: prompt.length,
+					sentAt: null,
+					injectionResult: null,
+					status: "FAILED",
+					message,
+					warnings: [...warnings],
+					blockers: [...blockers],
+					assistantCountBeforeSubmit:
+						latestReplyBeforeSubmit?.assistantCount ?? null,
+					latestAssistantReplyFingerprintBeforeSubmit:
+						latestReplyBeforeSubmit?.latestFingerprint ?? null,
+				});
+				return {
+					ok: false,
+					...baseResult,
+					status: "FAILED",
+					message,
+				};
+			}
+		}, [
+			activeTabId,
+			getCommanderControllerContext,
+			getExpectedTabWriteGuard,
+			recordBrowserAiSubmissionControllerState,
+			webview.currentUrl,
+			webview.getLiveUrl,
+			webview.getRuntimeSnapshot,
+			webview.injectIntoPage,
+			workspaceId,
+		]);
+
 	const readBrowserAiLatestReplyController =
 		useCallback(async (): Promise<CommanderControllerLatestReplyResult> => {
 			const blockers: string[] = [];
@@ -6870,6 +7218,7 @@ export function CommanderTab({
 			activateWorkerPane: activateTerminalPaneForTabController,
 			focusBoundWorkerPane: activateTerminalPaneForTabController,
 			sendHandoffToBrowserAI: sendHandoffToBrowserAiController,
+			sendBrowserAiPrompt: sendBrowserAiPromptController,
 			readBrowserAiLatestReply: readBrowserAiLatestReplyController,
 			getBrowserAiLatestReply: readBrowserAiLatestReplyController,
 			sendInstructionToBoundWorker: sendInstructionToBoundWorkerController,
@@ -6917,6 +7266,7 @@ export function CommanderTab({
 		prepareSupervisorPilotReadinessController,
 		activateTerminalPaneForTabController,
 		sendHandoffToBrowserAiController,
+		sendBrowserAiPromptController,
 		readBrowserAiLatestReplyController,
 		sendInstructionToBoundWorkerController,
 		readBoundWorkerLatestResponseController,
@@ -7589,6 +7939,36 @@ function normalizeSendHandoffControllerInput(
 		),
 		additionalContext: normalizeControllerTextInput(record.additionalContext),
 		additionalContextLabel,
+	};
+}
+
+function normalizeSendBrowserAiPromptControllerInput(
+	input: unknown,
+): {
+	provider: string;
+	prompt: string;
+	expectedTabId: string;
+	expectedTitle: string;
+	requireActiveTabMatch: boolean | null;
+} {
+	if (!input || typeof input !== "object") {
+		return {
+			provider: "",
+			prompt: "",
+			expectedTabId: "",
+			expectedTitle: "",
+			requireActiveTabMatch: null,
+		};
+	}
+	const record = input as CommanderControllerSendBrowserAiPromptInput;
+	return {
+		provider: normalizeControllerTextInput(record.provider),
+		prompt: normalizeControllerTextInput(record.prompt),
+		expectedTabId: normalizeControllerTextInput(record.expectedTabId),
+		expectedTitle: normalizeControllerTextInput(record.expectedTitle),
+		requireActiveTabMatch: normalizeControllerBooleanInput(
+			record.requireActiveTabMatch,
+		),
 	};
 }
 
@@ -11679,4 +12059,25 @@ function getSendHandoffBlockedMessage(blockers: string[]): string {
 		return "Select a DoyDeck task tab before sending the Handoff Ledger.";
 	}
 	return `Handoff Ledger send blocked: ${firstBlocker}`;
+}
+
+function getSendBrowserAiPromptBlockedMessage(blockers: string[]): string {
+	const firstBlocker = blockers[0];
+	if (!firstBlocker) return "Browser AI prompt send blocked";
+	if (firstBlocker.includes("prompt")) {
+		return "Provide a short Browser AI prompt before sending.";
+	}
+	if (firstBlocker.includes("browser ai provider")) {
+		return "Select the requested Browser AI provider before sending the prompt.";
+	}
+	if (firstBlocker.includes("composer")) {
+		return "Wait for the Browser AI composer before sending the prompt.";
+	}
+	if (firstBlocker.includes("slot")) {
+		return "Confirm the active tab and Browser AI slot before sending the prompt.";
+	}
+	if (firstBlocker.includes("active tab") || firstBlocker.includes("expected")) {
+		return "Confirm the target tab before sending the Browser AI prompt.";
+	}
+	return `Browser AI prompt send blocked: ${firstBlocker}`;
 }
