@@ -179,6 +179,7 @@ function getSafetyClauseForMatch(line: string, matchIndex: number): string {
 function isNegatedInstructionSafetyLine(line: string): boolean {
 	return [
 		/しないでください/,
+		/しない/,
 		/しないこと/,
 		/していません/,
 		/していない/,

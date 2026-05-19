@@ -51,6 +51,7 @@ import {
 	type AutoLoopWorkerArtifactCollectionLike,
 	type AutoLoopWorkerArtifactSendLike,
 } from "../commander-auto-loop-artifacts";
+import { findAutoLoopDangerousCommandFinding } from "../commander-auto-loop-safety";
 import { sendWorkerResponseToBrowserAI } from "../commander-bridge";
 import type { CommanderBrowserRuntimeSnapshot } from "../commander-browser-runtime";
 import { getTerminalSelection } from "../useActiveTerminal";
@@ -448,77 +449,6 @@ const EMPTY_AUTO_LOOP_DIAGNOSTICS: AutoLoopDiagnostics = {
 	requireBoundWorker: true,
 	workerBindingFallbackUsed: false,
 };
-
-const DANGEROUS_TERMINAL_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
-	{ label: "rm -rf", pattern: /\brm\s+-[^\n;&|]*r[^\n;&|]*f\b/i },
-	{ label: "sudo", pattern: /\bsudo\b/i },
-	{ label: "chmod -R", pattern: /\bchmod\s+-R\b/i },
-	{ label: "chown -R", pattern: /\bchown\s+-R\b/i },
-	{ label: "git reset --hard", pattern: /\bgit\s+reset\s+--hard\b/i },
-	{ label: "git clean", pattern: /\bgit\s+clean\b/i },
-	{ label: "git push", pattern: /\bgit\s+push\b/i },
-	{ label: "git commit", pattern: /\bgit\s+commit\b/i },
-	{ label: "rm", pattern: /(?:^|[\s;&|])rm(?:\s|$)/i },
-	{ label: "mv", pattern: /(?:^|[\s;&|])mv(?:\s|$)/i },
-	{ label: "delete", pattern: /\bdelete\b/i },
-	{ label: "trash", pattern: /\btrash\b/i },
-	{ label: "local.db", pattern: /local\.db/i },
-	{ label: "app-state.json", pattern: /app-state\.json/i },
-	{ label: "~/.superset", pattern: /~\/\.superset\b/i },
-	{
-		label: "~/.doydeck-superset-dev",
-		pattern: /~\/\.doydeck-superset-dev\b/i,
-	},
-];
-
-const SAFE_NEGATED_COMMAND_CONTEXT_PATTERN =
-	/禁止|しない|しないで|しないでください|しないこと|やらない|実行しない|実行禁止|使わない|避ける|不要|触らない|触れない|no\s+(?:git\s+)?commit|do\s+not|don't|never/i;
-const SAFE_GIT_DIFF_CHECK_PATTERN =
-	/\bgit\s+diff(?:\s+--check)?\b|git diff \/ git diff --check|git diff.*確認|git diff --check.*確認/i;
-const COMMAND_LINE_PREFIX_PATTERN =
-	/^\s*(?:[-*+・•]\s+|\d+[.)]\s+|>\s+|`{1,3}\s*|\$\s*|❯\s*|>\s*)*/;
-const SHELL_COMMAND_START_PATTERN =
-	/^(?:env\s+)?(?:git|rm|sudo|chmod|chown|mv|delete|trash)\b/i;
-const COMMAND_INTENT_PATTERN =
-	/実行|走らせ|叩い|コマンド|command|run|execute/i;
-
-function normalizePotentialCommandLine(line: string): string {
-	return line.replace(COMMAND_LINE_PREFIX_PATTERN, "").trim();
-}
-
-function isNegatedCommandContext(line: string): boolean {
-	return SAFE_NEGATED_COMMAND_CONTEXT_PATTERN.test(line);
-}
-
-function isAllowedGitDiffContext(line: string): boolean {
-	return SAFE_GIT_DIFF_CHECK_PATTERN.test(line) && !/\bgit\s+(?:commit|push|reset|clean)\b/i.test(line);
-}
-
-function isExecutableCommandLine(rawLine: string): boolean {
-	const line = normalizePotentialCommandLine(rawLine);
-	if (!line) return false;
-	if (isNegatedCommandContext(line)) return false;
-	if (isAllowedGitDiffContext(line)) return false;
-	if (SHELL_COMMAND_START_PATTERN.test(line)) return true;
-	if (
-		COMMAND_INTENT_PATTERN.test(line) &&
-		/\b(?:git\s+(?:commit|push|reset|clean)|rm|sudo|chmod|chown|mv|delete|trash)\b/i.test(line)
-	) {
-		return true;
-	}
-	return false;
-}
-
-function findDangerousTerminalPattern(text: string): string | null {
-	for (const rawLine of text.split(/\r?\n/)) {
-		const line = normalizePotentialCommandLine(rawLine);
-		if (!isExecutableCommandLine(rawLine)) continue;
-		for (const { label, pattern } of DANGEROUS_TERMINAL_PATTERNS) {
-			if (pattern.test(line)) return label;
-		}
-	}
-	return null;
-}
 
 function debugAutoRelayWatcher(...args: unknown[]): void {
 	if (DEBUG_AUTO_RELAY_WATCHER) console.log(...args);
@@ -3341,9 +3271,14 @@ export function usePromptTransfer({
 			stopAutoLoop("Browser AI requested completion/stop");
 			return;
 		}
-		const dangerousPattern = findDangerousTerminalPattern(text);
-		if (dangerousPattern) {
-			stopAutoLoop(`dangerous command detected: ${dangerousPattern}`);
+		const dangerousFinding = findAutoLoopDangerousCommandFinding(
+			text,
+			"browser ai reply",
+		);
+		if (dangerousFinding) {
+			stopAutoLoop(
+				`dangerous command detected: ${dangerousFinding.label} [source=${dangerousFinding.source}; matched=${dangerousFinding.matchedText}; reason=${dangerousFinding.reason}; nextAction=${dangerousFinding.nextAction}]`,
+			);
 			return;
 		}
 		if (autoLoopTurn >= autoLoopMaxTurns) {

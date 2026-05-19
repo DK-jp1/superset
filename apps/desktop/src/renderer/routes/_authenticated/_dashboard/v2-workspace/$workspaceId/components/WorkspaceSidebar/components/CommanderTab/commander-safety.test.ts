@@ -76,6 +76,22 @@ describe("commander instruction safety classification", () => {
 		);
 	});
 
+	test.each([
+		"git pushしないでください",
+		"pushは禁止",
+		"deployはしない",
+		"destructive操作は禁止",
+		"token/cookieには触らない",
+		"git pushしていません",
+		"Worker完了報告: pushなし",
+	])("does not block policy-only or negated dangerous terms: %s", (text) => {
+		const findings = classifyInstructionSafetyFindings(text, "browser ai reply");
+
+		expect(findings.filter((finding) => finding.severity === "block")).toEqual(
+			[],
+		);
+	});
+
 	test("does not block descriptive delete/remove terms in instructions", () => {
 		const findings = classifyInstructionSafetyFindings(
 			[
