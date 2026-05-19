@@ -67,6 +67,8 @@ long Auto Loop run.
 | Current-run DONE_TAG / END_REPORT | COMPLETED with `workerReportExtracted:true` and `workerReportLength > 0`. |
 | Expected taskRunId mismatch | STALE or warning; no false COMPLETED. |
 | Worker unbound or identity mismatch | BLOCKED. |
+| Worker output quiet past no-activity timeout | Advisory event / waiting status; Auto Loop does not hard-stop only because output is quiet. |
+| Worker watcher reaches hard max wait while still active | Advisory event; watcher remains observable instead of forcing `stopped`. |
 
 ## 6. Worker Report Extraction / Packaging
 
@@ -116,6 +118,8 @@ long Auto Loop run.
 | Worker report without artifact paths | `collectWorkerReportedArtifacts()` returns no attachable files and a warning/blocker path for artifact review rather than treating text-only review as real-file review. |
 | Bounded-loop Worker artifact route | When Auto Loop sees a Worker response preview with attachable DONE_TAG artifact paths, it calls Worker-reported artifact collection/send before the legacy text review path. No-artifact reports fall back to text review with an explicit "text-only" note. |
 | Bounded-loop artifact review E2E | Worker-reported artifact path is attached through `sendWorkerReportedArtifactsToBrowserAI()`, Browser AI replies with `AI_REFERENCED_FILE: yes`, and the loop resolves to STOP without `artifact attachment command unavailable`. |
+| Artifact attachment chip appears late / `NOT_ATTACHED` first pass | Advisory plus text fallback or retry path; no hard stop unless a structural guarded-write blocker appears. |
+| Artifact review reply omits `AI_REFERENCED_FILE: yes` temporarily | Advisory diagnostic; Browser AI STOP is not accepted as artifact-backed, but Auto Loop is not stopped solely by the missing marker. |
 | Active-tab loop safety | Auto Loop is armed to the active tab and aborts on tab switch; background/multi-tab concurrent loop scheduling remains out of scope. |
 
 ## 9. Docs / Prompt Contract

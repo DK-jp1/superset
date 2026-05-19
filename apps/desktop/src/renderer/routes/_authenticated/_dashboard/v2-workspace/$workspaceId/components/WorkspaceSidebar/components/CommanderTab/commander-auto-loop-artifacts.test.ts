@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import {
 	classifyAutoLoopArtifactCollection,
+	getAutoLoopArtifactReviewReplyAdvisoryReason,
 	getAutoLoopArtifactReviewReplyStopReason,
+	getAutoLoopArtifactSendAdvisoryReason,
 	getAutoLoopArtifactSendStopReason,
 	summarizeAutoLoopArtifactSendResult,
 } from "./commander-auto-loop-artifacts";
@@ -57,7 +59,7 @@ describe("commander auto loop artifact review routing", () => {
 		expect(decision.stopReason).toContain("expected tab mismatch");
 	});
 
-	it("does not accept a Browser AI reply that ignored attached files", () => {
+	it("records an advisory when Browser AI reply ignored attached files", () => {
 		const stopReason = getAutoLoopArtifactSendStopReason({
 			ok: true,
 			status: "REPLIED",
@@ -67,17 +69,57 @@ describe("commander auto loop artifact review routing", () => {
 			aiReferencedFile: false,
 		});
 
-		expect(stopReason).toContain("without referencing attached artifacts");
+		const advisoryReason = getAutoLoopArtifactSendAdvisoryReason({
+			ok: true,
+			status: "REPLIED",
+			attachedFileCount: 1,
+			attachmentUiReflected: true,
+			submissionStatus: "REPLIED",
+			aiReferencedFile: false,
+		});
+
+		expect(stopReason).toBeNull();
+		expect(advisoryReason).toContain("without referencing attached artifacts");
 	});
 
-	it("stops bounded loop when Browser AI next action does not reference attachments", () => {
+	it("keeps delayed or missing attachment reflection advisory-only", () => {
+		const stopReason = getAutoLoopArtifactSendStopReason({
+			ok: true,
+			status: "NOT_ATTACHED",
+			attachedFileCount: 1,
+			attachmentUiReflected: false,
+			warnings: ["filename chip not visible yet"],
+		});
+		const advisoryReason = getAutoLoopArtifactSendAdvisoryReason({
+			ok: true,
+			status: "NOT_ATTACHED",
+			attachedFileCount: 1,
+			attachmentUiReflected: false,
+			warnings: ["filename chip not visible yet"],
+		});
+
+		expect(stopReason).toBeNull();
+		expect(advisoryReason).toContain("filename chip not visible yet");
+	});
+
+	it("keeps artifact review reference gaps advisory-only", () => {
 		expect(
 			getAutoLoopArtifactReviewReplyStopReason(
+				"AI_REFERENCED_FILE: no\nWorkerへ渡す指示: retry without reading the file",
+			),
+		).toBeNull();
+		expect(
+			getAutoLoopArtifactReviewReplyAdvisoryReason(
 				"AI_REFERENCED_FILE: no\nWorkerへ渡す指示: retry without reading the file",
 			),
 		).toContain("did not reference");
 		expect(
 			getAutoLoopArtifactReviewReplyStopReason(
+				"Workerへ渡す指示: run another pass\nDoy確認事項なし",
+			),
+		).toBeNull();
+		expect(
+			getAutoLoopArtifactReviewReplyAdvisoryReason(
 				"Workerへ渡す指示: run another pass\nDoy確認事項なし",
 			),
 		).toContain("missing AI_REFERENCED_FILE");

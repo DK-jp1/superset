@@ -108,7 +108,7 @@ export function getAutoLoopArtifactSendStopReason(
 	}
 
 	const status = String(sendResult.status || "").toUpperCase();
-	if (status === "BLOCKED" || status === "FAILED" || status === "NOT_ATTACHED") {
+	if (status === "BLOCKED" || status === "FAILED") {
 		return (
 			joinShortReasons(sendResult.blockers) ||
 			sendResult.message ||
@@ -116,10 +116,24 @@ export function getAutoLoopArtifactSendStopReason(
 		);
 	}
 
+	return null;
+}
+
+export function getAutoLoopArtifactSendAdvisoryReason(
+	sendResult: AutoLoopWorkerArtifactSendLike | null | undefined,
+): string | null {
+	if (!sendResult) return "artifact review send returned no result";
+	const status = String(sendResult.status || "").toUpperCase();
+	if (status === "NOT_ATTACHED") {
+		return (
+			joinShortReasons(sendResult.warnings) ||
+			sendResult.message ||
+			"artifact review attachment was not reflected in Browser AI UI"
+		);
+	}
 	if ((sendResult.attachedFileCount || 0) > 0 && !sendResult.attachmentUiReflected) {
 		return "artifact review attachment was not reflected in Browser AI UI";
 	}
-
 	if (
 		sendResult.aiReferencedFile === false &&
 		String(sendResult.browserAiReviewStatus || sendResult.submissionStatus || "")
@@ -128,11 +142,16 @@ export function getAutoLoopArtifactSendStopReason(
 	) {
 		return "Browser AI replied without referencing attached artifacts";
 	}
-
 	return null;
 }
 
 export function getAutoLoopArtifactReviewReplyStopReason(
+	_replyText: string,
+): string | null {
+	return null;
+}
+
+export function getAutoLoopArtifactReviewReplyAdvisoryReason(
 	replyText: string,
 ): string | null {
 	if (/AI_REFERENCED_FILE\s*:\s*no/i.test(replyText)) {

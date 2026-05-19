@@ -45,7 +45,9 @@ import {
 } from "../browser-adapters";
 import {
 	classifyAutoLoopArtifactCollection,
+	getAutoLoopArtifactReviewReplyAdvisoryReason,
 	getAutoLoopArtifactReviewReplyStopReason,
+	getAutoLoopArtifactSendAdvisoryReason,
 	getAutoLoopArtifactSendStopReason,
 	summarizeAutoLoopArtifactSendResult,
 	type AutoLoopWorkerArtifactCollectionLike,
@@ -1792,6 +1794,21 @@ export function usePromptTransfer({
 		],
 	);
 
+	const recordAutoLoopAdvisory = useCallback(
+		(
+			reason: string,
+			options?: { lastAction?: string; toastUser?: boolean },
+		) => {
+			if (autoRelayMode !== "loop") return;
+			appendAutoLoopEvent(`advisory: ${reason}`);
+			setAutoLoopLastAction(options?.lastAction ?? reason);
+			if (options?.toastUser) {
+				toast.warning(`Auto Loop advisory: ${reason}`);
+			}
+		},
+		[appendAutoLoopEvent, autoRelayMode],
+	);
+
 	const resetAutoLoopState = useCallback(() => {
 		const now = Date.now();
 		// S5.8 Phase 1: snapshot the active tab at arm time. Reads via
@@ -2482,7 +2499,16 @@ export function usePromptTransfer({
 						autoRelayMode === "loop" &&
 						now - relayRef.lastOutputChangedAt >= AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS
 					) {
-						stopAutoLoop("worker no activity timeout");
+						relayRef.lastOutputChangedAt = now;
+						recordAutoLoopAdvisory("worker no activity timeout", {
+							lastAction: "Worker has not produced output recently; continuing wait",
+						});
+						setAutoLoopDiagnostics((prev) => ({
+							...prev,
+							noActivityRemainingMs: AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
+							noActivityDeadlineAt:
+								now + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
+						}));
 					}
 					return;
 				}
@@ -2521,12 +2547,20 @@ export function usePromptTransfer({
 					autoRelayMode === "loop" &&
 					now - relayRef.lastOutputChangedAt >= AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS
 				) {
-					appendAutoLoopEvent("timeout fired: worker no activity");
+					appendAutoLoopEvent("advisory: timeout fired: worker no activity");
 					console.log("[S5.2] timeout fired with current phase", {
 						type: "worker no activity timeout",
 						phase: autoLoopPhaseRef.current,
 					});
-					stopAutoLoop("worker no activity timeout");
+					relayRef.lastOutputChangedAt = now;
+					recordAutoLoopAdvisory("worker no activity timeout", {
+						lastAction: "Worker output is quiet; continuing wait",
+					});
+					setAutoLoopDiagnostics((prev) => ({
+						...prev,
+						noActivityRemainingMs: AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
+						noActivityDeadlineAt: now + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
+					}));
 					return;
 				}
 				if (relayRef.firstOutputAt !== null) {
@@ -2541,15 +2575,22 @@ export function usePromptTransfer({
 						: relayRef.firstOutputAt === null
 							? "timeout-no-output"
 							: "timeout";
-				cancelAutoRelay(reason);
 				if (autoRelayMode === "loop") {
 					if (autoLoopPhaseRef.current === "waiting-worker") {
-						appendAutoLoopEvent("timeout fired: hard max wait");
+						appendAutoLoopEvent("advisory: timeout fired: hard max wait");
 						console.log("[S5.2] timeout fired with current phase", {
 							type: "hard max wait timeout",
 							phase: autoLoopPhaseRef.current,
 						});
-						stopAutoLoop("hard max wait timeout");
+						recordAutoLoopAdvisory("hard max wait timeout", {
+							lastAction: "Worker exceeded hard max wait; continuing to monitor",
+						});
+						const timeoutAt = Date.now();
+						setAutoLoopDiagnostics((prev) => ({
+							...prev,
+							hardMaxRemainingMs: 0,
+							hardMaxDeadlineAt: timeoutAt,
+						}));
 					} else {
 						appendAutoLoopEvent("timeout ignored: worker phase mismatch");
 						console.log(
@@ -2557,6 +2598,8 @@ export function usePromptTransfer({
 							{ phase: autoLoopPhaseRef.current },
 						);
 					}
+				} else {
+					cancelAutoRelay(reason);
 				}
 				console.log("[S3.13] auto relay timeout after ms:", {
 					source: relayRef.source,
@@ -2567,7 +2610,13 @@ export function usePromptTransfer({
 
 			autoRelayRef.current = relayRef;
 		},
-		[autoRelayMode, cancelAutoCapture, cancelAutoRelay, stopAutoLoop],
+		[
+			autoRelayMode,
+			cancelAutoCapture,
+			cancelAutoRelay,
+			recordAutoLoopAdvisory,
+			stopAutoLoop,
+		],
 	);
 
 	const startAutoCapture = useCallback(
@@ -2713,13 +2762,21 @@ export function usePromptTransfer({
 						autoRelayMode === "loop" &&
 						now - ref.lastActivityAt >= AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS
 					) {
-						appendAutoLoopEvent("timeout fired: browser no activity");
+						appendAutoLoopEvent("advisory: timeout fired: browser no activity");
 						console.log("[S5.2] timeout fired with current phase", {
 							type: "browser ai no activity timeout",
 							phase: autoLoopPhaseRef.current,
 						});
-						cancelAutoCapture("browser-ai-no-activity-timeout");
-						stopAutoLoop("browser ai no activity timeout");
+						ref.lastActivityAt = now;
+						recordAutoLoopAdvisory("browser ai no activity timeout", {
+							lastAction: "Browser AI reply is quiet; continuing wait",
+						});
+						setAutoLoopDiagnostics((prev) => ({
+							...prev,
+							noActivityRemainingMs: AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
+							noActivityDeadlineAt:
+								now + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
+						}));
 						return;
 					}
 					console.log(
@@ -2883,15 +2940,22 @@ export function usePromptTransfer({
 			}, AUTO_CAPTURE_POLL_INTERVAL_MS);
 
 			const timeoutId = setTimeout(() => {
-				cancelAutoCapture("timeout");
 				if (autoRelayMode === "loop") {
 					if (autoLoopPhaseRef.current === "waiting-browser-ai") {
-						appendAutoLoopEvent("timeout fired: hard max wait");
+						appendAutoLoopEvent("advisory: timeout fired: hard max wait");
 						console.log("[S5.2] timeout fired with current phase", {
 							type: "hard max wait timeout",
 							phase: autoLoopPhaseRef.current,
 						});
-						stopAutoLoop("hard max wait timeout");
+						recordAutoLoopAdvisory("hard max wait timeout", {
+							lastAction:
+								"Browser AI exceeded hard max wait; continuing to monitor",
+						});
+						setAutoLoopDiagnostics((prev) => ({
+							...prev,
+							hardMaxRemainingMs: 0,
+							hardMaxDeadlineAt: Date.now(),
+						}));
 					} else {
 						appendAutoLoopEvent("timeout ignored: browser phase mismatch");
 						console.log(
@@ -2900,6 +2964,7 @@ export function usePromptTransfer({
 						);
 					}
 				} else {
+					cancelAutoCapture("timeout");
 					toast.warning(
 						"AI返答の自動取得がタイムアウトしました — 手動で ← AI → Term を使ってください",
 					);
@@ -2928,6 +2993,7 @@ export function usePromptTransfer({
 			injectIntoPage,
 			cancelAutoCapture,
 			autoRelayMode,
+			recordAutoLoopAdvisory,
 			stopAutoLoop,
 		],
 	);
@@ -3239,6 +3305,14 @@ export function usePromptTransfer({
 				stopAutoLoop(artifactReviewStopReason);
 				return;
 			}
+			const artifactReviewAdvisoryReason =
+				getAutoLoopArtifactReviewReplyAdvisoryReason(text);
+			if (artifactReviewAdvisoryReason) {
+				recordAutoLoopAdvisory(artifactReviewAdvisoryReason, {
+					lastAction:
+						"Artifact review advisory recorded; continuing bounded Loop",
+				});
+			}
 			if (
 				/AI_REFERENCED_FILE\s*:\s*yes/i.test(text) &&
 				!browserRequestedStop &&
@@ -3248,12 +3322,15 @@ export function usePromptTransfer({
 					"Browser AI artifact review missing STOP or next Worker instruction";
 				recordAutoLoopArtifactReviewOutcome({
 					expectedTabId,
-					chainStatus: "BLOCKED",
+					chainStatus: "PASS",
 					finalDecision: "ARTIFACT_REVIEW_NEXT_ACTION_MISSING",
-					nextAction: "Ask Browser AI for STOP or Workerへ渡す指示 before continuing.",
+					nextAction: "Wait for STOP or Workerへ渡す指示, or ask Browser AI for a scoped next action.",
 					notes: reason,
 				}, artifactReviewController);
-				stopAutoLoop(reason);
+				recordAutoLoopAdvisory(reason, {
+					lastAction:
+						"Artifact review has no next action yet; keeping Loop observable",
+				});
 				return;
 			}
 		}
@@ -3340,6 +3417,7 @@ export function usePromptTransfer({
 		getLiveUrl,
 		handleTerminalSubmitBeforeSend,
 		latestBrowserAiDirectionText,
+		recordAutoLoopAdvisory,
 		resolveAutoLoopArtifactReviewController,
 		stopAutoLoop,
 	]);
@@ -3359,12 +3437,17 @@ export function usePromptTransfer({
 			return;
 		}
 		if (!text.trim()) {
-			stopAutoLoop("Worker Response Preview is empty");
+			recordAutoLoopAdvisory("Worker Response Preview is empty", {
+				lastAction:
+					"Worker response preview is empty; continuing to wait for a usable report",
+			});
 			return;
 		}
 		if (workerResponsePreview.confidence === "low") {
-			stopAutoLoop("worker confidence low");
-			return;
+			recordAutoLoopAdvisory("worker confidence low", {
+				lastAction:
+					"Worker response confidence is low; forwarding available text with advisory context",
+			});
 		}
 		const workerStopReason = hasWorkerFailureOrUnresolved(text);
 		if (workerStopReason) {
@@ -3439,22 +3522,49 @@ export function usePromptTransfer({
 						stopAutoLoop(artifactStopReason);
 						return;
 					}
-					setWorkerResponsePreview(EMPTY_WORKER_RESPONSE_PREVIEW);
-					if (autoLoopTurn >= autoLoopMaxTurns) {
-						stopAutoLoop("max turns reached");
+					const artifactAdvisoryReason =
+						getAutoLoopArtifactSendAdvisoryReason(artifactSendResult);
+					if (artifactAdvisoryReason) {
+						recordAutoLoopAdvisory(artifactAdvisoryReason, {
+							lastAction:
+								"Artifact send advisory recorded; continuing with available Browser AI state",
+						});
+					}
+					const artifactSendStatus = String(
+						artifactSendResult.status || "",
+					).toUpperCase();
+					if (
+						artifactSendStatus === "NOT_ATTACHED" ||
+						((artifactSendResult.attachedFileCount || 0) === 0 &&
+							!artifactSendResult.attachmentUiReflected)
+					) {
+						setAutoLoopLastAction(
+							`Artifact attachment was not reflected; falling back to text Worker report (${artifactAdvisoryReason ?? "no reflected attachment"})`,
+						);
+						fallbackText = [
+							"DoyDeck artifact review fallback: Worker-reported artifacts were detected, but Browser AI attachment was not reflected in the UI. Treat this as text-only review and do not claim the artifact itself was inspected.",
+							"",
+							text,
+						].join("\n");
+						autoLoopArtifactReviewExpectedRef.current = false;
+					} else {
+						setWorkerResponsePreview(EMPTY_WORKER_RESPONSE_PREVIEW);
+						if (autoLoopTurn >= autoLoopMaxTurns) {
+							stopAutoLoop("max turns reached");
+							return;
+						}
+						autoLoopArtifactReviewExpectedRef.current = true;
+						setAutoLoopPhase("waiting-browser-ai");
+						setAutoLoopLastAction(
+							summarizeAutoLoopArtifactSendResult(artifactSendResult),
+						);
+						void startAutoCapture({
+							baseline: artifactReviewBaseline,
+							prompt: "auto-loop-artifact-review-watch",
+							triggeredAt: Date.now(),
+						});
 						return;
 					}
-					autoLoopArtifactReviewExpectedRef.current = true;
-					setAutoLoopPhase("waiting-browser-ai");
-					setAutoLoopLastAction(
-						summarizeAutoLoopArtifactSendResult(artifactSendResult),
-					);
-					void startAutoCapture({
-						baseline: artifactReviewBaseline,
-						prompt: "auto-loop-artifact-review-watch",
-						triggeredAt: Date.now(),
-					});
-					return;
 				}
 				if (artifactDecision.shouldFallbackToText) {
 					setAutoLoopLastAction(
@@ -3505,6 +3615,7 @@ export function usePromptTransfer({
 		currentUrl,
 		getLiveUrl,
 		injectIntoPage,
+		recordAutoLoopAdvisory,
 		resolveAutoLoopArtifactReviewController,
 		startAutoCapture,
 		stopAutoLoop,

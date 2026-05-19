@@ -248,8 +248,8 @@ These are small enough to run without a large design cycle:
 
 ## Tomorrow Operating Notes
 
-- Treat `READY_WITH_NOTES` as "usable only after reading the warnings", not as
-  full green.
+- Treat `READY_WITH_NOTES` as usable with visible warnings, not as a hard stop.
+  Only structural send/write mismatches should block by themselves.
 - Before starting a loop, distinguish:
   - Browser AI provider is ready,
   - a Worker candidate exists,
@@ -257,8 +257,10 @@ These are small enough to run without a large design cycle:
   - task-run status is not stale or blocked.
 - Prefer Claude/ChatGPT sends that reach `UI_REFLECTED`, `WAITING_REPLY`, or
   `REPLIED`; never treat injection-only states as success.
-- For artifact review, require real attachment evidence and
-  `AI_REFERENCED_FILE: yes` before accepting STOP as artifact-backed.
+- For artifact review, prefer real attachment evidence and
+  `AI_REFERENCED_FILE: yes` before accepting STOP as artifact-backed. Missing
+  reference evidence should stay advisory/diagnostic unless the task explicitly
+  depends on artifact-backed completion.
 - Use summary mode for polling; ask for diagnostics/raw only when investigating
   a specific failure.
 - If provider thread context may be stale, start with a short fresh-context

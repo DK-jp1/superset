@@ -92,7 +92,7 @@ Use the summary first. Then run only the checks needed for the task.
 | Summary result | Meaning | Action |
 | --- | --- | --- |
 | `READY` | The tab is ready for the short live-readiness path. | Start task flow only after Doy approves the task. |
-| `READY_WITH_NOTES` | Usable, but warnings matter. | Read warnings before Loop; verify provider send or payload warnings as needed. |
+| `READY_WITH_NOTES` | Usable, but warnings matter. | Read warnings before Loop; warnings should remain advisory unless they are a structural send/write mismatch. |
 | `BLOCKED` | Do not start Loop. | Resolve the first blocker in `nextRecommendedAction`. |
 
 Common blockers:
@@ -101,6 +101,12 @@ Common blockers:
 - `Browser AI: ...`: prepare provider or wait for composer readiness.
 - `Task run: ...`: task-run status is stale, blocked, or not bound.
 - `active tab mismatch`: activate the intended tab before guarded writes.
+
+Loop diagnostics such as Worker no-activity timeout, Browser AI no-activity
+timeout, hard-max wait timeout, delayed attachment chips, missing
+`AI_REFERENCED_FILE`, provider notes, and payload warnings should be reported as
+warnings/advisories. They are not by themselves a reason for DoyDeck to hard
+stop an already running bounded loop.
 
 ## Guardrails
 

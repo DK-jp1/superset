@@ -462,7 +462,12 @@ Priority F: paneId activate / output capture継続改善
 Priority G: Auto Loop監視UI / stop reason表示
 
 - Auto Loop本体を作り直さない。
-- 既存Auto Loop / Controller chainの状態、stop reason、Outcomeを見やすくする。
+- 既存Auto Loop / Controller chainの状態、advisory、warning、Outcomeを見やすくする。
+- `hard max wait timeout`、Worker / Browser AI no-activity、attachment delay、
+  `AI_REFERENCED_FILE`未確認、provider / payload warningは原則として停止理由ではなく
+  advisory / diagnosticとして表示する。
+- hard stopは手動Stop、write対象tab不一致、明確な構造的送信不能、またはDoy確認が必要な
+  実操作に限定する。
 
 ## 12. 使用開始チェックリスト
 

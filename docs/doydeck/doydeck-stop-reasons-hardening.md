@@ -39,8 +39,12 @@ diagnostics instead of stopping Auto Loop:
 - Direct `local.db`, `app-state.json`, `~/.superset`, or
   `~/.doydeck-superset-dev` manipulation.
 - Cookie, token, credential, secret, or private API operations.
-- Worker identity mismatch or shell/unknown worker treated as recognized.
-- Target tab mismatch on write commands.
+- `hard max wait timeout`, Worker no-activity timeout, and Browser AI
+  no-activity timeout. These are stale/waiting diagnostics, not automatic stop
+  reasons.
+- Artifact-review delays such as late filename chips, `NOT_ATTACHED`, or
+  temporary `AI_REFERENCED_FILE` uncertainty. Prefer retry, text fallback, or
+  next-action diagnostics over stopping the loop.
 
 Findings should include source and matched text when returned through a
 Controller Command so the caller can see what was detected.
@@ -65,9 +69,9 @@ precisely.
   response when the structured report is missing.
 - Without a current instruction marker, fallback should not package generic
   terminal banner/startup text as a Worker response.
-- Codex worker input residue such as a visible `› <unsent prompt>` line should
-  block new sends as `prompt-echo-residue`. Do not append a new instruction to a
-  pane that already contains unsent text.
+- Suspected / historical prompt echo residue should be a warning with recovery
+  suggestions. Only a currently visible unsent input line should prevent a new
+  terminal submission.
 - Known Codex placeholder prompts such as `› Find and fix a bug in @filename`
   are not user input residue and should not block sends.
 - `getTaskRunStatus()` must use current-run `readBoundWorkerLatestResponse()`
@@ -94,6 +98,11 @@ future hardening passes:
 
 - Browser AI submission status must separate `SUBMITTED`, `UI_REFLECTED`,
   `WAITING_REPLY`, `REPLIED`, `NOT_REFLECTED`, and `FAILED`.
+- Auto Loop timeout diagnostics should refresh `nextRecommendedAction` and
+  keep the watcher alive instead of moving the loop to `stopped`.
+- Artifact review should prefer `AI_REFERENCED_FILE: yes`, but missing or
+  negative reference signals are advisory unless the task explicitly requires
+  artifact-backed STOP.
 - Worker status should be tied to the current task run identity so previous
   `COMPLETED` state does not carry into a new run.
 - DONE_TAG / END_REPORT report extraction should outrank idle footer text.
@@ -111,7 +120,7 @@ strings:
 
 - `severity`: `warning` or `allowed` for DoyDeck-owned safety findings.
   `block` is reserved for structural readiness failures such as missing Worker
-  binding, target tab mismatch, or unavailable provider state.
+  binding, target tab mismatch on write commands, or unavailable provider state.
 - `source`: text origin.
 - `matchedText`: the phrase that triggered the finding.
 - `reason`: short classification.
@@ -129,9 +138,14 @@ Use this checklist when changing the safety classifier:
 - Actual `git push` is an advisory warning and does not stop Auto Loop.
 - Actual destructive shell command text is an advisory warning and does not stop
   Auto Loop.
+- Worker no-activity, Browser AI no-activity, and hard-max wait timeouts record
+  advisory events and keep the watcher active.
+- Artifact-review attachment delay or missing `AI_REFERENCED_FILE: yes` records
+  advisory diagnostics instead of stopping the loop.
 - Worker report text that says commit/push were not performed does not block.
 - Submitted DONE_TAG prompt echo does not count as a Worker report.
-- Codex visible input residue blocks sends before terminal submission.
+- Historical/suspected input residue does not block; a currently visible
+  unsent input line still guards direct terminal submission.
 - Idle-only completion text does not count as a Worker response package.
 - Browser AI Worker-response sends check `workerReportValid` before submission.
 - Commander bridge still does not auto-capture `injected` results.
