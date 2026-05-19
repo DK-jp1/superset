@@ -120,6 +120,9 @@ Implemented:
 | Browser AI | `attachTargetFilesToBrowserAI(input?)` | implemented | Attaches supported Explorer files to Browser AI through the provider native file input and verifies filename/chip UI reflection. |
 | Browser AI | `sendTargetFilesReviewToBrowserAI(input?)` | implemented | Alias for `attachTargetFilesToBrowserAI`; can attach files and send a short review prompt. |
 | Browser AI | `attachSelectedExplorerFileToBrowserAI(input?)` | implemented | Alias used by the Explorer UI action for the selected file. |
+| Browser AI | `getBrowserAiAttachedFiles(input?)` | implemented | Read-only visible attachment/chip inventory for the active Browser AI slot. |
+| Browser AI | `collectLoopReviewArtifacts(input?)` | implemented | Collects selected files, review screenshots, and Worker DONE_TAG report metadata for loop review. |
+| Browser AI | `sendLoopArtifactsToBrowserAI(input?)` | implemented | Attaches collected loop artifacts to Browser AI and can send a bounded-loop artifact review prompt. |
 | Browser AI | `readBrowserAiLatestReply()` | implemented | Reads latest Browser AI assistant reply and classifications. |
 | Browser AI | `getBrowserAiLatestReply()` | implemented | Alias for `readBrowserAiLatestReply`. |
 | Worker | `sendInstructionToBoundWorker(input)` | implemented | Sends instruction to bound Codex / Claude worker with preflight guard. |

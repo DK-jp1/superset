@@ -274,6 +274,36 @@ Loop方針:
 - scope拡大、DB/API/認証/credentials/deploy/destructive操作、
   大きな仕様/UX判断はDoy確認で止める。
 
+## 7.2 Artifact Review Loop
+
+Worker完了後は、Browser AIにテキスト要約だけを返すのではなく、現物artifactを
+添付してレビューさせる。
+
+詳細設計: [artifact-review-loop.md](./artifact-review-loop.md)
+
+標準フロー:
+
+1. WorkerはDONE_TAGからEND_REPORTまでの完了報告を返す。
+2. Workerがスクショを生成する場合は`review-screenshots/*.png`に置く。
+3. Meta AI / Controllerは`collectLoopReviewArtifacts({ expectedTabId, requireActiveTabMatch:true })`で収集する。
+4. `sendLoopArtifactsToBrowserAI()`で対応ファイルをBrowser AIへ実添付し、artifact review promptを送る。
+5. Browser AIは添付ファイル、Worker報告、検証結果を見て、`STOP`または次Worker指示を返す。
+6. vスコープ内の修正ならDoy確認なしで次Worker指示に進める。
+
+収集対象:
+
+- DoyがExplorerで選んだ仕様書、docs、画像、スクショ。
+- Workerが生成した`review-screenshots/*.png`, `.jpg`, `.jpeg`。
+- WorkerのDONE_TAG / END_REPORT報告。
+- 報告内のbuild/test/Playwright/console/pageerror/変更ファイルの要約。
+
+注意:
+
+- `ATTACH_ATTEMPTED`や`FILE_INPUT_SET`だけでは成功扱いしない。
+- `ATTACHMENT_UI_REFLECTED`、filename/chip表示、またはBrowser AI返信で現物参照を確認する。
+- Auto Loop本体は勝手に開始しない。Loop中のartifact送信はController commandで明示する。
+- PDF/OCR/zip、複数ファイルUXの細部、添付済みファイルの長期registry UIはfuture。
+
 ## 8. Worker launch policy
 
 Worker起動は、DoyDeck本体コード変更やAuto Loop開始とは別のroutine safe setupとして扱う。

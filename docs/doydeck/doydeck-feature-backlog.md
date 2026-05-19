@@ -38,6 +38,7 @@ Priority guide:
 | "雑に話すだけで準備" flow | Rough Doy input becomes proposed tabs, Browser AI ready, and Worker readiness after approval. | Reduces short-time copy/paste. | Docs-only task intake flow exists. | P2 | Later after command helpers | Task intake commands and guarded writes. | task intake workflow. | Add `analyzeTaskIntake` and `proposeTaskTabs` before any auto-create. | Sample multi-task input returns create / not-create / later candidates. |
 | Browser AI initial context prime | Prime Browser AI at tab start with behavior policy and current task. | Browser AI should act as wall-discussion partner immediately. | Template exists in docs; no command. | P2 | Later | Browser AI short prompt command. | Browser AI behavior policy. | `primeBrowserAiForTab({ tabId, context })` with guarded send and verification. | New tab receives concise context and replies with useful next questions. |
 | File to Browser AI review path | Attach selected Explorer files to Browser AI for review. | Finder open helps humans; AI review needs real attachments, not only copied paths or pasted text. | Implemented for supported single-file Explorer action and Controller command. | done | Done | File selection, max-size/type rules, provider submission verification. | Explorer / file handling. | `attachTargetFilesToBrowserAI()` prepares supported files and uses Browser AI native file input; Explorer exposes `Attach to Browser AI`. | Select a small docs file, verify filename/chip UI reflection, send review prompt, and read Browser AI reply. |
+| Artifact Review Loop package | Collect Worker screenshots/files/report and send them to Browser AI as real attachments. | Browser AI should review the actual result, not only a text summary. | Implemented as Controller commands for collection and send; Auto Loop body still reuses it explicitly. | P1 | Pilot | Existing file attachment command and Worker DONE_TAG extraction. | Artifact review loop. | `collectLoopReviewArtifacts()` collects selected files, review screenshots, and Worker report metadata; `sendLoopArtifactsToBrowserAI()` attaches files and sends the review prompt. | Dry-run collection returns attachable artifacts; bounded-loop send attaches supported files and Browser AI can reply with STOP or next Worker instruction. |
 
 ## File Attachment Follow-ups
 
@@ -45,8 +46,8 @@ Priority guide:
 - PDF attachment validation; no OCR or PDF text extraction yet.
 - Image attachment review flow for screenshots and visual specs.
 - Fallback text excerpt mode only when provider real attachment is impossible.
-- Auto Loop / bounded loop reuse of already attached files across Worker review turns.
-- Read-only attached-file inventory such as `getBrowserAiAttachedFiles(input?)`.
+- Auto Loop body integration that automatically calls `sendLoopArtifactsToBrowserAI()` after each Worker completion.
+- Read-only attached-file inventory exists as `getBrowserAiAttachedFiles(input?)`; continue smoke against provider UI changes.
 
 ## Top 5 Recommended Next Implementations
 

@@ -771,13 +771,25 @@ export function buildBrowserAiFileAttachmentScript(
       description: candidates[0] ? describeElement(candidates[0]) : '',
     };
   }
-  function normalizeText(value) {
-    return String(value || '').replace(/\\s+/g, ' ').trim();
-  }
-  function collectVisibleFileNameMatches(names) {
-    var bodyText = normalizeText(document.body ? document.body.innerText || document.body.textContent || '' : '');
-    return names.filter(function(name) { return bodyText.indexOf(name) !== -1; });
-  }
+	  function normalizeText(value) {
+	    return String(value || '').replace(/\\s+/g, ' ').trim();
+	  }
+	  function escapeRegExp(value) {
+	    return String(value || '').replace(/[\\\\^$.*+?()[\\]{}|]/g, '\\\\$&');
+	  }
+	  function buildVisibleFileNamePattern(name) {
+	    var match = String(name || '').match(/^(.+?)(\\.[^.]+)$/);
+	    if (!match) return new RegExp(escapeRegExp(name));
+	    return new RegExp(escapeRegExp(match[1]) + '(?:\\\\(\\\\d+\\\\))?' + escapeRegExp(match[2]));
+	  }
+	  function collectVisibleFileNameMatches(names) {
+	    var bodyText = normalizeText(document.body ? document.body.innerText || document.body.textContent || '' : '');
+	    return names.map(function(name) {
+	      if (bodyText.indexOf(name) !== -1) return name;
+	      var variantMatch = bodyText.match(buildVisibleFileNamePattern(name));
+	      return variantMatch ? variantMatch[0] : '';
+	    }).filter(Boolean);
+	  }
   var target = findFileInput();
   if (!target.element) {
     return {
@@ -814,7 +826,7 @@ export function buildBrowserAiFileAttachmentScript(
     var attempts = 0;
     function poll() {
       var visible = collectVisibleFileNameMatches(names);
-      if (visible.length >= names.length || attempts >= 20) {
+	      if (visible.length >= names.length || attempts >= 60) {
         resolve({
           status: visible.length >= names.length ? 'ui_reflected' : 'file_input_set',
           provider: provider,
@@ -847,10 +859,18 @@ export function buildBrowserAiAttachmentStateScript(
 	return `(function() {
   var names = ${escapedNames};
   var provider = ${escapedProvider};
-  function normalizeText(value) {
-    return String(value || '').replace(/\\s+/g, ' ').trim();
-  }
-  var bodyText = normalizeText(document.body ? document.body.innerText || document.body.textContent || '' : '');
+	  function normalizeText(value) {
+	    return String(value || '').replace(/\\s+/g, ' ').trim();
+	  }
+	  function escapeRegExp(value) {
+	    return String(value || '').replace(/[\\\\^$.*+?()[\\]{}|]/g, '\\\\$&');
+	  }
+	  function buildVisibleFileNamePattern(name) {
+	    var match = String(name || '').match(/^(.+?)(\\.[^.]+)$/);
+	    if (!match) return new RegExp(escapeRegExp(name));
+	    return new RegExp(escapeRegExp(match[1]) + '(?:\\\\(\\\\d+\\\\))?' + escapeRegExp(match[2]));
+	  }
+	  var bodyText = normalizeText(document.body ? document.body.innerText || document.body.textContent || '' : '');
   var inputs = Array.prototype.slice.call(document.querySelectorAll('input[type="file"]'));
   var inputFileNames = [];
   inputs.forEach(function(input) {
@@ -858,7 +878,11 @@ export function buildBrowserAiAttachmentStateScript(
       inputFileNames.push(file.name);
     });
   });
-  var visible = names.filter(function(name) { return bodyText.indexOf(name) !== -1; });
+	  var visible = names.map(function(name) {
+	    if (bodyText.indexOf(name) !== -1) return name;
+	    var variantMatch = bodyText.match(buildVisibleFileNamePattern(name));
+	    return variantMatch ? variantMatch[0] : '';
+	  }).filter(Boolean);
   return {
     provider: provider,
     attachmentUiReflected: visible.length >= names.length && names.length > 0,
@@ -866,6 +890,66 @@ export function buildBrowserAiAttachmentStateScript(
     fileInputFileNames: inputFileNames,
     fileInputFileCount: inputFileNames.length,
     checkedFileNameCount: names.length
+  };
+})()`;
+}
+
+export function buildBrowserAiAttachedFilesStateScript(
+	provider: BrowserProvider,
+): string {
+	const escapedProvider = JSON.stringify(provider);
+	return `(function() {
+  var provider = ${escapedProvider};
+  function normalizeText(value) {
+    return String(value || '').replace(/\\s+/g, ' ').trim();
+  }
+  function unique(values) {
+    var seen = Object.create(null);
+    return values.filter(function(value) {
+      var key = String(value || '').trim();
+      if (!key || seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
+  }
+  var inputs = Array.prototype.slice.call(document.querySelectorAll('input[type="file"]'));
+  var inputFileNames = [];
+  inputs.forEach(function(input) {
+    Array.prototype.slice.call(input.files || []).forEach(function(file) {
+      inputFileNames.push(file.name);
+    });
+  });
+  var bodyText = normalizeText(document.body ? document.body.innerText || document.body.textContent || '' : '');
+  var extensionPattern = /([^\\s"'<>|\\\\/]{1,180}\\.(?:md|txt|json|ts|tsx|js|jsx|png|jpe?g))/ig;
+  var visibleNames = [];
+  var match;
+  while ((match = extensionPattern.exec(bodyText))) {
+    visibleNames.push(normalizeText(match[1]));
+  }
+  var candidateSelectors = [
+    '[data-testid*="attachment" i]',
+    '[data-testid*="file" i]',
+    '[aria-label*="attachment" i]',
+    '[aria-label*="file" i]',
+    'button',
+    '[role="button"]'
+  ];
+  Array.prototype.slice.call(document.querySelectorAll(candidateSelectors.join(','))).forEach(function(element) {
+    var text = normalizeText(element.innerText || element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || '');
+    if (!text) return;
+    var localPattern = /([^\\s"'<>|\\\\/]{1,180}\\.(?:md|txt|json|ts|tsx|js|jsx|png|jpe?g))/ig;
+    var localMatch;
+    while ((localMatch = localPattern.exec(text))) {
+      visibleNames.push(normalizeText(localMatch[1]));
+    }
+  });
+  return {
+    provider: provider,
+    attachedFileNamesVisible: unique(visibleNames),
+    fileInputFileNames: unique(inputFileNames),
+    fileInputFileCount: unique(inputFileNames).length,
+    attachmentUiReflected: unique(visibleNames).length > 0 || unique(inputFileNames).length > 0,
+    visualVerificationUsed: true
   };
 })()`;
 }

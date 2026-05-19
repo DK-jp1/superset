@@ -1,4 +1,4 @@
-import fsSync, { constants } from "node:fs";
+import fsSync, { constants, type Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -99,6 +99,12 @@ const BROWSER_AI_ATTACHMENT_MIME_TYPES: Record<string, string> = {
 const BROWSER_AI_ATTACHMENT_EXTENSIONS = new Set(
 	Object.keys(BROWSER_AI_ATTACHMENT_MIME_TYPES),
 );
+const LOOP_REVIEW_SCREENSHOT_DIRECTORIES = [
+	"review-screenshots",
+	path.join("artifacts", "review-screenshots"),
+	path.join("tmp", "review-screenshots"),
+];
+const LOOP_REVIEW_SCREENSHOT_EXTENSIONS = new Set(["png", "jpg", "jpeg"]);
 
 function getExtension(filePath: string): string {
 	return path.extname(filePath).slice(1).toLowerCase();
@@ -579,6 +585,88 @@ async function prepareBrowserAiAttachmentFile(input: {
 	};
 }
 
+async function collectLoopReviewScreenshotPaths(input: {
+	workspaceId?: string;
+	maxFiles: number;
+}) {
+	const workspaceRoot = getWorkspaceRoot(input.workspaceId);
+	if (!workspaceRoot) return [];
+
+	const candidates: { path: string; mtimeMs: number }[] = [];
+	for (const relativeDirectory of LOOP_REVIEW_SCREENSHOT_DIRECTORIES) {
+		const directoryPath = normalizeAbsolutePath(
+			path.join(workspaceRoot, relativeDirectory),
+		);
+		if (!isPathWithinRoot(workspaceRoot, directoryPath)) continue;
+		if (!(await pathExists(directoryPath))) continue;
+
+		let entries: Dirent[];
+		try {
+			entries = await fs.readdir(directoryPath, { withFileTypes: true });
+		} catch {
+			continue;
+		}
+
+		for (const entry of entries) {
+			if (!entry.isFile()) continue;
+			if (!LOOP_REVIEW_SCREENSHOT_EXTENSIONS.has(getExtension(entry.name))) {
+				continue;
+			}
+			const filePath = normalizeAbsolutePath(path.join(directoryPath, entry.name));
+			if (!isPathWithinRoot(workspaceRoot, filePath)) continue;
+			try {
+				const stats = await fs.stat(filePath);
+				candidates.push({ path: filePath, mtimeMs: stats.mtimeMs });
+			} catch {
+				// Ignore files that disappear during read-only collection.
+			}
+		}
+	}
+
+	return candidates
+		.sort((left, right) => right.mtimeMs - left.mtimeMs)
+		.slice(0, input.maxFiles)
+		.map((candidate) => candidate.path);
+}
+
+async function summarizeLoopReviewArtifactFile(input: {
+	workspaceId?: string;
+	filePath: string;
+	kind: "selected-file" | "review-screenshot";
+	source: string;
+}) {
+	const base = {
+		kind: input.kind,
+		path: input.filePath,
+		name: path.basename(input.filePath),
+		source: input.source,
+	};
+
+	try {
+		const prepared = await prepareBrowserAiAttachmentFile({
+			workspaceId: input.workspaceId,
+			filePath: input.filePath,
+		});
+		return {
+			...base,
+			path: prepared.absolutePath,
+			name: prepared.name,
+			mimeType: prepared.mimeType,
+			byteLength: prepared.byteLength,
+			attachable: true,
+			reason: null,
+		};
+	} catch (error) {
+		return {
+			...base,
+			mimeType: null,
+			byteLength: null,
+			attachable: false,
+			reason: getErrorMessage(error),
+		};
+	}
+}
+
 export const createDoyDeckExplorerRouter = () => {
 	return router({
 		getRoots: publicProcedure
@@ -830,6 +918,66 @@ export const createDoyDeckExplorerRouter = () => {
 					maxBytes: DOYDECK_BROWSER_AI_ATTACHMENT_MAX_BYTES,
 					prepared,
 					skipped,
+				};
+			}),
+
+		collectLoopReviewArtifactFiles: publicProcedure
+			.input(
+				z.object({
+					workspaceId: z.string().optional(),
+					paths: z.array(z.string()).max(10).optional(),
+					includeReviewScreenshots: z.boolean().optional(),
+					maxFiles: z.number().int().min(1).max(20).optional(),
+				}),
+			)
+			.query(async ({ input }) => {
+				const maxFiles = input.maxFiles ?? 10;
+				const explicitPaths = input.paths ?? [];
+				const reviewScreenshotPaths = input.includeReviewScreenshots
+					? await collectLoopReviewScreenshotPaths({
+							workspaceId: input.workspaceId,
+							maxFiles,
+						})
+					: [];
+				const candidates = [
+					...explicitPaths.map((filePath) => ({
+						filePath,
+						kind: "selected-file" as const,
+						source: "targetPaths",
+					})),
+					...reviewScreenshotPaths.map((filePath) => ({
+						filePath,
+						kind: "review-screenshot" as const,
+						source: "review-screenshots",
+					})),
+				];
+				const seen = new Set<string>();
+				const uniqueCandidates = candidates.filter((candidate) => {
+					const key = normalizeAbsolutePath(candidate.filePath);
+					if (seen.has(key)) return false;
+					seen.add(key);
+					return true;
+				});
+				const artifacts = [];
+				for (const candidate of uniqueCandidates.slice(0, maxFiles)) {
+					artifacts.push(
+						await summarizeLoopReviewArtifactFile({
+							workspaceId: input.workspaceId,
+							filePath: candidate.filePath,
+							kind: candidate.kind,
+							source: candidate.source,
+						}),
+					);
+				}
+				const attachablePaths = artifacts
+					.filter((artifact) => artifact.attachable)
+					.map((artifact) => artifact.path);
+				return {
+					maxFiles,
+					artifactCount: artifacts.length,
+					attachableArtifactCount: attachablePaths.length,
+					attachablePaths,
+					artifacts,
 				};
 			}),
 	});

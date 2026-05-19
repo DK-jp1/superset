@@ -103,6 +103,9 @@ long Auto Loop run.
 | Browser AI file attachment | `Attach to Browser AI` / `attachTargetFilesToBrowserAI()` attaches supported file and verifies filename/chip UI reflection. |
 | Browser AI file review prompt | Optional review prompt reaches `UI_REFLECTED`, `WAITING_REPLY`, or `REPLIED`; text fallback alone is not success. |
 | Folder / missing path / unsupported type attachment | BLOCKED or skipped with clear reason; no Worker send or Auto Loop start. |
+| Browser AI attached-file inventory | `getBrowserAiAttachedFiles()` returns visible filenames/file-input names without sending. |
+| Loop artifact collection | `collectLoopReviewArtifacts()` collects selected files, `review-screenshots/*`, and Worker DONE_TAG report metadata without starting Auto Loop. |
+| Loop artifact review send | `sendLoopArtifactsToBrowserAI({ dryRun:true })` returns attachable artifacts and review prompt; live send must verify filename/chip UI reflection. |
 
 ## 9. Docs / Prompt Contract
 
