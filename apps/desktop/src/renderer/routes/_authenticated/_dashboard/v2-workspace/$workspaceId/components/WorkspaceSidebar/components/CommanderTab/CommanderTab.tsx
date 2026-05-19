@@ -1359,6 +1359,7 @@ interface CommanderControllerLiveReadinessSummaryResult
 	safetyGuardStatus: {
 		status: CommanderControllerPreflightStatus;
 		negatedPolicyTextAllowed: boolean;
+		actualDangerousCommandAdvisory: boolean;
 		actualDangerousCommandBlocked: boolean;
 		samplesChecked: string[];
 		dangerousSample: string;
@@ -9369,12 +9370,13 @@ export function CommanderTab({
 				dangerousSample,
 				"actual shell command",
 			);
-			const actualDangerousCommandBlocked =
+			const actualDangerousCommandAdvisory =
 				dangerousFinding?.label === "git push";
+			const actualDangerousCommandBlocked = false;
 			const artifactReviewStatus: CommanderControllerPreflightStatus =
 				missingArtifactCommands.length > 0 ? "BLOCKED" : "READY";
 			const safetyGuardStatus: CommanderControllerPreflightStatus =
-				negatedPolicyTextAllowed && actualDangerousCommandBlocked
+				negatedPolicyTextAllowed && actualDangerousCommandAdvisory
 					? "READY"
 					: "BLOCKED";
 			const payloadBudgetStatus: CommanderControllerPreflightStatus =
@@ -9486,7 +9488,7 @@ export function CommanderTab({
 					ok: safetyGuardStatus === "READY",
 					message:
 						safetyGuardStatus === "READY"
-							? "Safety guard allows negated policy text and blocks actual git push command samples."
+							? "Safety guard allows negated policy text and records actual git push command samples as advisory findings."
 							: "Safety guard sample check failed.",
 					blockers:
 						safetyGuardStatus === "READY"
@@ -9606,12 +9608,13 @@ export function CommanderTab({
 				safetyGuardStatus: {
 					status: safetyGuardStatus,
 					negatedPolicyTextAllowed,
+					actualDangerousCommandAdvisory,
 					actualDangerousCommandBlocked,
 					samplesChecked: safetyPolicySamples,
 					dangerousSample,
 					nextRecommendedAction:
 						safetyGuardStatus === "READY"
-							? "Safety guard sample is healthy."
+							? "Safety guard sample is advisory-only and does not stop Loop."
 							: "Run safety tests and inspect dangerous guard before Loop.",
 				},
 				payloadBudgetStatus: {

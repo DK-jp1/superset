@@ -31,7 +31,7 @@ describe("commander auto loop dangerous command detection", () => {
 		expect(findAutoLoopDangerousCommandFinding(text)).toBeNull();
 	});
 
-	test("blocks actual shell commands in Browser AI replies", () => {
+	test("records actual shell command advisories in Browser AI replies", () => {
 		const pushFinding = findAutoLoopDangerousCommandFinding(
 			"Workerへ渡す指示:\n```bash\ngit push origin doydeck/safe-dev-isolation\n```",
 		);
@@ -51,6 +51,8 @@ describe("commander auto loop dangerous command detection", () => {
 				source: "browser ai reply",
 				matchedText: "git push",
 				reason: "remote git push requires Doy confirmation",
+				nextAction:
+					"Record advisory and continue Auto Loop; rely on Worker harness / AGENTS / git policy for enforcement.",
 			}),
 		);
 		expect(deployFinding).toEqual(
@@ -73,7 +75,7 @@ describe("commander auto loop dangerous command detection", () => {
 		);
 	});
 
-	test("blocks execution intent that reads credentials or local state", () => {
+	test("records advisories for execution intent that reads credentials or local state", () => {
 		const secretFinding = findAutoLoopDangerousCommandFinding("cat .env.local");
 		const localStateFinding =
 			findAutoLoopDangerousCommandFinding("sqlite3 local.db .dump");

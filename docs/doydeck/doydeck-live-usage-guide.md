@@ -423,7 +423,11 @@ Priority A: worker response warning細部整理
 
 - 否定文中の`commit/push`を危険要求として拾いすぎるwarningを整理する。
 - `git diff` / `git status` / `git diff --check`はsafe-checkとして扱う。
-- `git commit` / `git push`はwrite-operation / Doy確認対象として維持する。
+- `git commit` / `git push`はwrite-operation / Doy確認対象として可視化する。
+- DoyDeck本体のAuto Loopは、`git push`、`deploy`、`token`、
+  `destructive`などの危険語やshell風テキストだけでは停止しない。
+  これらはadvisory warningとして残し、実行防止はWorker harness、
+  AGENTS.md、git/deploy gate、Doyの最終判断に委ねる。
 
 Priority B: Claude ready-state復旧action設計
 

@@ -28,44 +28,48 @@ interface SafetyCheck {
 const SAFETY_CHECKS: SafetyCheck[] = [
 	{
 		reason: "remote git push requires Doy confirmation",
-		nextAction: "Ask Doy before pushing or otherwise reflecting changes remotely.",
+		nextAction:
+			"Keep this as an advisory; Worker harness / AGENTS / git policy remain responsible for preventing remote push.",
 		pattern: /\bgit\s+push\b|\bpush(?:\s+origin|\s+upstream|\s+--force|\s+-f\b)|\bforce\s+push\b|プッシュ|remote反映/i,
-		severity: "block",
+		severity: "warning",
 	},
 	{
 		reason: "deploy or public release requires Doy confirmation",
-		nextAction: "Ask Doy before deploy, release, publish, or public exposure.",
+		nextAction:
+			"Keep this as an advisory; Worker harness / AGENTS / deployment gates remain responsible for preventing public release.",
 		pattern: /\bdeploy(?:ment)?\b|\bvercel\s+deploy\b|\bnetlify\s+deploy\b|\bpublic\s+release\b|\bpublish\b|本番反映|外部公開|公開|リリース/i,
-		severity: "block",
+		severity: "warning",
 	},
 	{
 		reason: "destructive shell command requires Doy confirmation",
-		nextAction: "Stop and ask Doy before destructive shell operations.",
+		nextAction:
+			"Keep this as an advisory; destructive-operation enforcement belongs to the Worker harness and local execution layer.",
 		pattern: /\brm\s+-[A-Za-z]*r[A-Za-z]*f\b|\bgit\s+reset\s+--hard\b|\bgit\s+clean\s+-[A-Za-z]*f\b|\btruncate\b|\bdd\s+if=|\bmkfs\b|破壊/i,
-		severity: "block",
+		severity: "warning",
 	},
 	{
 		reason: "delete/remove command requires Doy confirmation",
-		nextAction: "Ask Doy before deleting or removing files.",
+		nextAction:
+			"Keep this as an advisory; delete/remove enforcement belongs to the Worker harness and local execution layer.",
 		pattern: /\bdelete\b|\bremove\b|削除/i,
-		severity: "block",
+		severity: "warning",
 		commandOnly: true,
 	},
 	{
 		reason: "direct local DB or app-state operation is not allowed",
 		nextAction:
-			"Use supported DoyDeck APIs; do not directly edit local DB or app-state files.",
+			"Keep this as an advisory; supported APIs and the Worker harness should prevent direct local DB/app-state edits.",
 		pattern:
 			/local\.db|app-state\.json|~\/\.superset|~\/\.doydeck-superset-dev|\.doydeck-superset-dev/i,
-		severity: "block",
+		severity: "warning",
 	},
 	{
 		reason: "credential, token, cookie, or private API operation is not allowed",
 		nextAction:
-			"Stop and ask Doy if credentials, tokens, cookies, or private APIs are required.",
+			"Keep this as an advisory; credential/private API enforcement belongs to the Worker harness and auth boundaries.",
 		pattern:
 			/\bcookie\b|\bcookies\b|\btoken\b|\bcredentials?\b|\bsecret\b|\bprivate\s+api\b|秘密鍵|認証情報|トークン/i,
-		severity: "block",
+		severity: "warning",
 	},
 	{
 		reason: "local checkpoint commit is allowed with verification",

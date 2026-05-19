@@ -33,7 +33,7 @@ describe("commander instruction safety classification", () => {
 		).toBe(true);
 	});
 
-	test("blocks actual remote push commands with source and matched text", () => {
+	test("records actual remote push commands as advisory warnings", () => {
 		const findings = classifyInstructionSafetyFindings(
 			"git push origin doydeck/safe-dev-isolation",
 			"actual shell command",
@@ -41,15 +41,16 @@ describe("commander instruction safety classification", () => {
 
 		expect(findings).toContainEqual(
 			expect.objectContaining({
-				severity: "block",
+				severity: "warning",
 				source: "actual shell command",
 				matchedText: "git push",
 				reason: "remote git push requires Doy confirmation",
 			}),
 		);
+		expect(findInstructionSafetyBlockers("git push origin main")).toEqual([]);
 	});
 
-	test("blocks destructive actual shell commands", () => {
+	test("records destructive actual shell commands as advisory warnings", () => {
 		const findings = classifyInstructionSafetyFindings(
 			"rm -rf /tmp/example",
 			"actual shell command",
@@ -57,7 +58,7 @@ describe("commander instruction safety classification", () => {
 
 		expect(findings).toContainEqual(
 			expect.objectContaining({
-				severity: "block",
+				severity: "warning",
 				source: "actual shell command",
 				matchedText: "rm -rf",
 				reason: "destructive shell command requires Doy confirmation",
@@ -108,7 +109,7 @@ describe("commander instruction safety classification", () => {
 		);
 	});
 
-	test("blocks actual delete and remove shell commands", () => {
+	test("records actual delete and remove shell commands as advisory warnings", () => {
 		const deleteFindings = classifyInstructionSafetyFindings(
 			"delete /tmp/example",
 			"actual shell command",
@@ -120,7 +121,7 @@ describe("commander instruction safety classification", () => {
 
 		expect(deleteFindings).toContainEqual(
 			expect.objectContaining({
-				severity: "block",
+				severity: "warning",
 				source: "actual shell command",
 				matchedText: "delete",
 				reason: "delete/remove command requires Doy confirmation",
@@ -128,7 +129,7 @@ describe("commander instruction safety classification", () => {
 		);
 		expect(removeFindings).toContainEqual(
 			expect.objectContaining({
-				severity: "block",
+				severity: "warning",
 				source: "actual shell command",
 				matchedText: "remove",
 				reason: "delete/remove command requires Doy confirmation",
@@ -136,7 +137,7 @@ describe("commander instruction safety classification", () => {
 		);
 	});
 
-	test("keeps deploy and secret operations as hard blockers", () => {
+	test("keeps deploy and secret operations as advisory warnings", () => {
 		const deployFindings = classifyInstructionSafetyFindings(
 			"Vercel deployで本番反映してください。",
 		);
@@ -145,10 +146,16 @@ describe("commander instruction safety classification", () => {
 		);
 
 		expect(deployFindings.some((finding) => finding.severity === "block")).toBe(
-			true,
+			false,
 		);
 		expect(secretFindings.some((finding) => finding.severity === "block")).toBe(
-			true,
+			false,
 		);
+		expect(
+			deployFindings.some((finding) => finding.severity === "warning"),
+		).toBe(true);
+		expect(
+			secretFindings.some((finding) => finding.severity === "warning"),
+		).toBe(true);
 	});
 });

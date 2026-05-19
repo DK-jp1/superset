@@ -86,14 +86,14 @@ long Auto Loop run.
 
 | Smoke | Expected |
 | --- | --- |
-| Actual `git push` command | BLOCK. |
-| Actual `rm -rf` command | BLOCK. |
+| Actual `git push` command | Advisory finding; DoyDeck Auto Loop does not hard-stop on this text. |
+| Actual `rm -rf` command | Advisory finding; DoyDeck Auto Loop does not hard-stop on this text. |
 | Negative instructions such as `pushはしないでください` | No block. |
 | Local checkpoint commit after verification | Warning only. |
 | Worker report saying commit/push were not performed | No block. |
 | Screenshot name with `remove` | No block. |
 | Function name such as `removeFromArray` | No block. |
-| UI label mentioning `削除` | No block unless it is an actual destructive action or shell command. |
+| UI label mentioning `削除` | No block; actual destructive-action-looking text is advisory only inside DoyDeck. |
 
 ## 8. Explorer / File Handling
 

@@ -22,34 +22,38 @@ const DANGEROUS_COMMAND_CHECKS: DangerousCommandCheck[] = [
 	{
 		label: "git push",
 		reason: "remote git push requires Doy confirmation",
-		nextAction: "Stop the loop and ask Doy before pushing remotely.",
+		nextAction:
+			"Record advisory and continue Auto Loop; rely on Worker harness / AGENTS / git policy for enforcement.",
 		pattern: /\bgit\s+push\b|\bpush(?:\s+origin|\s+upstream|\s+--force|\s+-f\b)|\bforce\s+push\b/i,
 	},
 	{
 		label: "deploy",
 		reason: "deploy or public release requires Doy confirmation",
-		nextAction: "Stop the loop and ask Doy before deploy or public release.",
+		nextAction:
+			"Record advisory and continue Auto Loop; rely on Worker harness / deployment gates for enforcement.",
 		pattern:
 			/\b(?:vercel|netlify|firebase)\s+deploy\b|\bnpm\s+run\s+deploy\b|\b(?:pnpm|yarn|bun)\s+(?:run\s+)?deploy\b|\bdeploy\b|\bpublish\b|\bpublic\s+release\b/i,
 	},
 	{
 		label: "destructive command",
 		reason: "destructive shell command requires Doy confirmation",
-		nextAction: "Stop the loop and ask Doy before destructive shell operations.",
+		nextAction:
+			"Record advisory and continue Auto Loop; rely on Worker harness / local execution layer for enforcement.",
 		pattern:
 			/\brm\s+-[^\n;&|]*r[^\n;&|]*f\b|\bgit\s+reset\s+--hard\b|\bgit\s+clean(?:\s+-[A-Za-z]*f\b|\b)|\bchmod\s+-R\b|\bchown\s+-R\b|\bsudo\b|\btruncate\b|\bdd\s+if=|\bmkfs\b/i,
 	},
 	{
 		label: "file removal",
 		reason: "file remove/move operation requires Doy confirmation",
-		nextAction: "Stop the loop and ask Doy before remove, move, or trash operations.",
+		nextAction:
+			"Record advisory and continue Auto Loop; rely on Worker harness / local execution layer for enforcement.",
 		pattern: /(?:^|[\s;&|])(?:rm|mv|trash|delete)(?:\s|$)/i,
 	},
 	{
 		label: "local state direct access",
 		reason: "direct local DB or app-state operation is not allowed",
 		nextAction:
-			"Use supported DoyDeck APIs; do not directly edit local DB or app-state files.",
+			"Record advisory and continue Auto Loop; supported APIs and Worker harness should prevent direct local DB/app-state edits.",
 		pattern:
 			/(?:^|\b)(?:cat|less|open|vim|nano|code|sqlite3|sed|awk|grep|rg|python|node|bun|cp|scp|mv|rm|echo)\b[\s\S]*(?:local\.db|app-state\.json|~\/\.superset|~\/\.doydeck-superset-dev|\.doydeck-superset-dev)/i,
 	},
@@ -57,7 +61,7 @@ const DANGEROUS_COMMAND_CHECKS: DangerousCommandCheck[] = [
 		label: "credential access",
 		reason: "credential, token, cookie, or private API operation is not allowed",
 		nextAction:
-			"Stop the loop and ask Doy if credentials, tokens, cookies, or private APIs are required.",
+			"Record advisory and continue Auto Loop; auth boundaries and Worker harness should prevent credential/private API use.",
 		pattern:
 			/(?:^|\b)(?:cat|less|open|vim|nano|code|sed|awk|grep|rg|curl|scp|cp|python|node|bun)\b[\s\S]*(?:\.env(?:\.local)?|cookie|cookies|token|credentials?|secret|private\s+api|認証情報|トークン)/i,
 	},

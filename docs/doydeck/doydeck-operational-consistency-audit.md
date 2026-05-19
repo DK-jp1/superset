@@ -52,7 +52,7 @@ typecheck.
 | Over-confirming | Starter / live guidance did not state the run-through rule clearly enough. | Added that clearly scoped task slices should run through implementation, verification, self-review, and checkpoint without per-step Doy handoff. |
 | Auto Loop start | Older docs implied Meta AI could start Auto Loop once preflight passed. | Clarified that Doy decides loop start; Meta AI prepares preflight and monitors after start. |
 | Task tab creation | Older docs implied every rough task could become a tab immediately. | Clarified propose-first, Doy-approved tab creation. |
-| Safety guard matrix | Smoke matrix still said fixture coverage needed for harmless `remove` / `削除`. | Updated matrix to reflect existing tests and hard blocker boundaries. |
+| Safety guard matrix | Smoke matrix still said fixture coverage needed for harmless `remove` / `削除`. | Updated matrix to reflect existing tests and advisory-only DoyDeck safety findings. |
 | Browser AI short prompt | Backlog still treated short prompt command as missing. | Marked `sendBrowserAiPrompt()` implemented and moved remaining priority to prompt-size warning / target-doc review. |
 | Artifact review prompt | Browser AI review prompt did not require an explicit real-file reference signal. | Added `AI_REFERENCED_FILE: yes/no`, filename, STOP / `Workerへ渡す指示:`, and `Doy確認事項なし` requirements. |
 | Worker report artifact contract | Worker report template and validation still allowed reports without artifact/build/Playwright/console fields. | Expanded the DONE_TAG contract and validation to require artifact paths, screenshot paths, build/test evidence, missing work, and next-step fields. |
@@ -61,7 +61,8 @@ typecheck.
 ## 4. Smoke / Test Evidence
 
 - `commander-safety.test.ts`: false-positive coverage for screenshot names,
-  `removeFromArray`, UI `削除` labels, plus actual delete/remove shell blockers.
+  `removeFromArray`, UI `削除` labels, plus actual delete/remove shell-looking
+  text as advisory warnings.
 - `commander-worker-report.test.ts`: DONE_TAG prompt echo, submitted template
   echo, footer/noise after END_REPORT, expanded required sections, idle-only
   text, and placeholder reports.

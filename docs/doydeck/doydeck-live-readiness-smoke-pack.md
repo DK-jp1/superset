@@ -50,7 +50,7 @@ The command is read-only. It aggregates existing Controller checks and returns:
 | Worker | Recognized Worker count, bound Worker, input readiness, and task-run status. |
 | Auto Loop | Whether preflight is READY / READY_WITH_NOTES / BLOCKED and whether mode is idle/off. |
 | Artifact Review | Whether attachment and Worker-reported artifact commands are present. |
-| Safety guard | Whether forbidden-policy text is allowed while an actual `git push` command is blocked. |
+| Safety guard | Whether forbidden-policy text is allowed while an actual `git push` command is recorded as advisory only. |
 | Payload budget | Whether the Handoff Ledger is within budget and summary-mode status is used. |
 
 ## Manual Smoke Steps

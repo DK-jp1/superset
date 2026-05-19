@@ -31,7 +31,7 @@ Related implementation:
 
 - Source-aware Commander instruction safety classification.
 - Unit tests for negated forbidden operations, checkpoint commit warnings,
-  actual push blockers, destructive shell blockers, and Worker report text.
+  actual push/destructive advisories, and Worker report text.
 
 Findings:
 
@@ -39,9 +39,12 @@ Findings:
   false stops when those words appear in checklists, reports, or negative
   instructions.
 - The classifier must preserve text source. `git push` as an actual shell
-  command is a blocker. `pushはしないでください` in instruction text is not.
+  command is now an advisory finding in DoyDeck, not an Auto Loop stop reason.
+  `pushはしないでください` in instruction text is not a finding.
 - Local checkpoint commits are part of the safe development workflow after
-  verification. They should be warnings, while remote push remains blocked.
+  verification. They should be warnings. Remote push / deploy / destructive
+  text should also remain advisory inside DoyDeck; enforcement belongs to the
+  Worker harness, AGENTS.md, git, and Doy's final push/deploy gate.
 - Clause-scoped negation is required. One line can contain both a local
   checkpoint request and a negated push instruction.
 
@@ -49,7 +52,8 @@ Current P0 fixed:
 
 - Negated forbidden sections no longer block normal instructions.
 - Local checkpoint commit is warning-only.
-- Actual `git push` and destructive shell commands remain blockers.
+- Actual `git push` and destructive shell command text are advisory findings,
+  not DoyDeck hard stops.
 - Worker reports saying commit/push were not performed are not blockers.
 - DONE_TAG / END_REPORT blocks that exactly match the submitted instruction are
   ignored as prompt echo unless a second current-run report occurrence appears.
@@ -72,7 +76,7 @@ Current P0 fixed:
   placeholder template text are blocked as `FORMAT_INVALID` or `MISSING`.
 - Descriptive `remove` / `削除` text in screenshots, function names, or UI label
   review instructions is covered by tests and remains allowed. Actual
-  `delete` / `remove` shell commands still block.
+  `delete` / `remove` shell command text remains visible as advisory.
 - DONE_TAG reports now require the minimum review sections `実施内容`,
   `変更ファイル`, and `Doy確認事項` before Browser AI review packaging.
 - `sendBrowserAiPrompt()` provides a short Browser AI send path that does not

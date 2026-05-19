@@ -3,15 +3,17 @@
 Status: S9.x hardening notes.
 
 This document records the stop reasons that can incorrectly block DoyDeck
-operation and how they should be handled. The goal is not to remove safety
-gates. The goal is to distinguish real dangerous action from harmless text in
-Browser AI replies, Worker reports, Handoff history, and completion summaries.
+operation and how they should be handled. The current policy is advisory
+safety: DoyDeck should surface risky text with source/matched-text diagnostics,
+but it should not hard-stop Auto Loop because of dangerous-looking words or
+shell-like text. Enforcement belongs to the Worker harness, AGENTS.md, git,
+credentials boundaries, and Doy's final push/deploy gate.
 
 ## 1. Principle
 
-DoyDeck should block dangerous operations when they are actual requested
-actions. It should not block merely because a prompt, report, or checklist
-mentions a forbidden word.
+DoyDeck should not block its own Auto Loop just because it detects dangerous
+operation text. It should keep the finding visible so Meta AI / Doy can review
+it, while letting the loop continue unless another structural blocker exists.
 
 The classifier must keep the source of the text visible:
 
@@ -21,12 +23,14 @@ The classifier must keep the source of the text visible:
 - `instruction text`: generic Controller instruction text.
 
 The same token can mean different things depending on source. For example,
-`git push origin ...` as an actual shell command is a hard blocker, while
-`pushはしていません` inside a Worker report is evidence, not a request.
+`git push origin ...` as an actual shell-command-like string is an advisory
+finding, while `pushはしていません` inside a Worker report is evidence, not a
+request.
 
-## 2. P0 Stop Reasons
+## 2. P0 Advisory Findings
 
-P0 stop reasons are real blockers and must not be weakened:
+These findings remain important, but DoyDeck records them as warnings/advisory
+diagnostics instead of stopping Auto Loop:
 
 - Remote push or force push.
 - Deploy, publish, public release, or production reflection.
@@ -38,8 +42,8 @@ P0 stop reasons are real blockers and must not be weakened:
 - Worker identity mismatch or shell/unknown worker treated as recognized.
 - Target tab mismatch on write commands.
 
-P0 blockers should include the source and matched text when returned through a
-Controller Command so the caller can see why the action stopped.
+Findings should include source and matched text when returned through a
+Controller Command so the caller can see what was detected.
 
 ## 3. P1 False Stop Reasons
 
@@ -47,7 +51,7 @@ P1 issues are frequent enough to slow normal operation and should be classified
 precisely.
 
 - Local checkpoint commit is allowed after verification and should be a warning,
-  not a blocker. Push remains blocked.
+  not a blocker. Push/deploy/destructive text is also advisory inside DoyDeck.
 - Negated forbidden operations such as `pushはしないでください` should not block.
 - Negative sections such as `やらないこと:` should not become blockers.
 - Worker reports saying `commit/pushはしていません` should not block.
@@ -105,7 +109,9 @@ future hardening passes:
 Controller Commands should prefer structured findings over plain blocker
 strings:
 
-- `severity`: `block`, `warning`, or `allowed`.
+- `severity`: `warning` or `allowed` for DoyDeck-owned safety findings.
+  `block` is reserved for structural readiness failures such as missing Worker
+  binding, target tab mismatch, or unavailable provider state.
 - `source`: text origin.
 - `matchedText`: the phrase that triggered the finding.
 - `reason`: short classification.
@@ -120,8 +126,9 @@ Use this checklist when changing the safety classifier:
 
 - Negated forbidden-operation sections do not block.
 - Local checkpoint commit returns a warning, not a blocker.
-- Actual `git push` blocks.
-- Actual destructive shell command blocks.
+- Actual `git push` is an advisory warning and does not stop Auto Loop.
+- Actual destructive shell command text is an advisory warning and does not stop
+  Auto Loop.
 - Worker report text that says commit/push were not performed does not block.
 - Submitted DONE_TAG prompt echo does not count as a Worker report.
 - Codex visible input residue blocks sends before terminal submission.

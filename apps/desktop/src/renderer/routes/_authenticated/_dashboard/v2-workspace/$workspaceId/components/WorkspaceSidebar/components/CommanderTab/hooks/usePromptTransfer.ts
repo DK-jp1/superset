@@ -3276,10 +3276,11 @@ export function usePromptTransfer({
 			"browser ai reply",
 		);
 		if (dangerousFinding) {
-			stopAutoLoop(
-				`dangerous command detected: ${dangerousFinding.label} [source=${dangerousFinding.source}; matched=${dangerousFinding.matchedText}; reason=${dangerousFinding.reason}; nextAction=${dangerousFinding.nextAction}]`,
+			const advisory = `safety advisory: ${dangerousFinding.label} [source=${dangerousFinding.source}; matched=${dangerousFinding.matchedText}; reason=${dangerousFinding.reason}; nextAction=${dangerousFinding.nextAction}]`;
+			appendAutoLoopEvent(advisory);
+			setAutoLoopLastAction(
+				"Safety advisory recorded; continuing Auto Loop",
 			);
-			return;
 		}
 		if (autoLoopTurn >= autoLoopMaxTurns) {
 			stopAutoLoop("max turns reached");
@@ -3329,6 +3330,7 @@ export function usePromptTransfer({
 			});
 		})();
 	}, [
+		appendAutoLoopEvent,
 		autoLoopMaxTurns,
 		autoLoopStopReason,
 		autoLoopTurn,
