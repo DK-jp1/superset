@@ -15,6 +15,8 @@ Meta AIの役割は[`meta-ai-operating-model-v2.md`](./meta-ai-operating-model-v
 - 通常操作はUI探索ではなくController Command / API-like native pathを優先する。
 - UI探索はdebug、visual sanity check、Controller返却の検証に限定する。
 - 軽微な壁では止まらず、原因調査 -> 最小修正 -> 再smokeまで進める。
+- 要件、対象、停止条件が明確なtask sliceは、工程ごとにDoy確認へ戻さず、
+  実装/検証/checkpoint commitまで走り切る。
 - push、destructive操作、credentials/private API、local DB直接操作、大きな仕様/UX/文言判断では止まってDoy確認する。
 
 ## 1. 最初に必ずやること
@@ -40,6 +42,8 @@ Meta AIの役割は[`meta-ai-operating-model-v2.md`](./meta-ai-operating-model-v
 - Computer Useはprimary操作ではなくvisual second opinion。
 - DoyDeck safe-devはController chain / Meta AI連携 / 実運用pilotの検証対象。
 - DoyDeck本体開発は外側環境 / 通常Superset / 作業側Codex・CCで進める。
+- DoyDeck本体修正をDoyDeck内Workerへ投げない。safe-dev内Workerは実運用pilotや
+  別対象タスクの検証に使う。
 - Auto Loopは勝手に開始しない。
 - Meta AIは準備係、監視係、管理係、セカンドレビュー役。
 - Meta AIはBrowser AI <-> Worker loopを毎回手動再現する中継係ではない。
@@ -160,6 +164,8 @@ Workerが必要な場合に使うController Command:
 - Mac native Claude Codeを標準Worker起動経路にする。
 - 標準コマンドは`claude --dangerously-skip-permissions --effort high`。
 - `--effort max`はOpus/max消費が重すぎるため使わない。
+- Codexを使う場合は`PATH` / shim問題に注意し、`command -v codex`などの
+  read-only確認で実行対象を確かめる。
 - Doyが「Windowsで」と明示した場合のみ、SSH経由でWindows側Claude Codeを起動する。
 - Windows起動コマンドは
   `ssh -tt -i ~/.ssh/id_ed25519 doy90@100.67.78.1 'claude --dangerously-skip-permissions --effort high'`。
@@ -171,6 +177,11 @@ Workerが必要な場合に使うController Command:
 - Claude / Codex TUI状態はgetTerminalOutputSnapshot()やvisual sanity checkで確認する。
 - sendInstructionToBoundWorker()は原則requirePreflight:trueで使う。
 - no-op / worker-only smokeではrecordControllerChainOutcome()にworker-only/noop-smoke相当のmodeを渡し、Browser AI review未取得をblocker扱いしない。
+- Worker完了報告はDONE_TAGからEND_REPORTまでの形式で要求する。
+- 必須sectionは `実施内容`, `変更ファイル`, `Doy確認事項`。
+- END_REPORT後に追加説明を書かせない。
+- placeholderや指示テンプレechoはWorker報告として扱わない。
+- Browser AIへWorker報告を返す前に `workerReportValid` を確認する。
 
 ## 6. Handoff / Outcome / Decision
 

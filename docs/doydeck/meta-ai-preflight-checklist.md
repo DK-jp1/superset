@@ -119,9 +119,9 @@ Stop before starting Auto Loop if any of these is true:
 - [ ] STOP / no-next-worker-instruction is evaluated before extraction failure.
 - [ ] Worker instruction block is extracted from the new Browser AI reply.
 - [ ] Worker send target is the arm-time bound Worker.
-- [ ] Worker response envelope start marker is visible.
-- [ ] Worker response envelope end marker is visible.
-- [ ] Envelope body contains the required sections.
+- [ ] Worker response DONE_TAG marker is visible.
+- [ ] Worker response END_REPORT marker is visible.
+- [ ] Report body contains required sections: `実施内容`, `変更ファイル`, `Doy確認事項`.
 - [ ] Worker response is returned to Browser AI.
 - [ ] Browser AI returns a final decision, next instruction, or STOP.
 - [ ] Handoff Ledger is updated after loop stop.
@@ -180,7 +180,8 @@ Worker:
 - `bound worker stale`
 - `worker not interactive`
 - `terminal is shell, not Worker`
-- `worker response envelope incomplete`
+- `worker report incomplete`
+- `worker report FORMAT_INVALID`
 - `worker response timeout`
 
 Auto Loop:

@@ -38,6 +38,7 @@ long Auto Loop run.
 | `prepareBrowserAiReady({ provider:"Claude" })` | READY or READY_WITH_NOTES when logged in and ready. |
 | Claude short send | `UI_REFLECTED`, `WAITING_REPLY`, or `REPLIED`; `NOT_REFLECTED` includes a clear reason. |
 | `getBrowserAiLastSubmission()` | Includes `submissionStatus`, `uiReflected`, `assistantReplyObserved`, `visualVerificationUsed`. |
+| `sendBrowserAiPrompt({ provider, prompt, expectedTabId, expectedTitle, requireActiveTabMatch:true })` | Sends a short prompt without full Handoff; reaches `UI_REFLECTED`, `WAITING_REPLY`, or `REPLIED`. |
 | `result === "injected"` bridge path | Does not auto-capture and does not count as completed send. |
 
 ## 4. Worker Identity / Binding / Input
@@ -72,6 +73,8 @@ long Auto Loop run.
 | Two DONE_TAG blocks, second current-run report | Extracts second report. |
 | Idle-only message such as "報告完了。追加指示まで静止します。" | FORMAT_INVALID / not packaged as Worker response. |
 | Placeholder report template | FORMAT_INVALID. |
+| Structured report missing `実施内容`, `変更ファイル`, or `Doy確認事項` | FORMAT_INVALID with missing section warning. |
+| Footer/TUI noise after END_REPORT | Excluded from extracted report body. |
 | Structured DONE_TAG / END_REPORT report | VALID and packaged for Browser AI. |
 | `sendBoundWorkerResponseToBrowserAI()` with invalid report | BLOCKED; not sent. |
 | Valid report sent to Browser AI | Payload contains report body, not just preview or idle text. |
@@ -85,8 +88,9 @@ long Auto Loop run.
 | Negative instructions such as `pushはしないでください` | No block. |
 | Local checkpoint commit after verification | Warning only. |
 | Worker report saying commit/push were not performed | No block. |
-| Screenshot name with `remove` | Should not block once fixture coverage is added. |
-| UI label mentioning `削除` | Should not block unless it asks for destructive action. |
+| Screenshot name with `remove` | No block. |
+| Function name such as `removeFromArray` | No block. |
+| UI label mentioning `削除` | No block unless it is an actual destructive action or shell command. |
 
 ## 8. Explorer / File Handling
 

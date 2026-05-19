@@ -2,6 +2,10 @@
 
 Status: S7.0 operating model.
 
+Consistency note: this is an older S7 model. Current live operation is governed
+by `meta-ai-operating-model-v2.md`, `meta-ai-starter-prompt.md`, and
+`doydeck-live-usage-guide.md` when they are more specific.
+
 ## Purpose
 
 DoyDeck should be operated as an AI work OS, not as a manual copy/paste tool.
@@ -125,26 +129,15 @@ Fallback / alternate Worker:
   for the task, image generation or Codex-specific tooling is needed, or Doy
   explicitly requests it.
 
-Worker reports should use the DoyDeck response envelope when returning through
-Auto Loop:
+Worker reports should use the DONE_TAG / END_REPORT contract when returning
+through Auto Loop. END_REPORT should be the last line of the report block:
 
 ```text
-<<<DOYDECK_WORKER_RESPONSE_START>>>
-実施内容
-...
-
-変更ファイル
-...
-
-確認結果
-...
-
-git diff --check 結果
-...
-
-未解決
-...
-<<<DOYDECK_WORKER_RESPONSE_END>>>
+DONE_TAG:DOYDECK_WORKER_REPORT
+実施内容: ...
+変更ファイル: ...
+Doy確認事項: なし
+END_REPORT
 ```
 
 ## What Meta AI May Do Autonomously
@@ -153,7 +146,7 @@ Meta AI may run the normal DoyDeck operating loop without asking Doy for each
 small step:
 
 - decompose incoming notes into tasks,
-- create one tab per task,
+- propose one tab per task and create tabs after Doy approves the candidates,
 - name tabs with short task identifiers,
 - generate Handoff Ledgers,
 - send Handoffs to Browser AI,
@@ -161,20 +154,20 @@ small step:
 - return Doy answers to Browser AI,
 - let Browser AI create the final Worker instruction,
 - bind an already-running Worker terminal to the active tab,
-- start and supervise Auto Loop when preflight checks pass,
+- prepare Auto Loop preflight and supervise the loop after Doy decides to start it,
 - run read-only checks, reports, screenshots, diagnostics, and QA scripts,
 - update Handoff after major state changes.
 
-Commit and push are separate gates. Meta AI may prepare the state and explain
-what should be committed or pushed, but should ask Doy before performing those
-operations unless the current instruction explicitly grants permission.
+Local checkpoint commit and remote push are separate gates. Meta AI may create
+local checkpoint commits after verification when the current task authorizes
+checkpointing. Push, deploy, and remote reflection always remain Doy-confirmed.
 
 ## Doy Confirmation Gates
 
 Meta AI must stop and ask Doy before:
 
-- commit,
 - push,
+- deploy / public release,
 - file deletion,
 - large rename or move,
 - direct `local.db` or `app-state.json` operation,
@@ -184,8 +177,8 @@ Meta AI must stop and ask Doy before:
 - public release or external publish,
 - billing, subscription, contract, or external service connection,
 - touching the normal Superset profile instead of DoyDeck safe-dev,
-- launching a Worker with dangerous/bypass/skip-permissions flags unless Doy
-  already approved that exact launch for the current run,
+- launching a Worker when the safe launch command is unknown, or when
+  credentials / login / private API / destructive operation is involved,
 - making a major product, UX, copy, or design branch decision.
 
 The rule set can be relaxed later. If Doy repeatedly says a class of operation
@@ -240,7 +233,7 @@ Stop or ask Doy when any of these appears:
 - `worker binding required`,
 - `bound worker stale`,
 - Browser AI no instruction,
-- Worker response envelope incomplete,
+- Worker report incomplete or FORMAT_INVALID,
 - tab switch abort,
 - Auth / CAPTCHA / human verification,
 - possible send to the wrong tab,
@@ -291,9 +284,10 @@ Use Codex when:
 - Codex-specific tooling or image generation is useful,
 - Doy explicitly requests Codex.
 
-Worker launch commands with dangerous/bypass/skip-permissions flags require Doy
-approval for that run. Binding an already-running Worker to a tab is part of
-normal Meta AI operation.
+Routine Worker launch can proceed when the documented safe command is known.
+Stop for Doy confirmation when the launch path is unknown, requires login or
+credentials, touches private APIs, or implies destructive operation. Binding an
+already-running Worker to a tab is part of normal Meta AI operation.
 
 ## Initial Meta AI Flow
 
@@ -302,7 +296,7 @@ When Doy provides a large note or rough task bundle, Meta AI should:
 1. Read the full note.
 2. Split it into task units.
 3. Rank task priority.
-4. Create or select one DoyDeck tab per task.
+4. Propose one DoyDeck tab per task and create/select approved tabs.
 5. Generate a Handoff Ledger for each active task.
 6. Send the Handoff to Browser AI.
 7. Ask Browser AI to review requirements.
@@ -311,7 +305,7 @@ When Doy provides a large note or rough task bundle, Meta AI should:
 10. Return Doy answers to Browser AI.
 11. Let Browser AI produce the final `Workerへ渡す指示:`.
 12. Bind the correct Worker terminal.
-13. Start and monitor Auto Loop when preflight passes.
+13. Ask Doy to decide loop start after preflight passes, then monitor Auto Loop if started.
 14. Return Worker results to Browser AI.
 15. Update the Handoff Ledger.
 16. Report the state to Doy.

@@ -370,7 +370,7 @@ Auto Loop already observes useful state:
 - Browser AI captured instruction,
 - Worker Response Preview text,
 - Worker confidence/reasons,
-- response envelope status,
+- structured Worker report status,
 - stop reason,
 - turn count,
 - Diagnostics recent events,
@@ -383,7 +383,7 @@ state:
 - `Browser AI requested completion/stop`,
 - `max turns reached`,
 - `worker confidence low`,
-- `worker response envelope incomplete`,
+- `worker report incomplete` or `FORMAT_INVALID`,
 - `browser injection failed`,
 - successful Worker Response return to Browser AI.
 
@@ -391,7 +391,7 @@ Recommended data to carry:
 
 - final classification,
 - stop reason,
-- latest Worker response envelope summary,
+- latest DONE_TAG / END_REPORT Worker report summary,
 - latest Browser AI decision summary,
 - latest QA report path,
 - screenshots path,
@@ -426,7 +426,7 @@ The ledger can become a Worker instruction seed:
 - constraints,
 - forbidden scope,
 - required QA/checks,
-- DoyDeck response envelope.
+- DONE_TAG / END_REPORT Worker report contract.
 
 Worker send must still go through Terminal Send Preview or Auto Loop guards.
 

@@ -21,6 +21,7 @@ Doy確認ゲート付きで扱う。
 
 - DoyDeck本体開発は、外側環境 / 通常Superset / 作業側Codex・CCで進める。
 - DoyDeck safe-devは、Controller chain、Meta AI連携、実運用pilotの検証対象として使う。
+- DoyDeck本体修正をDoyDeck内Workerへ投げない。
 - Auto Loopは勝手に開始しない。
 - Meta AIはAuto Loopを再実装しない。
 - Computer Useはprimary操作ではなくvisual second opinionとして扱う。
@@ -191,6 +192,8 @@ DoyDeck内運用での対応:
 - 1から5ファイル程度。
 - code変更は原則直列。
 - git diff --check、typecheck、Controller smokeを通す。
+- 要件、対象、停止条件が明確なら、工程ごとのDoy確認で止まりすぎず、
+  実装、検証、self-review、checkpoint commitまで走り切る。
 
 大規模:
 
@@ -224,6 +227,11 @@ promptは短く、現在taskを中心にする。
   - 禁止事項。
   - 検証。
   - 報告形式。
+- Worker完了報告はDONE_TAGからEND_REPORTまでの形式にし、
+  `実施内容`, `変更ファイル`, `Doy確認事項`を必須にする。
+- END_REPORT後に追加説明を書かせない。
+- placeholderや指示テンプレechoをWorker報告として扱わない。
+- Browser AIへWorker報告を返す前に`workerReportValid`を確認する。
 - Browser AIへは、Worker指示が不要な場合に`STOP`または`次のWorker指示は不要`を
   明記させる。
 - Doy確認が不要な場合は`Doy確認事項なし`と明記させる。
@@ -247,6 +255,9 @@ claude --dangerously-skip-permissions --effort high
 
 - `--effort max`は使わない。
 - 理由: Opus/max消費が重すぎるため。
+- CodexをWorkerとして使う場合は、terminal paneの`PATH`とshim解決を確認する。
+  `codex`が見つからない、または別shimを指している場合は推測で起動せず、
+  `pwd`, `command -v codex`, `echo $PATH`などのread-only確認から始める。
 
 Windows:
 

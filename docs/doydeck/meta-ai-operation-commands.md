@@ -2,6 +2,10 @@
 
 Status: S7.1 runbook.
 
+Consistency note: this older S7 runbook is kept for history, but current live
+operation follows `meta-ai-operating-model-v2.md`,
+`meta-ai-starter-prompt.md`, and `doydeck-live-usage-guide.md` when they differ.
+
 This document turns the S7.0 Meta AI operating model into concrete operating
 commands. It is written for the Meta AI that controls DoyDeck.
 
@@ -55,7 +59,7 @@ commands.
 | Doyから雑相談を受け取る | 作業材料を受け取る | Doyがメモ、違和感、要望を投げた | 全文を読み、前提、制約、判断待ちを抽出する | 不要 | 意味が分かれそうなら質問をまとめる |
 | native control pathを確認する | 誤った操作経路を防ぐ | DoyDeckを操作する前 | Actions / Controller Commands / exposed QA functions / attachで操作できるか確認する。Computer Useはvisual confirmationに限定する | Computer Useで主要操作を進める必要があるなら必須 | Computer Useがprimary control pathになるなら`BLOCKED_BY_WRONG_CONTROL_PATH`で停止 |
 | タスク候補に分解する | 混ざった相談を実行単位にする | 複数テーマが含まれる | タスク候補、優先度、依存関係を出す | 仕様分岐が大きければ必要 | 優先度が曖昧ならDoyへ確認 |
-| 1タスク1タブで作成する | コンテキスト混線を防ぐ | タスク単位が決まった | DoyDeck上でタブ作成/選択、短いタブ名を付ける | 不要 | タブ作成不可ならBLOCKED |
+| 1タスク1タブで作成する | コンテキスト混線を防ぐ | Doyがタブ化候補を承認した | DoyDeck上でタブ作成/選択、短いタブ名を付ける | タブ化候補の承認が必要 | タブ作成不可ならBLOCKED |
 | タブを選択する | 操作対象を固定する | 作業対象タブがある | active tabを該当タブへ切替、Diagnosticsで確認 | 不要 | active tab mismatchなら停止 |
 | Browser AI slotを確認する | 送信先混線を防ぐ | Browser AIを使う前 | provider、URL、slot key、webContentsId、composer readyを確認 | 不要 | unsupported/about:blank/composer not readyならBLOCKED |
 | Handoff Ledgerを作成する | タブの現在地を記録する | タブ作成時、作業開始時 | goal、context、next action、関連ファイルをLedger化 | 不要 | 情報不足なら未記録として明記 |
@@ -63,13 +67,13 @@ commands.
 | Browser AIへ送る | 要件レビューさせる | Browser AI composer ready | Handoffまたは要件整理をBrowser AIへsubmit injectionで送る | 不要 | fallbackだけなら理由を記録 |
 | Browser AIの返答を確認する | Worker指示かSTOPか判断する | Browser AI replyが出た | 新規reply全文、見出し、STOP/次のWorker指示不要を確認 | Doy質問が出たら必要 | stale replyなら再観測 |
 | Worker bindingを確認する | 誤送信を防ぐ | Workerへ送る前 | bound worker pane、terminalId、workerType、fallback used noを確認 | 不要 | unbound/staleなら停止 |
-| Worker起動が必要か判断する | 実装担当を用意する | bound Workerがない/Workerがshell | 起動が必要かを判定し、Doy確認フォーマットを出す | 必須 | 承認なしでは起動しない |
+| Worker起動が必要か判断する | 実装担当を用意する | bound Workerがない/Workerがshell | 起動が必要かを判定する。既知のroutine safe setupなら進めてよい | credentials/login/private API/destructive/unknown commandなら必須 | routineでなければ承認なしでは起動しない |
 | Workerへ送る | 実装/調査/検証を依頼する | Browser AIが最終Worker指示を作成済み、Worker bound | bound Workerへ送信。active terminal fallbackは使わない | 通常不要。ただし危険操作が含まれるなら必要 | target曖昧なら送らない |
-| Worker結果を受け取る | 成果と未解決を回収する | Workerが返答した | DoyDeck response envelopeを抽出し、必須セクションを確認 | 不要 | envelope incompleteならBLOCKED |
-| Worker結果をBrowser AIへ返す | レビューと次判断を得る | envelopeが完整 | Worker ResponseをBrowser AIへ返送 | 不要 | Browser AI return not observedならUNKNOWN/BLOCKED |
+| Worker結果を受け取る | 成果と未解決を回収する | Workerが返答した | DONE_TAG / END_REPORT報告を抽出し、必須セクションを確認 | 不要 | report incomplete / FORMAT_INVALIDならBLOCKED |
+| Worker結果をBrowser AIへ返す | レビューと次判断を得る | workerReportValidがtrue | Worker ResponseをBrowser AIへ返送 | 不要 | Browser AI return not observedならUNKNOWN/BLOCKED |
 | Browser AIにレビューさせる | 継続/STOPを判断する | Worker結果返送後 | Browser AIに安全条件、成果、次アクションで評価させる | UX/仕様判断が必要なら必要 | no responseなら再観測またはBLOCKED |
 | 次アクションまたはSTOPを判断する | ループ継続可否を決める | Browser AIのレビュー後 | `Workerへ渡す指示:` / `STOP` / `次のWorker指示は不要` を分類 | 仕様判断が分岐するなら必要 | 曖昧ならDoyへ要約質問 |
-| Auto Loopを開始する | Browser AIとWorkerを監視付きでつなぐ | preflight全項目PASS | Auto Loop Previewを開始し、Diagnosticsを監視 | 危険操作が含まれるなら必要 | preflight失敗なら開始しない |
+| Auto Loopを開始する | Browser AIとWorkerを監視付きでつなぐ | preflight全項目PASS、かつDoyがLoop開始を判断済み | Auto Loop Previewを開始し、Diagnosticsを監視 | Loop開始はDoy判断 | preflight失敗なら開始しない |
 | Auto Loopを停止する | 誤送信/暴走を防ぐ | stop condition発生、Doy判断待ち、完了 | stop reasonを記録し、Handoff更新 | 不要 | 停止不可なら手動介入を要請 |
 | Diagnosticsを確認する | 状態を観測する | 各重要操作の前後 | phase、stop reason、slot、binding、recent eventsを読む | 不要 | mismatchならBLOCKED |
 | Doy確認を要求する | 境界を越えない | 承認が必要な操作がある | 目的、操作、理由、リスク、OK後の実行内容を提示 | 必須 | OKが出るまで実行しない |
@@ -143,10 +147,10 @@ Meta AIは、タブ切替後に必ず現在のBrowser AI slotとWorker binding�
 
 Meta AIは以下を勝手に進めない。
 
-- 作業側CC / Codexの新規起動。
-- dangerous / bypass / skip permissions系コマンド。
+- unknown / non-routine Worker起動。
+- Worker起動にcredentials / login / private API / destructive操作が絡む場合。
 - Computer Use、座標クリック、画面上の手操作で主要操作を進めるfallback。
-- commit / push。
+- 検証済みlocal checkpoint commitを除くcommit / push。
 - destructive操作。
 - DB / `local.db` / `app-state.json` 関連。
 - `~/.superset` / `~/.doydeck-superset-dev` などの直接操作。
@@ -205,15 +209,25 @@ Codex:
 codex --dangerously-bypass-approvals-and-sandbox
 ```
 
-作業側CC:
+Codexを使う場合は、terminal paneの`PATH`とshim解決を確認する。
+`codex`が見つからない、または別shimを指している場合は推測で起動せず、
+`pwd`, `command -v codex`, `echo $PATH`などのread-only確認から始める。
+
+Mac native Claude Code:
 
 ```bash
-claude --dangerously-skip-permissions --effort max
+claude --dangerously-skip-permissions --effort high
 ```
 
-どちらも強い権限を含む。Meta AIは実行前に必ずDoy確認を取る。
+`--effort max`はOpus/max消費が重すぎるため標準では使わない。
+Doyが「Windowsで」と明示した場合のみ、SSH経由でWindows側Claude Codeを起動する。
 
-承認なしでやってよいのは、Workerが既に起動しているかの観測、TerminalがshellかWorkerかの判定、binding状態の確認まで。
+```bash
+ssh -tt -i ~/.ssh/id_ed25519 doy90@100.67.78.1 'claude --dangerously-skip-permissions --effort high'
+```
+
+Worker起動はroutine safe setupとして必要な場合は進めてよい。ただし
+credentials / login / destructive / private API / local DB / app-state が絡む場合は停止する。
 
 ## 6. Doy確認フォーマット
 
@@ -328,7 +342,7 @@ Browser AIは、Worker作業が必要なら `Workerへ渡す指示:` から始�
 Meta AIは:
 
 1. Worker terminalが起動済みか確認する。
-2. 起動が必要ならDoy確認を取る。
+2. 起動が必要ならWorker launch policyを確認する。routine safe setupなら進め、credentials/login/unknown commandならDoy確認を取る。
 3. active tabへWorkerをbindする。
 4. strict binding / fallback used noを確認する。
 5. Browser AIが作ったWorker指示をbound Workerへ送る。
@@ -388,7 +402,7 @@ S7.1 runbook作成では以下をしない。
 - Auto Loop本体改造。
 - Browser AI / Worker fixture実装。
 - public-site / LP / スライド / 画像生成。
-- Doy確認なしのcommit / push。
+- 検証済みlocal checkpoint commitを除くDoy確認なしのcommit / push。
 - Doy確認なしのdestructive操作。
 - Doy確認なしにComputer Use / 座標クリック / 画面操作で主要操作を進めること。
 
