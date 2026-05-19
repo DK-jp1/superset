@@ -5749,8 +5749,47 @@ export function CommanderTab({
 			}
 
 			const attachmentWarnings = [...warnings, ...attachmentResult.warnings];
-			const attachmentBlockers = [...blockers, ...attachmentResult.blockers];
-			const attachmentUiReflected = attachmentResult.attachmentUiReflected;
+			let attachmentBlockers = [...blockers, ...attachmentResult.blockers];
+			let attachmentUiReflected = attachmentResult.attachmentUiReflected;
+			let attachedFileNamesVisible = attachmentResult.attachedFileNamesVisible;
+			let fileInputFileNames = attachmentResult.fileInputFileNames;
+			let delayedAttachmentUiReflected = false;
+			if (!attachmentUiReflected && attachmentResult.inputSet) {
+				const requestedFileNames = attachedFiles.map((file) => file.name);
+				for (let attempt = 0; attempt < 8; attempt += 1) {
+					await delay(2_500);
+					let attachmentState: BrowserAiAttachmentState;
+					try {
+						attachmentState = normalizeBrowserAiAttachmentState(
+							await webview.injectIntoPage(
+								buildBrowserAiAttachedFilesStateScript(provider),
+							),
+						);
+					} catch {
+						continue;
+					}
+					if (attachmentState.fileInputFileNames.length > 0) {
+						fileInputFileNames = attachmentState.fileInputFileNames;
+					}
+					const delayedVisibleFileNames =
+						findVisibleAttachmentNamesForRequestedFiles({
+							requestedFileNames,
+							visibleFileNames: attachmentState.attachedFileNamesVisible,
+						});
+					if (delayedVisibleFileNames.length > 0) {
+						attachedFileNamesVisible = delayedVisibleFileNames;
+					}
+					if (delayedVisibleFileNames.length >= requestedFileNames.length) {
+						attachmentUiReflected = true;
+						delayedAttachmentUiReflected = true;
+						attachmentBlockers = [...blockers];
+						attachmentWarnings.push(
+							"Browser AI attachment UI reflected after delayed inventory check",
+						);
+						break;
+					}
+				}
+			}
 			const attachmentStatus: CommanderControllerAttachmentStatus =
 				attachmentUiReflected
 					? "UI_REFLECTED"
@@ -5768,8 +5807,8 @@ export function CommanderTab({
 					status: "NOT_ATTACHED",
 					attachmentStatus,
 					attachmentUiReflected,
-					attachedFileNamesVisible: attachmentResult.attachedFileNamesVisible,
-					fileInputFileNames: attachmentResult.fileInputFileNames,
+					attachedFileNamesVisible,
+					fileInputFileNames,
 					fileInputFound: attachmentResult.fileInputFound,
 					fileInputDescription: attachmentResult.fileInputDescription,
 					blockers: [...attachmentBlockers, message],
@@ -5785,11 +5824,13 @@ export function CommanderTab({
 					ok: true,
 					...baseResult,
 					status:
-						skippedFiles.length > 0 ? "ATTACHED_WITH_NOTES" : "ATTACHED",
+						skippedFiles.length > 0 || delayedAttachmentUiReflected
+							? "ATTACHED_WITH_NOTES"
+							: "ATTACHED",
 					attachmentStatus,
 					attachmentUiReflected,
-					attachedFileNamesVisible: attachmentResult.attachedFileNamesVisible,
-					fileInputFileNames: attachmentResult.fileInputFileNames,
+					attachedFileNamesVisible,
+					fileInputFileNames,
 					fileInputFound: attachmentResult.fileInputFound,
 					fileInputDescription: attachmentResult.fileInputDescription,
 					loopReady: true,
@@ -5884,11 +5925,11 @@ export function CommanderTab({
 						attachedFileNamesVisible:
 							attachmentState.attachedFileNamesVisible.length > 0
 								? attachmentState.attachedFileNamesVisible
-								: attachmentResult.attachedFileNamesVisible,
+								: attachedFileNamesVisible,
 						fileInputFileNames:
 							attachmentState.fileInputFileNames.length > 0
 								? attachmentState.fileInputFileNames
-								: attachmentResult.fileInputFileNames,
+								: fileInputFileNames,
 						fileInputFound: attachmentResult.fileInputFound,
 						fileInputDescription: attachmentResult.fileInputDescription,
 						submissionStatus: verification.status,
@@ -5916,8 +5957,8 @@ export function CommanderTab({
 					status: "FAILED",
 					attachmentStatus,
 					attachmentUiReflected,
-					attachedFileNamesVisible: attachmentResult.attachedFileNamesVisible,
-					fileInputFileNames: attachmentResult.fileInputFileNames,
+					attachedFileNamesVisible,
+					fileInputFileNames,
 					fileInputFound: attachmentResult.fileInputFound,
 					fileInputDescription: attachmentResult.fileInputDescription,
 					injectionResult,
@@ -5936,8 +5977,8 @@ export function CommanderTab({
 					status: "FAILED",
 					attachmentStatus,
 					attachmentUiReflected,
-					attachedFileNamesVisible: attachmentResult.attachedFileNamesVisible,
-					fileInputFileNames: attachmentResult.fileInputFileNames,
+					attachedFileNamesVisible,
+					fileInputFileNames,
 					fileInputFound: attachmentResult.fileInputFound,
 					fileInputDescription: attachmentResult.fileInputDescription,
 					blockers: [...attachmentBlockers, message],
@@ -9832,6 +9873,30 @@ function removeCommanderControllerSections(base: string, label: string): string 
 
 function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildAttachmentFileNamePattern(fileName: string): RegExp {
+	const match = fileName.match(/^(.+?)(\.[^.]+)$/);
+	if (!match) return new RegExp(escapeRegExp(fileName));
+	return new RegExp(
+		`${escapeRegExp(match[1])}(?:\\(\\d+\\))?${escapeRegExp(match[2])}`,
+		"i",
+	);
+}
+
+function findVisibleAttachmentNamesForRequestedFiles(input: {
+	requestedFileNames: string[];
+	visibleFileNames: string[];
+}): string[] {
+	const visibleNames = input.visibleFileNames
+		.map((name) => name.trim())
+		.filter(Boolean);
+	return input.requestedFileNames
+		.map((requestedName) => {
+			const pattern = buildAttachmentFileNamePattern(requestedName);
+			return visibleNames.find((visibleName) => pattern.test(visibleName)) || "";
+		})
+		.filter(Boolean);
 }
 
 function getCommanderSessionMissingFields(
