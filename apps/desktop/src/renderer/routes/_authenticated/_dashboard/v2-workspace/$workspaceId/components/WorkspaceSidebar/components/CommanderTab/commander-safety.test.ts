@@ -75,4 +75,64 @@ describe("commander instruction safety classification", () => {
 			[],
 		);
 	});
+
+	test("does not block descriptive delete/remove terms in instructions", () => {
+		const findings = classifyInstructionSafetyFindings(
+			[
+				"確認対象:",
+				"- screenshot: v06-chat-thread-remove.png",
+				"- removeFromArray の説明文を読む",
+				"- 削除アイコンの表示ラベルを確認する",
+				"ファイル削除や破壊操作はしないでください。",
+			].join("\n"),
+		);
+
+		expect(findings.filter((finding) => finding.severity === "block")).toEqual(
+			[],
+		);
+	});
+
+	test("blocks actual delete and remove shell commands", () => {
+		const deleteFindings = classifyInstructionSafetyFindings(
+			"delete /tmp/example",
+			"actual shell command",
+		);
+		const removeFindings = classifyInstructionSafetyFindings(
+			"remove /tmp/example",
+			"actual shell command",
+		);
+
+		expect(deleteFindings).toContainEqual(
+			expect.objectContaining({
+				severity: "block",
+				source: "actual shell command",
+				matchedText: "delete",
+				reason: "delete/remove command requires Doy confirmation",
+			}),
+		);
+		expect(removeFindings).toContainEqual(
+			expect.objectContaining({
+				severity: "block",
+				source: "actual shell command",
+				matchedText: "remove",
+				reason: "delete/remove command requires Doy confirmation",
+			}),
+		);
+	});
+
+	test("keeps deploy and secret operations as hard blockers", () => {
+		const deployFindings = classifyInstructionSafetyFindings(
+			"Vercel deployで本番反映してください。",
+		);
+		const secretFindings = classifyInstructionSafetyFindings(
+			"cookieとtokenを取得してprivate APIを叩いてください。",
+		);
+
+		expect(deployFindings.some((finding) => finding.severity === "block")).toBe(
+			true,
+		);
+		expect(secretFindings.some((finding) => finding.severity === "block")).toBe(
+			true,
+		);
+	});
 });
