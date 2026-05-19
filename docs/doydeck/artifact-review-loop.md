@@ -41,6 +41,32 @@ unless a hard Doy gate is reached.
 Write/send commands should pass `expectedTabId`, `expectedTitle`, and
 `requireActiveTabMatch:true` where possible.
 
+## Bounded-loop Integration
+
+When Auto Loop / bounded loop observes a Worker Response Preview, it now routes
+the report through Worker-reported artifact collection before the legacy
+text-only Browser AI review path:
+
+1. Extract the DONE_TAG / END_REPORT report from the Worker response preview.
+2. Call `collectWorkerReportedArtifacts({ workerReportText, expectedTabId,
+   requireActiveTabMatch:true })`.
+3. If supported files are attachable, call
+   `sendWorkerReportedArtifactsToBrowserAI()` and move the loop back to
+   `waiting-browser-ai`.
+4. If the report contains no attachable artifacts, fall back to the text review
+   path with an explicit "text-only artifact review fallback" note.
+5. If collection is blocked by tab guard, sensitive paths, or Browser AI cannot
+   reflect attachments, stop the loop instead of silently treating the review as
+   successful.
+
+Browser AI replies still drive the next transition: `STOP` / `次のWorker指示は不要`
+ends the loop, and `Workerへ渡す指示:` can continue the bounded loop inside the
+approved scope. `AI_REFERENCED_FILE: no` is not considered a completed
+real-file review when files were attached. The loop records a lightweight
+Controller Chain Outcome when an artifact-reviewed reply resolves to STOP,
+next Worker instruction, or a blocked review state; the record keeps summary
+fields and path references rather than embedding full artifact contents.
+
 ## Artifact Sources
 
 - Doy selected files in the Commander session.
@@ -134,6 +160,4 @@ confirmation only when the next action includes:
 - PDF attachment validation; no OCR or PDF text extraction yet.
 - Image-specific review prompts.
 - Fallback text excerpt mode when provider real attachment is impossible.
-- Auto Loop body integration that automatically calls
-  `sendLoopArtifactsToBrowserAI()` after Worker completion.
 - UI registry for attached/reviewed artifacts per task run.

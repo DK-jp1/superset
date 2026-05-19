@@ -184,7 +184,7 @@ should be called with an expected-tab guard in normal operation:
 | Send Handoff | implemented | done | `sendHandoffToBrowserAI()`. |
 | Send short prompt | implemented | done | `sendBrowserAiPrompt({ provider, prompt, expectedTabId, expectedTitle, requireActiveTabMatch })`. |
 | Attach Explorer files | implemented | done | `attachTargetFilesToBrowserAI({ targetPaths, provider, sendPromptAfterAttach })` uses the Browser AI native file input, blocks folders/unsupported files, and does not treat text fallback as success. |
-| Attach Worker-reported artifacts | implemented | done | `sendWorkerReportedArtifactsToBrowserAI({ workerReportText, expectedTabId, requireActiveTabMatch:true })` extracts paths from DONE_TAG reports, skips sensitive or unsupported paths, attaches real files, and sends a Browser AI review prompt that requires `AI_REFERENCED_FILE: yes/no`, `STOP`, or `Workerへ渡す指示:`. |
+| Attach Worker-reported artifacts | implemented | done | `sendWorkerReportedArtifactsToBrowserAI({ workerReportText, expectedTabId, requireActiveTabMatch:true })` extracts paths from DONE_TAG reports, skips sensitive or unsupported paths, attaches real files, and sends a Browser AI review prompt that requires `AI_REFERENCED_FILE: yes/no`, `STOP`, or `Workerへ渡す指示:`. Bounded loop now calls this route before falling back to text-only Worker review. |
 | Read latest reply | implemented | done | `getBrowserAiLatestReply()` / `readBrowserAiLatestReply()`. |
 | Get last submission | implemented | done | `getBrowserAiLastSubmission()`. |
 | Send target-doc Browser AI review | partially implemented | P1 | S9.2 support exists in prompt flow, but a narrower command could reduce prompt boilerplate. |

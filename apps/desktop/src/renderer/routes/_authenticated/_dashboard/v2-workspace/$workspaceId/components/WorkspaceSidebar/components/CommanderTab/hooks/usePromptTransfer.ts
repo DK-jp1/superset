@@ -43,6 +43,14 @@ import {
 	buildAssistantSnapshotScript,
 	buildExtractionScript,
 } from "../browser-adapters";
+import {
+	classifyAutoLoopArtifactCollection,
+	getAutoLoopArtifactReviewReplyStopReason,
+	getAutoLoopArtifactSendStopReason,
+	summarizeAutoLoopArtifactSendResult,
+	type AutoLoopWorkerArtifactCollectionLike,
+	type AutoLoopWorkerArtifactSendLike,
+} from "../commander-auto-loop-artifacts";
 import { sendWorkerResponseToBrowserAI } from "../commander-bridge";
 import type { CommanderBrowserRuntimeSnapshot } from "../commander-browser-runtime";
 import { getTerminalSelection } from "../useActiveTerminal";
@@ -118,6 +126,58 @@ async function fetchCurrentWorkspaceRootPath(
 	);
 	if (!currentWorkspaceRoot?.exists) return null;
 	return currentWorkspaceRoot.absolutePath.trim() || null;
+}
+
+interface AutoLoopArtifactReviewController {
+	collectWorkerReportedArtifacts?: (
+		input?: Record<string, unknown>,
+	) => Promise<AutoLoopWorkerArtifactCollectionLike>;
+	sendWorkerReportedArtifactsToBrowserAI?: (
+		input?: Record<string, unknown>,
+	) => Promise<AutoLoopWorkerArtifactSendLike>;
+	recordControllerChainOutcome?: (
+		input?: Record<string, unknown>,
+	) => Promise<unknown>;
+}
+
+function getAutoLoopArtifactReviewController():
+	| AutoLoopArtifactReviewController
+	| null {
+	if (typeof window === "undefined") return null;
+	const controller = (window as Window & {
+		__doydeckCommanderController?: AutoLoopArtifactReviewController;
+	}).__doydeckCommanderController;
+	if (!controller) return null;
+	return controller;
+}
+
+function recordAutoLoopArtifactReviewOutcome(input: {
+	expectedTabId: string | null;
+	chainStatus: "PASS" | "STOP" | "BLOCKED" | "FAILED";
+	finalDecision: string;
+	nextAction: string;
+	notes: string;
+}): void {
+	const controller = getAutoLoopArtifactReviewController();
+	if (!controller?.recordControllerChainOutcome) return;
+	void controller
+		.recordControllerChainOutcome({
+			expectedTabId: input.expectedTabId,
+			requireActiveTabMatch: Boolean(input.expectedTabId),
+			chainMode: "browser-worker-review",
+			expectBrowserAiReview: true,
+			expectWorkerResponse: true,
+			chainStatus: input.chainStatus,
+			finalDecision: input.finalDecision,
+			nextAction: input.nextAction,
+			notes: input.notes,
+		})
+		.catch((error) => {
+			console.warn(
+				"[Auto Loop] artifact review outcome record failed:",
+				error,
+			);
+		});
 }
 
 function buildBrowserPathPrompt(pathInfo: CommanderSelectedPath): string {
@@ -1663,6 +1723,7 @@ export function usePromptTransfer({
 	const autoLoopWorkerBindingStatusAtArmRef =
 		useRef<DoyDeckWorkerBindingStatus>("unbound");
 	const autoLoopDiagnosticEventIdRef = useRef(0);
+	const autoLoopArtifactReviewExpectedRef = useRef(false);
 	const previousAutoRelayModeRef = useRef<AutoRelayMode>(autoRelayMode);
 	const workerBindingRef = useRef(workerBinding);
 	const requireBoundWorkerForAutoLoopRef = useRef(
@@ -1772,6 +1833,7 @@ export function usePromptTransfer({
 			setAutoLoopStopReason(reason);
 			setAutoLoopPhase("stopped");
 			setAutoLoopLastAction(reason);
+			autoLoopArtifactReviewExpectedRef.current = false;
 			cancelAutoCapture(`auto-loop-stopped:${reason}`);
 			cancelAutoRelay(`auto-loop-stopped:${reason}`);
 			console.warn("[S5.2] Auto Loop stopped:", reason);
@@ -1924,6 +1986,7 @@ export function usePromptTransfer({
 		}
 		autoLoopTerminalFingerprintRef.current = "";
 		autoLoopWorkerFingerprintRef.current = "";
+		autoLoopArtifactReviewExpectedRef.current = false;
 	}, [
 		appendAutoLoopEvent,
 		getCommanderBrowserRuntimeSnapshot,
@@ -2987,6 +3050,7 @@ export function usePromptTransfer({
 		setAutoLoopStopReason(null);
 		autoLoopTerminalFingerprintRef.current = "";
 		autoLoopWorkerFingerprintRef.current = "";
+		autoLoopArtifactReviewExpectedRef.current = false;
 	}, [autoRelayMode, resetAutoLoopState]);
 
 	useEffect(() => {
@@ -3208,7 +3272,56 @@ export function usePromptTransfer({
 			stopAutoLoop("Terminal Send Preview is empty");
 			return;
 		}
-		if (isBrowserCompletionStop(latestBrowserAiDirectionText || text)) {
+		const expectedTabId = workspaceId
+			? useTabsStore.getState().activeTabIds[workspaceId] ?? null
+			: null;
+		const browserRequestedStop = isBrowserCompletionStop(
+			latestBrowserAiDirectionText || text,
+		);
+		const hasNextWorkerInstruction = /Workerへ渡す指示\s*[:：]/.test(text);
+		if (autoLoopArtifactReviewExpectedRef.current) {
+			const artifactReviewStopReason =
+				getAutoLoopArtifactReviewReplyStopReason(text);
+			if (artifactReviewStopReason) {
+				recordAutoLoopArtifactReviewOutcome({
+					expectedTabId,
+					chainStatus: "BLOCKED",
+					finalDecision: "ARTIFACT_REVIEW_NOT_ESTABLISHED",
+					nextAction: "Stop bounded loop and reattach artifacts or request a valid artifact review.",
+					notes: artifactReviewStopReason,
+				});
+				stopAutoLoop(artifactReviewStopReason);
+				return;
+			}
+			if (
+				/AI_REFERENCED_FILE\s*:\s*yes/i.test(text) &&
+				!browserRequestedStop &&
+				!hasNextWorkerInstruction
+			) {
+				const reason =
+					"Browser AI artifact review missing STOP or next Worker instruction";
+				recordAutoLoopArtifactReviewOutcome({
+					expectedTabId,
+					chainStatus: "BLOCKED",
+					finalDecision: "ARTIFACT_REVIEW_NEXT_ACTION_MISSING",
+					nextAction: "Ask Browser AI for STOP or Workerへ渡す指示 before continuing.",
+					notes: reason,
+				});
+				stopAutoLoop(reason);
+				return;
+			}
+		}
+		if (browserRequestedStop) {
+			if (autoLoopArtifactReviewExpectedRef.current) {
+				recordAutoLoopArtifactReviewOutcome({
+					expectedTabId,
+					chainStatus: "STOP",
+					finalDecision: "STOP",
+					nextAction: "STOP",
+					notes:
+						"Browser AI reviewed attached Worker artifacts with AI_REFERENCED_FILE: yes and requested completion.",
+				});
+			}
 			stopAutoLoop("Browser AI requested completion/stop");
 			return;
 		}
@@ -3223,6 +3336,17 @@ export function usePromptTransfer({
 		}
 
 		autoLoopTerminalFingerprintRef.current = fingerprint;
+		if (autoLoopArtifactReviewExpectedRef.current && hasNextWorkerInstruction) {
+			recordAutoLoopArtifactReviewOutcome({
+				expectedTabId,
+				chainStatus: "PASS",
+				finalDecision: "NEXT_WORKER_INSTRUCTION",
+				nextAction: "Send Browser AI scoped follow-up instruction to Worker.",
+				notes:
+					"Browser AI reviewed attached Worker artifacts with AI_REFERENCED_FILE: yes and provided Workerへ渡す指示.",
+			});
+		}
+		autoLoopArtifactReviewExpectedRef.current = false;
 		const nextTurn = autoLoopTurn + 1;
 		setAutoLoopTurn(nextTurn);
 		setAutoLoopPhase("sending-worker");
@@ -3275,7 +3399,8 @@ export function usePromptTransfer({
 		const fingerprint = fingerprintText(`worker:${text}`);
 		if (autoLoopWorkerFingerprintRef.current === fingerprint) return;
 
-		if (!detectProvider(getLiveUrl() || currentUrl)) {
+		const provider = detectProvider(getLiveUrl() || currentUrl);
+		if (!provider) {
 			stopAutoLoop("no Browser AI provider");
 			return;
 		}
@@ -3300,7 +3425,91 @@ export function usePromptTransfer({
 			const expectedTabId = workspaceId
 				? useTabsStore.getState().activeTabIds[workspaceId] ?? null
 				: null;
-			const ok = await sendWorkerResponseToBrowserAI(text, {
+			const artifactController = getAutoLoopArtifactReviewController();
+			let fallbackText = text;
+			if (
+				artifactController?.collectWorkerReportedArtifacts &&
+				artifactController?.sendWorkerReportedArtifactsToBrowserAI
+			) {
+				setAutoLoopLastAction("Collecting Worker-reported artifacts");
+				const artifactCollection =
+					await artifactController.collectWorkerReportedArtifacts({
+						workerReportText: text,
+						provider,
+						expectedTabId,
+						requireActiveTabMatch: Boolean(expectedTabId),
+						loopContext: {
+							mode: "bounded-loop",
+							purpose:
+								"Auto Loop reviews Worker-reported artifacts before deciding STOP or next Worker instruction",
+							allowWorkerInstruction: true,
+							runToCompletion: true,
+						},
+					});
+				const artifactDecision =
+					classifyAutoLoopArtifactCollection(artifactCollection);
+				if (artifactDecision.stopReason) {
+					stopAutoLoop(artifactDecision.stopReason);
+					return;
+				}
+				if (artifactDecision.shouldSendArtifacts) {
+					setAutoLoopLastAction("Attaching Worker artifacts to Browser AI");
+					const artifactSendResult =
+						await artifactController.sendWorkerReportedArtifactsToBrowserAI({
+							workerReportText: text,
+							provider,
+							expectedTabId,
+							requireActiveTabMatch: Boolean(expectedTabId),
+							loopContext: {
+								mode: "bounded-loop",
+								purpose:
+									"Auto Loop reviews Worker-reported artifacts before deciding STOP or next Worker instruction",
+								allowWorkerInstruction: true,
+								runToCompletion: true,
+							},
+						});
+					const artifactStopReason =
+						getAutoLoopArtifactSendStopReason(artifactSendResult);
+					if (artifactStopReason) {
+						stopAutoLoop(artifactStopReason);
+						return;
+					}
+					setWorkerResponsePreview(EMPTY_WORKER_RESPONSE_PREVIEW);
+					if (autoLoopTurn >= autoLoopMaxTurns) {
+						stopAutoLoop("max turns reached");
+						return;
+					}
+					autoLoopArtifactReviewExpectedRef.current = true;
+					setAutoLoopPhase("waiting-browser-ai");
+					setAutoLoopLastAction(
+						summarizeAutoLoopArtifactSendResult(artifactSendResult),
+					);
+					return;
+				}
+				if (artifactDecision.shouldFallbackToText) {
+					setAutoLoopLastAction(
+						`No attachable Worker artifacts; sending text report to Browser AI (${artifactDecision.reason})`,
+					);
+					fallbackText = [
+						"DoyDeck artifact review fallback: Worker report contained no attachable real-file artifacts for Browser AI. Treat this as text-only review and do not claim the artifact itself was inspected.",
+						"",
+						text,
+					].join("\n");
+					autoLoopArtifactReviewExpectedRef.current = false;
+				}
+			} else {
+				setAutoLoopLastAction(
+					"Artifact review command unavailable; sending text Worker report to Browser AI",
+				);
+				fallbackText = [
+					"DoyDeck artifact review fallback: artifact attachment command was unavailable. Treat this as text-only review and do not claim the artifact itself was inspected.",
+					"",
+					text,
+				].join("\n");
+				autoLoopArtifactReviewExpectedRef.current = false;
+			}
+
+			const ok = await sendWorkerResponseToBrowserAI(fallbackText, {
 				autoLoop: true,
 				envelopeDetected: workerResponsePreview.reasons.includes("envelope matched"),
 				expectedWorkspaceId: workspaceId,

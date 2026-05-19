@@ -292,7 +292,7 @@ Worker完了後は、Browser AIにテキスト要約だけを返すのではな�
 2. Workerがスクショを生成する場合は`review-screenshots/*.png`に置く。
 3. Workerが成果物pathを報告に書いた場合は、`collectWorkerReportedArtifacts()`でpath候補を抽出し、存在確認と添付可否を確認する。
 4. Meta AI / Controllerは`collectLoopReviewArtifacts({ expectedTabId, requireActiveTabMatch:true })`で収集する。
-5. Worker報告pathを優先してレビューする場合は`sendWorkerReportedArtifactsToBrowserAI()`を使う。
+5. bounded loop中はWorker完了後にDoyDeckが`collectWorkerReportedArtifacts()`を先に実行し、attachable artifactがあれば`sendWorkerReportedArtifactsToBrowserAI()`で実添付レビューへ進む。
 6. 選択ファイルやreview-screenshotsも含めたpackageなら`sendLoopArtifactsToBrowserAI()`で対応ファイルをBrowser AIへ実添付し、artifact review promptを送る。
 7. Browser AIは添付ファイル、Worker報告、検証結果を見て、`STOP`または次Worker指示を返す。
 8. vスコープ内の修正ならDoy確認なしで次Worker指示に進める。
@@ -312,7 +312,8 @@ Worker完了後は、Browser AIにテキスト要約だけを返すのではな�
   `AI_REFERENCED_FILE: yes`またはfilename言及で現物参照を確認する。
 - Browser AIが現物を参照できていない場合は、テキストレビューだけで完成扱いにしない。
 - `.env`, token, cookie, secret, `local.db`, `app-state.json`, `node_modules`, `.git`を含むpathは添付候補から除外する。
-- Auto Loop本体は勝手に開始しない。Loop中のartifact送信はController commandで明示する。
+- Auto Loop本体は勝手に開始しない。開始済みbounded loopではWorker完了後のartifact review分岐は自動で走る。
+- attachable artifactがないWorker報告はtext-only fallbackとして明示し、現物レビュー完了とは扱わない。
 - PDF/OCR/zip、複数ファイルUXの細部、添付済みファイルの長期registry UIはfuture。
 
 ## 8. Worker launch policy
