@@ -52,7 +52,8 @@ long Auto Loop run.
 | `getWorkerInputReadiness({ paneId })` on ready Codex/Claude | READY or READY_WITH_NOTES with worker identity details. |
 | Visible unsent prompt residue | BLOCKED / not input ready. |
 | Default Codex placeholder prompt | Not treated as user residue. |
-| Claude prompt residue such as `❯ continue` | `getWorkerInputReadiness()` returns BLOCKED; do not send until Doy confirms recovery or a clean Worker is selected. |
+| Claude prompt residue such as `❯ continue` | `getWorkerInputReadiness()` returns BLOCKED with `workerRecoveryActions`; do not send until Doy confirms recovery or a clean Worker is selected. |
+| `getTaskRunStatus()` on prompt residue / stalled state | Returns recovery advice and marks Doy-gated clear/restart/dismiss actions with `workerRecoveryRequiresDoyConfirmation:true`. |
 
 ## 5. Worker Status / Run Identity
 
@@ -102,6 +103,8 @@ long Auto Loop run.
 | Missing path | Safe error; no destructive action. |
 | No selection | Button/menu disabled. |
 | Browser AI file attachment | `Attach to Browser AI` / `attachTargetFilesToBrowserAI()` attaches supported file and verifies filename/chip UI reflection. |
+| Multiple Browser AI file attachment | Up to 5 files are prepared; overflow files are returned as skipped instead of causing a request error. |
+| PDF Browser AI attachment | `.pdf` is a supported real attachment type; no OCR or PDF text extraction is performed. |
 | Browser AI file review prompt | Optional review prompt reaches `UI_REFLECTED`, `WAITING_REPLY`, or `REPLIED`; text fallback alone is not success. |
 | Folder / missing path / unsupported type attachment | BLOCKED or skipped with clear reason; no Worker send or Auto Loop start. |
 | Browser AI attached-file inventory | `getBrowserAiAttachedFiles()` returns visible filenames/file-input names without sending. |
@@ -112,6 +115,7 @@ long Auto Loop run.
 | Worker report without artifact paths | `collectWorkerReportedArtifacts()` returns no attachable files and a warning/blocker path for artifact review rather than treating text-only review as real-file review. |
 | Bounded-loop Worker artifact route | When Auto Loop sees a Worker response preview with attachable DONE_TAG artifact paths, it calls Worker-reported artifact collection/send before the legacy text review path. No-artifact reports fall back to text review with an explicit "text-only" note. |
 | Bounded-loop artifact review E2E | Worker-reported artifact path is attached through `sendWorkerReportedArtifactsToBrowserAI()`, Browser AI replies with `AI_REFERENCED_FILE: yes`, and the loop resolves to STOP without `artifact attachment command unavailable`. |
+| Active-tab loop safety | Auto Loop is armed to the active tab and aborts on tab switch; background/multi-tab concurrent loop scheduling remains out of scope. |
 
 ## 9. Docs / Prompt Contract
 

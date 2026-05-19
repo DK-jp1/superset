@@ -8,6 +8,9 @@ controller, Supervisor pilot, Browser AI, Codex, and Claude Code work.
 
 For the latest controlled-live readiness decision and remaining P1 findings,
 see [`doydeck-final-readiness-audit.md`](./doydeck-final-readiness-audit.md).
+For final practical polish around Worker residue, background loop safety,
+PDF/multiple-file attachments, and Browser AI thread reset, see
+[`doydeck-final-usability-polish.md`](./doydeck-final-usability-polish.md).
 
 ## 1. 現在の結論
 

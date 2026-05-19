@@ -151,3 +151,6 @@ Implement a Doy-gated Claude worker recovery command or documented UI action for
 `prompt-echo-residue` / `feedback` / `recap` states. The first version should
 remain safe: diagnose, show the visible state, recommend recovery, and require
 Doy confirmation before any clear, restart, or dismiss action.
+
+Follow-up polish is tracked in
+[`doydeck-final-usability-polish.md`](./doydeck-final-usability-polish.md).

@@ -29,6 +29,7 @@ const WORKER_REPORTED_ARTIFACT_EXTENSIONS = new Set([
 	"png",
 	"jpg",
 	"jpeg",
+	"pdf",
 ]);
 
 const WORKER_REPORTED_ARTIFACT_KEYWORD =
@@ -77,6 +78,7 @@ function getWorkerReportedArtifactPriority(path: string, line: string): number {
 	let priority = 0;
 	if (/review-screenshots|screenshots/i.test(path)) priority += 30;
 	if (/\.(?:png|jpe?g)$/i.test(path)) priority += 20;
+	if (/\.pdf$/i.test(path)) priority += 8;
 	if (WORKER_REPORTED_ARTIFACT_KEYWORD.test(line)) priority += 10;
 	if (/(?:成果物|artifact|screenshot|スクショ|レポート|report)/i.test(line)) {
 		priority += 10;

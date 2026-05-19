@@ -370,6 +370,33 @@ type CommanderControllerWorkerUiState =
 	| "prompt-echo-residue"
 	| "unknown";
 
+const COMMANDER_BROWSER_AI_ATTACHMENT_SUPPORTED_EXTENSIONS = [
+	"md",
+	"txt",
+	"json",
+	"ts",
+	"tsx",
+	"js",
+	"jsx",
+	"png",
+	"jpg",
+	"jpeg",
+	"pdf",
+] as const;
+const COMMANDER_BROWSER_AI_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+const COMMANDER_BROWSER_AI_ATTACHMENT_MAX_FILES = 5;
+
+type CommanderControllerWorkerRecoveryRisk = "none" | "low" | "medium";
+
+interface CommanderControllerWorkerRecoveryAction {
+	id: string;
+	label: string;
+	requiresDoyConfirmation: boolean;
+	riskLevel: CommanderControllerWorkerRecoveryRisk;
+	reason: string;
+	controllerCommand: string | null;
+}
+
 interface CommanderControllerWorkerInputReadiness {
 	workerUiState: CommanderControllerWorkerUiState;
 	workerInputReady: boolean;
@@ -497,6 +524,8 @@ interface CommanderControllerBrowserAiPrepareInput {
 	dryRun?: unknown;
 	navigateIfNeeded?: unknown;
 	waitForReady?: unknown;
+	preferFreshThread?: unknown;
+	forceNewThread?: unknown;
 }
 
 interface CommanderControllerBrowserAiPrepareResult
@@ -506,6 +535,10 @@ interface CommanderControllerBrowserAiPrepareResult
 	dryRun: boolean;
 	navigateIfNeeded: boolean;
 	waitForReady: boolean;
+	preferFreshThread: boolean;
+	forceNewThread: boolean;
+	threadResetSupported: boolean;
+	threadResetAttempted: boolean;
 	requestedProvider: CommanderControllerBrowserAiPrepareProvider;
 	requestedBrowserProvider: BrowserProvider;
 	navigationTargetUrl: string;
@@ -695,6 +728,9 @@ interface CommanderControllerWorkerInputReadinessResult
 	workerInputBlockers: string[];
 	workerInputWarnings: string[];
 	workerUiStateReason: string | null;
+	workerVisibleStateSummary: string | null;
+	workerRecoveryActions: CommanderControllerWorkerRecoveryAction[];
+	workerRecoveryRequiresDoyConfirmation: boolean;
 	warnings: string[];
 	blockers: string[];
 	message: string;
@@ -757,6 +793,9 @@ interface CommanderControllerBoundWorkerCompletionStatusResult
 	workerIdentityOk: boolean;
 	workerUiState: CommanderControllerWorkerUiState;
 	workerInputReady: boolean;
+	workerVisibleStateSummary: string | null;
+	workerRecoveryActions: CommanderControllerWorkerRecoveryAction[];
+	workerRecoveryRequiresDoyConfirmation: boolean;
 	taskPhase: CommanderControllerBoundWorkerCompletionStatus;
 	taskRunId: string | null;
 	instructionId: string | null;
@@ -1045,6 +1084,9 @@ interface CommanderControllerAttachFilesResult
 	browserAiReady: boolean;
 	browserAiSlotOk: boolean;
 	targetPathCount: number;
+	supportedFileExtensions: string[];
+	maxAttachmentBytes: number;
+	maxAttachmentFiles: number;
 	attachedFileCount: number;
 	skippedFileCount: number;
 	attachedFiles: CommanderControllerAttachedFileSummary[];
@@ -1690,7 +1732,10 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			typicalUse: "Navigate from about:blank or unsupported provider to ChatGPT, Claude, or Gemini and verify composer injection readiness.",
 			requiresDoyConfirmation: false,
 			riskLevel: "medium",
-			notes: ["Does not send Handoff, send Worker instructions, bind workers, or start Auto Loop."],
+			notes: [
+				"Does not send Handoff, send Worker instructions, bind workers, or start Auto Loop.",
+				"preferFreshThread returns a context-carryover warning; forceNewThread is Doy-gated and blocked because provider reset is not safely automated yet.",
+			],
 		},
 		{
 			name: "getBrowserAiPreflight",
@@ -1754,6 +1799,7 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			riskLevel: "medium",
 			notes: [
 				"Supports guarded tab writes with expectedTabId / expectedTitle / requireActiveTabMatch:true.",
+				"Supports md/txt/json/ts/tsx/js/jsx/png/jpg/jpeg/pdf up to 10MB each, with up to 5 files prepared per send.",
 				"Verifies filename/chip UI reflection before treating attachment as ready.",
 				"Does not start Auto Loop, send Worker instructions, or treat text-paste fallback as completion.",
 			],
@@ -1981,7 +2027,10 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			typicalUse: "Check Codex or Claude input state before sending instructions.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
-			notes: ["No bind, activate, send, clear, or launch side effects."],
+			notes: [
+				"No bind, activate, send, clear, or launch side effects.",
+				"Returns visible state summary and recovery action candidates for residue, feedback/recap, running, and stalled states.",
+			],
 		},
 		{
 			name: "getTerminalOutputSnapshot",
@@ -4078,6 +4127,24 @@ export function CommanderTab({
 			provider = detectProvider(liveUrl);
 			const blockers = [...preflight.blockers];
 			const warnings = [...preflight.warnings];
+			if (normalizedInput.forceNewThread) {
+				attemptedActions.push(
+					`force new ${normalizedInput.provider} Browser AI thread`,
+				);
+				skippedActions.push(
+					"forceNewThread requires Doy confirmation and provider-specific UI handling; no reset was attempted",
+				);
+				blockers.push(
+					"forceNewThread is not implemented as an autonomous action; ask Doy before resetting provider thread context",
+				);
+			} else if (normalizedInput.preferFreshThread) {
+				skippedActions.push(
+					"preferFreshThread requested; provider thread reset is not implemented, verify context manually",
+				);
+				warnings.push(
+					"preferFreshThread requested; current provider thread may still contain previous task context",
+				);
+			}
 			if (provider !== requestedBrowserProvider) {
 				blockers.push(
 					`Browser AI is not on requested provider: ${normalizedInput.provider}`,
@@ -4107,6 +4174,10 @@ export function CommanderTab({
 				dryRun: normalizedInput.dryRun,
 				navigateIfNeeded: normalizedInput.navigateIfNeeded,
 				waitForReady: normalizedInput.waitForReady,
+				preferFreshThread: normalizedInput.preferFreshThread,
+				forceNewThread: normalizedInput.forceNewThread,
+				threadResetSupported: false,
+				threadResetAttempted: false,
 				requestedProvider: normalizedInput.provider,
 				requestedBrowserProvider,
 				navigationTargetUrl,
@@ -4385,6 +4456,13 @@ export function CommanderTab({
 					: warnings.length > 0
 						? "READY_WITH_NOTES"
 						: "READY";
+			const recoveryAdvice = getWorkerRecoveryAdvice({
+				workerUiState: workerInputReadiness.workerUiState,
+				workerUiStateReason: workerInputReadiness.workerUiStateReason,
+				workerType,
+				paneId: requestedPaneId,
+				blockers,
+			});
 			const message =
 				status === "BLOCKED"
 					? `worker input readiness blocked: ${blockers[0] ?? "unknown"}`
@@ -4411,6 +4489,7 @@ export function CommanderTab({
 				workerInputBlockers: workerInputReadiness.workerInputBlockers,
 				workerInputWarnings: workerInputReadiness.workerInputWarnings,
 				workerUiStateReason: workerInputReadiness.workerUiStateReason,
+				...recoveryAdvice,
 				warnings,
 				blockers,
 				message,
@@ -5683,6 +5762,11 @@ export function CommanderTab({
 				browserAiReady,
 				browserAiSlotOk,
 				targetPathCount: normalizedInput.targetPaths.length,
+				supportedFileExtensions: [
+					...COMMANDER_BROWSER_AI_ATTACHMENT_SUPPORTED_EXTENSIONS,
+				],
+				maxAttachmentBytes: COMMANDER_BROWSER_AI_ATTACHMENT_MAX_BYTES,
+				maxAttachmentFiles: COMMANDER_BROWSER_AI_ATTACHMENT_MAX_FILES,
 				attachedFileCount: 0,
 				skippedFileCount: 0,
 				attachedFiles: [] as CommanderControllerAttachedFileSummary[],
@@ -5723,6 +5807,24 @@ export function CommanderTab({
 				};
 			}
 
+			const targetPathsForPreparation = normalizedInput.targetPaths.slice(
+				0,
+				COMMANDER_BROWSER_AI_ATTACHMENT_MAX_FILES,
+			);
+			const overLimitSkippedFiles = normalizedInput.targetPaths
+				.slice(COMMANDER_BROWSER_AI_ATTACHMENT_MAX_FILES)
+				.map((filePath) => ({
+					path: filePath,
+					reason: `Browser AI attachment supports up to ${COMMANDER_BROWSER_AI_ATTACHMENT_MAX_FILES} files per send`,
+				}));
+			if (overLimitSkippedFiles.length > 0) {
+				warnings.push(
+					...overLimitSkippedFiles.map(
+						(file) => `skipped ${file.path}: ${file.reason}`,
+					),
+				);
+			}
+
 			let preparedResult: Awaited<
 				ReturnType<
 					typeof trpcUtils.doydeckExplorer.prepareBrowserAiAttachments.fetch
@@ -5732,7 +5834,7 @@ export function CommanderTab({
 				preparedResult =
 					await trpcUtils.doydeckExplorer.prepareBrowserAiAttachments.fetch({
 						workspaceId,
-						paths: normalizedInput.targetPaths,
+						paths: targetPathsForPreparation,
 					});
 			} catch (error) {
 				const message =
@@ -5754,11 +5856,14 @@ export function CommanderTab({
 				mimeType: file.mimeType,
 				byteLength: file.byteLength,
 			}));
-			const skippedFiles = preparedResult.skipped.map((file) => ({
-				path: file.path,
-				reason: file.reason,
-			}));
-			if (preparedResult.skipped.length > 0) {
+			const skippedFiles = [
+				...preparedResult.skipped.map((file) => ({
+					path: file.path,
+					reason: file.reason,
+				})),
+				...overLimitSkippedFiles,
+			];
+			if (skippedFiles.length > 0) {
 				warnings.push(
 					...preparedResult.skipped.map(
 						(file) => `skipped ${file.path}: ${file.reason}`,
@@ -7158,6 +7263,14 @@ export function CommanderTab({
 			}
 			warnings.push(...preflight.warnings.map((warning) => `preflight: ${warning}`));
 
+			const blockedRecoveryAdvice = getWorkerRecoveryAdvice({
+				status: "BLOCKED",
+				workerUiState: preflight.workerUiState,
+				workerUiStateReason: preflight.workerUiStateReason,
+				workerType,
+				paneId: targetPaneId,
+				blockers,
+			});
 			const blockedBase = {
 				...getCommanderControllerContext(),
 				activeTabId: activeTabIdSnapshot,
@@ -7166,6 +7279,7 @@ export function CommanderTab({
 				workerIdentityOk,
 				workerUiState: preflight.workerUiState,
 				workerInputReady: preflight.workerInputReady,
+				...blockedRecoveryAdvice,
 				taskPhase: "BLOCKED" as CommanderControllerBoundWorkerCompletionStatus,
 				taskRunId: currentRun?.taskRunId ?? null,
 				instructionId: currentRun?.instructionId ?? null,
@@ -7488,6 +7602,14 @@ export function CommanderTab({
 				outputChangedRecently,
 				staleDurationMs,
 			});
+			const recoveryAdvice = getWorkerRecoveryAdvice({
+				status,
+				workerUiState: preflight.workerUiState,
+				workerUiStateReason: preflight.workerUiStateReason,
+				workerType,
+				paneId: targetPaneId,
+				blockers,
+			});
 
 			return {
 				ok: status !== "UNKNOWN",
@@ -7499,6 +7621,7 @@ export function CommanderTab({
 				workerIdentityOk,
 				workerUiState: preflight.workerUiState,
 				workerInputReady: preflight.workerInputReady,
+				...recoveryAdvice,
 				taskPhase: status,
 				taskRunId: currentRun?.taskRunId ?? null,
 				instructionId: currentRun?.instructionId ?? null,
@@ -11932,6 +12055,165 @@ function getBoundWorkerCompletionStatusNextAction(params: {
 	return "Collect another snapshot or inspect worker pane state.";
 }
 
+function getWorkerVisibleStateSummary(params: {
+	workerUiState: CommanderControllerWorkerUiState;
+	workerUiStateReason: string | null;
+	workerType: string;
+	paneId: string | null;
+}): string | null {
+	const parts = [
+		params.workerType ? `worker=${params.workerType}` : "",
+		params.paneId ? `pane=${params.paneId}` : "",
+		`uiState=${params.workerUiState}`,
+		params.workerUiStateReason ?? "",
+	].filter(Boolean);
+	return parts.length > 0 ? parts.join("; ") : null;
+}
+
+function getWorkerRecoveryAdvice(params: {
+	status?: CommanderControllerBoundWorkerCompletionStatus;
+	workerUiState: CommanderControllerWorkerUiState;
+	workerUiStateReason: string | null;
+	workerType: string;
+	paneId: string | null;
+	blockers: string[];
+}): {
+	workerVisibleStateSummary: string | null;
+	workerRecoveryActions: CommanderControllerWorkerRecoveryAction[];
+	workerRecoveryRequiresDoyConfirmation: boolean;
+} {
+	const workerVisibleStateSummary = getWorkerVisibleStateSummary(params);
+	const actions: CommanderControllerWorkerRecoveryAction[] = [];
+	const addAction = (action: CommanderControllerWorkerRecoveryAction) => {
+		if (!actions.some((candidate) => candidate.id === action.id)) {
+			actions.push(action);
+		}
+	};
+
+	if (params.workerUiState === "prompt-echo-residue") {
+		addAction({
+			id: "inspect-terminal-output",
+			label: "Inspect terminal snapshot before recovery",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			reason:
+				params.workerUiStateReason ??
+				"Worker input appears to contain unsent prompt residue.",
+			controllerCommand: params.paneId
+				? `getTerminalOutputSnapshot({ paneId: "${params.paneId}" })`
+				: "getTerminalOutputSnapshot()",
+		});
+		addAction({
+			id: "select-clean-worker",
+			label: "Bind a clean recognized Worker pane",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			reason:
+				"Using another ready Worker avoids mutating the blocked pane state.",
+			controllerCommand: "listRecognizedWorkers() -> bindWorkerToTab({ paneId })",
+		});
+		addAction({
+			id: "request-doy-clear-input",
+			label: "Ask Doy before clearing or dismissing the visible input residue",
+			requiresDoyConfirmation: true,
+			riskLevel: "medium",
+			reason:
+				"Clearing input can discard visible Worker state, so it is Doy-gated.",
+			controllerCommand: null,
+		});
+	}
+
+	if (
+		params.workerUiState === "feedback-prompt" ||
+		params.workerUiState === "recap-visible"
+	) {
+		addAction({
+			id: "inspect-terminal-output",
+			label: "Inspect terminal snapshot before recovery",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			reason:
+				params.workerUiStateReason ??
+				"Worker UI needs visual confirmation before sending.",
+			controllerCommand: params.paneId
+				? `getTerminalOutputSnapshot({ paneId: "${params.paneId}" })`
+				: "getTerminalOutputSnapshot()",
+		});
+		addAction({
+			id: "request-doy-dismiss-or-restart",
+			label: "Ask Doy before dismissing feedback/recap or restarting Worker",
+			requiresDoyConfirmation: true,
+			riskLevel: "medium",
+			reason:
+				"Feedback/recap recovery changes Worker UI state and should not be guessed.",
+			controllerCommand: null,
+		});
+	}
+
+	if (params.workerUiState === "busy-running" || params.status === "RUNNING") {
+		addAction({
+			id: "wait-and-recheck",
+			label: "Wait briefly and recheck worker completion status",
+			requiresDoyConfirmation: false,
+			riskLevel: "none",
+			reason: "Worker appears to be running; do not interrupt it.",
+			controllerCommand: "getBoundWorkerCompletionStatus()",
+		});
+	}
+
+	if (params.status === "STALLED") {
+		addAction({
+			id: "inspect-stalled-worker",
+			label: "Inspect terminal snapshot for stalled Worker output",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			reason:
+				"Output stopped changing without a completion signal; inspect before choosing recovery.",
+			controllerCommand: params.paneId
+				? `getTerminalOutputSnapshot({ paneId: "${params.paneId}" })`
+				: "getTerminalOutputSnapshot()",
+		});
+		addAction({
+			id: "request-doy-restart-worker",
+			label: "Ask Doy before restarting the stalled Worker",
+			requiresDoyConfirmation: true,
+			riskLevel: "medium",
+			reason: "Restarting Worker may lose state and is Doy-gated.",
+			controllerCommand: null,
+		});
+	}
+
+	if (actions.length === 0 && params.blockers.length > 0) {
+		addAction({
+			id: "fix-blocker",
+			label: "Resolve the first blocker before sending",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			reason: params.blockers[0] ?? "Worker readiness is blocked.",
+			controllerCommand: null,
+		});
+	}
+
+	if (actions.length === 0) {
+		addAction({
+			id: "none",
+			label: "No recovery action needed",
+			requiresDoyConfirmation: false,
+			riskLevel: "none",
+			reason: "Worker input state is ready or no recoverable issue was detected.",
+			controllerCommand: null,
+		});
+	}
+
+	return {
+		workerVisibleStateSummary,
+		workerRecoveryActions: actions,
+		workerRecoveryRequiresDoyConfirmation: actions.some(
+			(action) => action.requiresDoyConfirmation,
+		),
+	};
+}
+
 function extractBoundWorkerResponseForAnalysis(params: {
 	outputText: string;
 	screenText: string;
@@ -13998,6 +14280,8 @@ function normalizeBrowserAiPrepareInput(
 	dryRun: boolean;
 	navigateIfNeeded: boolean;
 	waitForReady: boolean;
+	preferFreshThread: boolean;
+	forceNewThread: boolean;
 } {
 	const record = input && typeof input === "object" ? input : {};
 	const rawProvider =
@@ -14012,6 +14296,12 @@ function normalizeBrowserAiPrepareInput(
 		waitForReady:
 			(record as CommanderControllerBrowserAiPrepareInput).waitForReady !==
 			false,
+		preferFreshThread:
+			(record as CommanderControllerBrowserAiPrepareInput).preferFreshThread ===
+			true,
+		forceNewThread:
+			(record as CommanderControllerBrowserAiPrepareInput).forceNewThread ===
+			true,
 	};
 }
 

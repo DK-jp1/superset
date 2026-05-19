@@ -100,7 +100,7 @@ Implemented:
 | Session | `setCommanderSession(input)` | implemented | Updates supported Commander session fields. Supports `resetForNewTask`, `replace`, `clearRecordedOutcome`, and expected-tab guards (`expectedTabId` / `expectedTitle` / `requireActiveTabMatch`). |
 | Handoff | `buildHandoffLedger()` | implemented | Builds Handoff Ledger from current session/context. |
 | Handoff | `getHandoffLedger()` | implemented | Alias for `buildHandoffLedger`. |
-| Browser AI | `prepareBrowserAiReady(input?)` | implemented | Browser-AI-only provider preparation. Can navigate to ChatGPT / Claude / Gemini when explicitly requested; does not require worker binding. |
+| Browser AI | `prepareBrowserAiReady(input?)` | implemented | Browser-AI-only provider preparation. Can navigate to ChatGPT / Claude / Gemini when explicitly requested; does not require worker binding. `preferFreshThread` warns about possible context carryover; `forceNewThread` blocks for Doy confirmation. |
 | Browser AI | `getBrowserAiPreflight()` | implemented | Browser-AI-only readiness. Does not require worker binding. |
 | Browser AI | `getBrowserAiSendReadiness()` | implemented | Alias for `getBrowserAiPreflight`. |
 | Diagnostics | `getAutoLoopPreflight()` | implemented | Full Auto Loop / worker readiness preflight. |
@@ -117,7 +117,7 @@ Implemented:
 | Worker | `focusBoundWorkerPane(input?)` | implemented | Alias for `activateTerminalPaneForTab`. |
 | Browser AI | `sendHandoffToBrowserAI(input?)` | implemented | Sends current Handoff prompt to Browser AI. |
 | Browser AI | `sendBrowserAiPrompt(input?)` | implemented | Sends a short explicit Browser AI prompt without building a full Handoff. Supports expected-tab guards and UI reflection verification. |
-| Browser AI | `attachTargetFilesToBrowserAI(input?)` | implemented | Attaches supported Explorer files to Browser AI through the provider native file input and verifies filename/chip UI reflection. |
+| Browser AI | `attachTargetFilesToBrowserAI(input?)` | implemented | Attaches supported Explorer files to Browser AI through the provider native file input and verifies filename/chip UI reflection. Supports up to 5 files per send, 10 MB per file, and `.md/.txt/.json/.ts/.tsx/.js/.jsx/.png/.jpg/.jpeg/.pdf`. |
 | Browser AI | `sendTargetFilesReviewToBrowserAI(input?)` | implemented | Alias for `attachTargetFilesToBrowserAI`; can attach files and send a short review prompt. |
 | Browser AI | `attachSelectedExplorerFileToBrowserAI(input?)` | implemented | Alias used by the Explorer UI action for the selected file. |
 | Browser AI | `getBrowserAiAttachedFiles(input?)` | implemented | Read-only visible attachment/chip inventory for the active Browser AI slot. |
@@ -183,12 +183,12 @@ should be called with an expected-tab guard in normal operation:
 | Prepare Browser AI provider only | implemented | done | `prepareBrowserAiReady({ provider, dryRun, navigateIfNeeded })` readies ChatGPT / Claude / Gemini without worker binding. |
 | Send Handoff | implemented | done | `sendHandoffToBrowserAI()`. |
 | Send short prompt | implemented | done | `sendBrowserAiPrompt({ provider, prompt, expectedTabId, expectedTitle, requireActiveTabMatch })`. |
-| Attach Explorer files | implemented | done | `attachTargetFilesToBrowserAI({ targetPaths, provider, sendPromptAfterAttach })` uses the Browser AI native file input, blocks folders/unsupported files, and does not treat text fallback as success. |
+| Attach Explorer files | implemented | done | `attachTargetFilesToBrowserAI({ targetPaths, provider, sendPromptAfterAttach })` uses the Browser AI native file input, skips overflow beyond 5 files, blocks folders/unsupported files, and does not treat text fallback as success. |
 | Attach Worker-reported artifacts | implemented | done | `sendWorkerReportedArtifactsToBrowserAI({ workerReportText, expectedTabId, requireActiveTabMatch:true })` extracts paths from DONE_TAG reports, skips sensitive or unsupported paths, attaches real files, and sends a Browser AI review prompt that requires `AI_REFERENCED_FILE: yes/no`, `STOP`, or `Workerへ渡す指示:`. Bounded loop now calls this route before falling back to text-only Worker review. |
 | Read latest reply | implemented | done | `getBrowserAiLatestReply()` / `readBrowserAiLatestReply()`. |
 | Get last submission | implemented | done | `getBrowserAiLastSubmission()`. |
 | Send target-doc Browser AI review | partially implemented | P1 | S9.2 support exists in prompt flow, but a narrower command could reduce prompt boilerplate. |
-| Reset / clear Browser AI thread | dangerous | P3 | Could lose context or require provider-specific UI. Doy confirmation required. |
+| Reset / clear Browser AI thread | dangerous | P3 | Could lose context or require provider-specific UI. Doy confirmation required; `prepareBrowserAiReady({ forceNewThread:true })` reports this as blocked instead of guessing. |
 
 ### C. Worker
 

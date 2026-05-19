@@ -95,6 +95,7 @@ const BROWSER_AI_ATTACHMENT_MIME_TYPES: Record<string, string> = {
 	png: "image/png",
 	jpg: "image/jpeg",
 	jpeg: "image/jpeg",
+	pdf: "application/pdf",
 };
 const BROWSER_AI_ATTACHMENT_EXTENSIONS = new Set(
 	Object.keys(BROWSER_AI_ATTACHMENT_MIME_TYPES),

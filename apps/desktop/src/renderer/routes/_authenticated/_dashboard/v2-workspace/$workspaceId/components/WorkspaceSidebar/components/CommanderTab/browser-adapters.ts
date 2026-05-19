@@ -924,7 +924,7 @@ export function buildBrowserAiAttachedFilesStateScript(
     });
   });
   var bodyText = normalizeText(document.body ? document.body.innerText || document.body.textContent || '' : '');
-  var extensionPattern = /([^\\s"'<>|\\\\/]{1,180}\\.(?:md|txt|json|ts|tsx|js|jsx|png|jpe?g))/ig;
+  var extensionPattern = /([^\\s"'<>|\\\\/]{1,180}\\.(?:md|txt|json|ts|tsx|js|jsx|png|jpe?g|pdf))/ig;
   var visibleNames = [];
   var match;
   while ((match = extensionPattern.exec(bodyText))) {
@@ -941,7 +941,7 @@ export function buildBrowserAiAttachedFilesStateScript(
   Array.prototype.slice.call(document.querySelectorAll(candidateSelectors.join(','))).forEach(function(element) {
     var text = normalizeText(element.innerText || element.textContent || element.getAttribute('aria-label') || element.getAttribute('title') || '');
     if (!text) return;
-    var localPattern = /([^\\s"'<>|\\\\/]{1,180}\\.(?:md|txt|json|ts|tsx|js|jsx|png|jpe?g))/ig;
+    var localPattern = /([^\\s"'<>|\\\\/]{1,180}\\.(?:md|txt|json|ts|tsx|js|jsx|png|jpe?g|pdf))/ig;
     var localMatch;
     while ((localMatch = localPattern.exec(text))) {
       visibleNames.push(normalizeText(localMatch[1]));

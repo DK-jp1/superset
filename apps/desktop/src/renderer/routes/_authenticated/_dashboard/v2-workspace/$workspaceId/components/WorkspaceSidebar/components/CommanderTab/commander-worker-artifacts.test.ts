@@ -48,19 +48,23 @@ describe("commander worker reported artifact extraction", () => {
 		);
 	});
 
-	it("does not treat unsupported file types as attachable candidates", () => {
+	it("supports PDF paths while skipping unsupported file types", () => {
 		const result = extractWorkerReportedArtifactPathCandidates(
 			[
 				"成果物: report.pdf",
+				"添付: archive.zip",
 				"スクショ: review-screenshots/result.png",
 			].join("\n"),
 		);
 
-		expect(result.candidates.map((candidate) => candidate.path)).toEqual([
-			"review-screenshots/result.png",
-		]);
-		expect(result.skipped.map((candidate) => candidate.path)).toContain(
+		expect(result.candidates.map((candidate) => candidate.path)).toContain(
 			"report.pdf",
+		);
+		expect(result.candidates.map((candidate) => candidate.path)).toContain(
+			"review-screenshots/result.png",
+		);
+		expect(result.skipped.map((candidate) => candidate.path)).toContain(
+			"archive.zip",
 		);
 	});
 
