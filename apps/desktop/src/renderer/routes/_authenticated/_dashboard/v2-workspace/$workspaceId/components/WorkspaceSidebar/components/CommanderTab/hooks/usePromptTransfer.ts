@@ -45,11 +45,13 @@ import {
 } from "../browser-adapters";
 import {
 	classifyAutoLoopArtifactCollection,
+	getAutoLoopArtifactReviewMissingNextActionReason,
 	getAutoLoopArtifactReviewPendingActionReason,
 	getAutoLoopArtifactReviewReplyAdvisoryReason,
 	getAutoLoopArtifactReviewReplyStopReason,
 	getAutoLoopArtifactSendAdvisoryReason,
 	getAutoLoopArtifactSendStopReason,
+	hasAutoLoopArtifactReviewNextWorkerInstruction,
 	summarizeAutoLoopArtifactSendResult,
 	type AutoLoopWorkerArtifactCollectionLike,
 	type AutoLoopWorkerArtifactSendLike,
@@ -2911,7 +2913,7 @@ export function usePromptTransfer({
 						});
 					}
 					console.log("[S3.11] final extracted length:", extracted.length);
-					setLatestBrowserAiDirectionText(extracted || truncated);
+					setLatestBrowserAiDirectionText(truncated);
 					if (autoRelayMode === "loop" && !extracted.trim()) {
 						setCapturePreview(truncated);
 						if (isBrowserCompletionStop(truncated)) {
@@ -3255,6 +3257,7 @@ export function usePromptTransfer({
 		if (captureForTerminalPreview.source !== "browser-ai") return;
 
 		const text = captureForTerminalPreview.text;
+		const browserAiReplyText = latestBrowserAiDirectionText || text;
 		const fingerprint = fingerprintText(`terminal:${text}`);
 		if (autoLoopTerminalFingerprintRef.current === fingerprint) return;
 
@@ -3291,13 +3294,12 @@ export function usePromptTransfer({
 			: null;
 		const artifactReviewController =
 			resolveAutoLoopArtifactReviewController();
-		const browserRequestedStop = isBrowserCompletionStop(
-			latestBrowserAiDirectionText || text,
-		);
-		const hasNextWorkerInstruction = /Workerへ渡す指示\s*[:：]/.test(text);
+		const browserRequestedStop = isBrowserCompletionStop(browserAiReplyText);
+		const hasNextWorkerInstruction =
+			hasAutoLoopArtifactReviewNextWorkerInstruction(text);
 		if (autoLoopArtifactReviewExpectedRef.current) {
 			const artifactReviewStopReason =
-				getAutoLoopArtifactReviewReplyStopReason(text);
+				getAutoLoopArtifactReviewReplyStopReason(browserAiReplyText);
 			if (artifactReviewStopReason) {
 				recordAutoLoopArtifactReviewOutcome({
 					expectedTabId,
@@ -3310,7 +3312,7 @@ export function usePromptTransfer({
 				return;
 			}
 			const artifactReviewAdvisoryReason =
-				getAutoLoopArtifactReviewReplyAdvisoryReason(text);
+				getAutoLoopArtifactReviewReplyAdvisoryReason(browserAiReplyText);
 			if (artifactReviewAdvisoryReason) {
 				recordAutoLoopAdvisory(artifactReviewAdvisoryReason, {
 					lastAction:
@@ -3318,7 +3320,7 @@ export function usePromptTransfer({
 				});
 			}
 			const artifactReviewPendingActionReason =
-				getAutoLoopArtifactReviewPendingActionReason(text);
+				getAutoLoopArtifactReviewPendingActionReason(browserAiReplyText);
 			if (artifactReviewPendingActionReason) {
 				autoLoopTerminalFingerprintRef.current = fingerprint;
 				recordAutoLoopArtifactReviewOutcome({
@@ -3336,13 +3338,14 @@ export function usePromptTransfer({
 				setAutoLoopPhase("waiting-browser-ai");
 				return;
 			}
-			if (
-				/AI_REFERENCED_FILE\s*:\s*yes/i.test(text) &&
-				!browserRequestedStop &&
-				!hasNextWorkerInstruction
-			) {
-				const reason =
-					"Browser AI artifact review missing STOP or next Worker instruction";
+			const missingNextActionReason =
+				getAutoLoopArtifactReviewMissingNextActionReason({
+					replyText: browserAiReplyText,
+					workerInstructionText: text,
+					browserRequestedStop,
+				});
+			if (missingNextActionReason) {
+				const reason = missingNextActionReason;
 				autoLoopTerminalFingerprintRef.current = fingerprint;
 				recordAutoLoopArtifactReviewOutcome({
 					expectedTabId,

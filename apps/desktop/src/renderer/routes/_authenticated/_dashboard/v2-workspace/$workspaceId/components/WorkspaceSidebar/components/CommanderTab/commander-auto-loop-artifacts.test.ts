@@ -1,11 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import {
 	classifyAutoLoopArtifactCollection,
+	getAutoLoopArtifactReviewMissingNextActionReason,
 	getAutoLoopArtifactReviewReplyAdvisoryReason,
 	getAutoLoopArtifactReviewPendingActionReason,
 	getAutoLoopArtifactReviewReplyStopReason,
 	getAutoLoopArtifactSendAdvisoryReason,
 	getAutoLoopArtifactSendStopReason,
+	hasAutoLoopArtifactReviewNextWorkerInstruction,
 	summarizeAutoLoopArtifactSendResult,
 } from "./commander-auto-loop-artifacts";
 
@@ -147,6 +149,39 @@ describe("commander auto loop artifact review routing", () => {
 				"AI_REFERENCED_FILE: yes\nWorkerへ渡す指示: fix the visible layout issue",
 			),
 		).toBeNull();
+	});
+
+	it("validates artifact review markers from the full reply while sending extracted worker instructions", () => {
+		const fullReply = [
+			"AI_REFERENCED_FILE: yes",
+			"参照できたfilename: route-todo.png, completion-summary.json",
+			"Workerへ渡す指示:",
+			"route-todo.png が /todo のスクショになるよう撮り直してください。",
+			"DONE_TAG:MYGOALIST_COMPLETION_REPORT を維持してください。",
+		].join("\n");
+		const extractedWorkerInstruction = [
+			"route-todo.png が /todo のスクショになるよう撮り直してください。",
+			"DONE_TAG:MYGOALIST_COMPLETION_REPORT を維持してください。",
+		].join("\n");
+
+		expect(getAutoLoopArtifactReviewPendingActionReason(fullReply)).toBeNull();
+		expect(
+			hasAutoLoopArtifactReviewNextWorkerInstruction(extractedWorkerInstruction),
+		).toBe(true);
+		expect(
+			getAutoLoopArtifactReviewMissingNextActionReason({
+				replyText: fullReply,
+				workerInstructionText: extractedWorkerInstruction,
+				browserRequestedStop: false,
+			}),
+		).toBeNull();
+		expect(
+			getAutoLoopArtifactReviewMissingNextActionReason({
+				replyText: fullReply,
+				workerInstructionText: "",
+				browserRequestedStop: false,
+			}),
+		).toContain("missing STOP or next Worker instruction");
 	});
 
 	it("summarizes successful artifact review sends for loop status", () => {

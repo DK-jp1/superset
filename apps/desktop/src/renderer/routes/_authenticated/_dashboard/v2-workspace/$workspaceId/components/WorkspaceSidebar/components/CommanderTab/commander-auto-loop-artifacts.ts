@@ -178,6 +178,25 @@ export function getAutoLoopArtifactReviewPendingActionReason(
 	return null;
 }
 
+export function hasAutoLoopArtifactReviewNextWorkerInstruction(
+	workerInstructionText: string,
+): boolean {
+	return workerInstructionText.trim().length > 0;
+}
+
+export function getAutoLoopArtifactReviewMissingNextActionReason(input: {
+	replyText: string;
+	workerInstructionText: string;
+	browserRequestedStop: boolean;
+}): string | null {
+	if (!/AI_REFERENCED_FILE\s*:\s*yes/i.test(input.replyText)) return null;
+	if (input.browserRequestedStop) return null;
+	if (hasAutoLoopArtifactReviewNextWorkerInstruction(input.workerInstructionText)) {
+		return null;
+	}
+	return "Browser AI artifact review missing STOP or next Worker instruction";
+}
+
 export function summarizeAutoLoopArtifactSendResult(
 	sendResult: AutoLoopWorkerArtifactSendLike,
 ): string {
