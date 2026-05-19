@@ -159,7 +159,12 @@ interface CommanderControllerSessionResult
 interface CommanderControllerHandoffResult
 	extends CommanderControllerCommandResult {
 	ledger?: string;
+	ledgerLength?: number;
+	payloadBudgetWarningChars?: number;
+	payloadBudgetSevereChars?: number;
+	payloadBudgetExceeded?: boolean;
 	missingFields?: string[];
+	warnings?: string[];
 	session?: CommanderSession;
 }
 
@@ -768,6 +773,25 @@ interface CommanderControllerBoundWorkerLatestResponseTextFields {
 	outputText: string;
 	screenText: string;
 	viewportText: string;
+}
+
+type CommanderControllerResponseMode = "summary" | "diagnostic" | "raw";
+
+interface CommanderControllerBoundWorkerLatestResponseInput {
+	responseMode?: unknown;
+	includeRawOutput?: unknown;
+	maxDiagnosticChars?: unknown;
+}
+
+interface CommanderControllerBoundWorkerLatestResponsePayloadBudget {
+	responseMode: CommanderControllerResponseMode;
+	maxDiagnosticChars: number;
+	diagnosticFieldsIncluded: boolean;
+	rawOutputIncluded: boolean;
+	omittedDiagnosticFields: string[];
+	truncatedDiagnosticFields: string[];
+	diagnosticTextLength: number;
+	returnedDiagnosticTextLength: number;
 }
 
 type CommanderControllerBoundWorkerCompletionStatus =
@@ -1421,6 +1445,14 @@ interface CommanderControllerBoundWorkerLatestResponseResult
 	workerReportLength: number;
 	workerReportPreview: string;
 	staleReportIgnored: boolean;
+	responseMode: CommanderControllerResponseMode;
+	maxDiagnosticChars: number;
+	diagnosticFieldsIncluded: boolean;
+	rawOutputIncluded: boolean;
+	omittedDiagnosticFields: string[];
+	truncatedDiagnosticFields: string[];
+	diagnosticTextLength: number;
+	returnedDiagnosticTextLength: number;
 	summary: string;
 	promptEchoRemoved: boolean;
 	usedLastSendMarker: boolean;
@@ -2073,7 +2105,10 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			typicalUse: "Compatibility name for task/worker status watchers.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
-			notes: ["No Auto Loop, Worker send, bind, or activation side effects."],
+			notes: [
+				"No Auto Loop, Worker send, bind, or activation side effects.",
+				"Uses summary-oriented Worker response reads internally instead of returning raw terminal diagnostics.",
+			],
 		},
 		{
 			name: "activateTerminalPaneForTab",
@@ -2128,7 +2163,10 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			typicalUse: "Detect ACK, completion, error, file-change, and git-operation signals.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
-			notes: ["Alias getBoundWorkerLatestOutput is also available."],
+			notes: [
+				"Alias getBoundWorkerLatestOutput is also available.",
+				"Supports responseMode: summary | diagnostic | raw plus maxDiagnosticChars for payload budgeting.",
+			],
 		},
 		{
 			name: "getBoundWorkerLatestOutput",
@@ -2139,7 +2177,10 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			typicalUse: "Compatibility alias for latest worker output reads.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
-			notes: ["No send side effects."],
+			notes: [
+				"No send side effects.",
+				"Use responseMode:'summary' for polling and responseMode:'raw' only for explicit debugging.",
+			],
 		},
 		{
 			name: "getCommanderSession",
@@ -2474,8 +2515,12 @@ interface CommanderControllerCommands {
 	sendInstructionToBoundWorker: (
 		input: CommanderControllerSendInstructionInput,
 	) => Promise<CommanderControllerSendInstructionResult>;
-	readBoundWorkerLatestResponse: () => Promise<CommanderControllerBoundWorkerLatestResponseResult>;
-	getBoundWorkerLatestOutput: () => Promise<CommanderControllerBoundWorkerLatestResponseResult>;
+	readBoundWorkerLatestResponse: (
+		input?: CommanderControllerBoundWorkerLatestResponseInput,
+	) => Promise<CommanderControllerBoundWorkerLatestResponseResult>;
+	getBoundWorkerLatestOutput: (
+		input?: CommanderControllerBoundWorkerLatestResponseInput,
+	) => Promise<CommanderControllerBoundWorkerLatestResponseResult>;
 	sendBoundWorkerResponseToBrowserAI: (
 		input?: unknown,
 	) => Promise<CommanderControllerSendWorkerResponseResult>;
@@ -3701,23 +3746,28 @@ export function CommanderTab({
 			const sessionSnapshot = ensureCommanderSessionForActiveTab();
 			try {
 				const stateSnapshot = commanderStateFromSession(sessionSnapshot);
+				const ledger = transfer.buildHandoffLedger({
+					session: sessionSnapshot,
+					state: stateSnapshot,
+				});
+				const handoffBudget = getHandoffLedgerPayloadBudget(ledger.length);
 				return {
 					ok: true,
 					...getCommanderControllerContext(),
-					ledger: transfer.buildHandoffLedger({
-						session: sessionSnapshot,
-						state: stateSnapshot,
-					}),
+					ledger,
+					...handoffBudget,
 					missingFields:
 						getCommanderSessionMissingFields(sessionSnapshot),
 					session: sessionSnapshot,
 				};
 			} catch (error) {
+				const handoffBudget = getHandoffLedgerPayloadBudget(0);
 				return {
 					ok: false,
 					...getCommanderControllerContext(),
 					reason:
 						error instanceof Error ? error.message : "unknown error",
+					...handoffBudget,
 					missingFields:
 						getCommanderSessionMissingFields(sessionSnapshot),
 					session: sessionSnapshot,
@@ -5202,6 +5252,26 @@ export function CommanderTab({
 						sendInput,
 					)
 				: "";
+			warnings.push(
+				...getPayloadBudgetWarnings({
+					label: "handoff ledger",
+					length: handoffLedgerLength,
+					warningChars: COMMANDER_HANDOFF_LEDGER_WARNING_CHARS,
+					severeChars: COMMANDER_HANDOFF_LEDGER_SEVERE_CHARS,
+				}),
+				...getPayloadBudgetWarnings({
+					label: "handoff Browser AI prompt",
+					length: prompt.length,
+					warningChars: COMMANDER_BROWSER_AI_PROMPT_WARNING_CHARS,
+					severeChars: COMMANDER_BROWSER_AI_PROMPT_SEVERE_CHARS,
+				}),
+				...getPayloadBudgetWarnings({
+					label: "handoff additional context",
+					length: sendInput.additionalContext.length,
+					warningChars: COMMANDER_HANDOFF_ADDITIONAL_CONTEXT_WARNING_CHARS,
+					severeChars: COMMANDER_HANDOFF_ADDITIONAL_CONTEXT_SEVERE_CHARS,
+				}),
+			);
 			let latestReplyBeforeSubmit: BrowserAiLatestReplyState | null = null;
 			if (provider && runtime.status === "available" && runtime.bridgeAvailable) {
 				try {
@@ -5477,6 +5547,14 @@ export function CommanderTab({
 			if (runtime.visualStatus === "NEEDS_FIX") {
 				warnings.push(`browser ai visual status needs fix: ${runtime.visualReason}`);
 			}
+			warnings.push(
+				...getPayloadBudgetWarnings({
+					label: "short Browser AI prompt",
+					length: prompt.length,
+					warningChars: COMMANDER_BROWSER_AI_PROMPT_WARNING_CHARS,
+					severeChars: COMMANDER_BROWSER_AI_PROMPT_SEVERE_CHARS,
+				}),
+			);
 
 			let latestReplyBeforeSubmit: BrowserAiLatestReplyState | null = null;
 			if (provider && runtime.status === "available" && runtime.bridgeAvailable) {
@@ -6885,7 +6963,10 @@ export function CommanderTab({
 		}, [activeTabId, getAutoLoopPreflightController, getCommanderControllerContext]);
 
 	const readBoundWorkerLatestResponseController =
-		useCallback(async (): Promise<CommanderControllerBoundWorkerLatestResponseResult> => {
+		useCallback(async (
+			input?: CommanderControllerBoundWorkerLatestResponseInput,
+		): Promise<CommanderControllerBoundWorkerLatestResponseResult> => {
+			const responsePayloadInput = normalizeBoundWorkerLatestResponseInput(input);
 			const blockers: string[] = [];
 			const warnings: string[] = [];
 			const preflight = await getAutoLoopPreflightController();
@@ -6925,6 +7006,16 @@ export function CommanderTab({
 					: null;
 			const emptyOutputFields =
 				getEmptyBoundWorkerOutputFields(lastInstructionMarker);
+			const emptyTextPayload =
+				createBoundWorkerLatestResponseTextFieldsForReturn(
+					{
+						rawOutputText: "",
+						outputText: "",
+						screenText: "",
+						viewportText: "",
+					},
+					responsePayloadInput,
+				);
 
 			if (blockers.length > 0) {
 				return {
@@ -6932,6 +7023,7 @@ export function CommanderTab({
 					...baseResult,
 					status: "BLOCKED",
 					...emptyOutputFields,
+					...emptyTextPayload.budget,
 					isRunning: false,
 					hasError: false,
 					hasToolUse: false,
@@ -6957,6 +7049,7 @@ export function CommanderTab({
 					...baseResult,
 					status: "FAILED",
 					...emptyOutputFields,
+					...emptyTextPayload.budget,
 					isRunning: false,
 					hasError: false,
 					hasToolUse: false,
@@ -6987,6 +7080,7 @@ export function CommanderTab({
 					...baseResult,
 					status: "FAILED",
 					...emptyOutputFields,
+					...emptyTextPayload.budget,
 					isRunning: false,
 					hasError: false,
 					hasToolUse: false,
@@ -7040,12 +7134,15 @@ export function CommanderTab({
 				staleReportIgnored,
 			} = extractedResponse;
 			const returnedTextFields =
-				createBoundWorkerLatestResponseTextFieldsForReturn({
-					rawOutputText,
-					outputText,
-					screenText,
-					viewportText,
-				});
+				createBoundWorkerLatestResponseTextFieldsForReturn(
+					{
+						rawOutputText,
+						outputText,
+						screenText,
+						viewportText,
+					},
+					responsePayloadInput,
+				);
 			warnings.push(...returnedTextFields.warnings);
 			const workerReportFields = {
 				workerReportExtracted,
@@ -7067,6 +7164,7 @@ export function CommanderTab({
 					...baseResult,
 					status: "WAITING",
 					...returnedTextFields.fields,
+					...returnedTextFields.budget,
 					deltaText,
 					analyzedResponseText: "",
 					latestResponseText: "",
@@ -7114,6 +7212,7 @@ export function CommanderTab({
 					...baseResult,
 					status: "WAITING",
 					...returnedTextFields.fields,
+					...returnedTextFields.budget,
 					deltaText,
 					analyzedResponseText,
 					latestResponseText,
@@ -7177,6 +7276,7 @@ export function CommanderTab({
 				...baseResult,
 				status: "READY",
 				...returnedTextFields.fields,
+				...returnedTextFields.budget,
 				deltaText,
 				analyzedResponseText,
 				latestResponseText,
@@ -7450,7 +7550,9 @@ export function CommanderTab({
 			const currentRunEndReportDetected =
 				Boolean(currentRunReport) && /\bEND_REPORT\b/.test(currentRunReport?.text ?? "");
 			const idleMessageDetected = detectBoundWorkerIdleMessage(currentScopeText);
-			const workerResponse = await readBoundWorkerLatestResponseController();
+			const workerResponse = await readBoundWorkerLatestResponseController({
+				responseMode: "summary",
+			});
 			const promptEchoOnly =
 				workerResponse.selectedResponseReason === "prompt-echo-waiting" ||
 				/(?:prompt echo|submitted prompt echo)/i.test(
@@ -7681,7 +7783,9 @@ export function CommanderTab({
 			const warnings: string[] = [];
 			const workerResponse = normalizedInput.workerReportText
 				? null
-				: await readBoundWorkerLatestResponseController();
+				: await readBoundWorkerLatestResponseController({
+						responseMode: "summary",
+					});
 			const rawWorkerReportText =
 				normalizedInput.workerReportText ||
 				workerResponse?.analyzedResponseText ||
@@ -7904,7 +8008,9 @@ export function CommanderTab({
 					workerReportExtracted = workerCompletion.workerReportExtracted;
 					workerReportLength = workerCompletion.workerReportLength;
 					if (workerCompletion.workerReportExtracted) {
-						const workerResponse = await readBoundWorkerLatestResponseController();
+						const workerResponse = await readBoundWorkerLatestResponseController({
+							responseMode: "summary",
+						});
 						workerReportPreview = normalizeLoopArtifactPreview(
 							workerResponse.latestResponseText || workerResponse.workerReportPreview,
 							1800,
@@ -8406,7 +8512,9 @@ export function CommanderTab({
 				runtime.status === "available" &&
 				runtime.bridgeAvailable &&
 				composerReadiness.composerInjectionReady;
-			const workerResponse = await readBoundWorkerLatestResponseController();
+			const workerResponse = await readBoundWorkerLatestResponseController({
+				responseMode: "summary",
+			});
 			const responseText = (
 				workerResponse.analyzedResponseText || workerResponse.latestResponseText
 			).trim();
@@ -8468,6 +8576,20 @@ export function CommanderTab({
 						hasGitOperationSignal: workerResponse.hasGitOperationSignal,
 					})
 				: "";
+			warnings.push(
+				...getPayloadBudgetWarnings({
+					label: "worker response package",
+					length: responseText.length,
+					warningChars: COMMANDER_WORKER_RESPONSE_PACKAGE_WARNING_CHARS,
+					severeChars: COMMANDER_WORKER_RESPONSE_PACKAGE_SEVERE_CHARS,
+				}),
+				...getPayloadBudgetWarnings({
+					label: "worker response Browser AI prompt",
+					length: prompt.length,
+					warningChars: COMMANDER_BROWSER_AI_PROMPT_WARNING_CHARS,
+					severeChars: COMMANDER_BROWSER_AI_PROMPT_SEVERE_CHARS,
+				}),
+			);
 			let latestReplyBeforeSubmit: BrowserAiLatestReplyState | null = null;
 			if (provider && runtime.status === "available" && runtime.bridgeAvailable) {
 				try {
@@ -8714,7 +8836,9 @@ export function CommanderTab({
 				: await getAutoLoopPreflightController();
 			const latestReply = await readBrowserAiLatestReplyController();
 			const resolvedWorkerResponse = workerResponseExpected
-				? await readBoundWorkerLatestResponseController()
+				? await readBoundWorkerLatestResponseController({
+						responseMode: "summary",
+					})
 				: null;
 			const lastSubmission = lastBrowserAiSubmissionRef.current;
 			const blockers: string[] = [];
@@ -11975,35 +12099,127 @@ function limitWorkerOutputText(text: string, maxLength = 50_000): string {
 }
 
 const COMMANDER_CONTROLLER_DIAGNOSTIC_TEXT_LIMIT = 80_000;
+const COMMANDER_CONTROLLER_RAW_TEXT_LIMIT = 250_000;
+const COMMANDER_HANDOFF_LEDGER_WARNING_CHARS = 20_000;
+const COMMANDER_HANDOFF_LEDGER_SEVERE_CHARS = 40_000;
+const COMMANDER_HANDOFF_ADDITIONAL_CONTEXT_WARNING_CHARS = 20_000;
+const COMMANDER_HANDOFF_ADDITIONAL_CONTEXT_SEVERE_CHARS = 40_000;
+const COMMANDER_BROWSER_AI_PROMPT_WARNING_CHARS = 30_000;
+const COMMANDER_BROWSER_AI_PROMPT_SEVERE_CHARS = 60_000;
+const COMMANDER_WORKER_RESPONSE_PACKAGE_WARNING_CHARS = 20_000;
+const COMMANDER_WORKER_RESPONSE_PACKAGE_SEVERE_CHARS = 50_000;
+
+function getPayloadBudgetWarnings({
+	label,
+	length,
+	warningChars,
+	severeChars,
+}: {
+	label: string;
+	length: number;
+	warningChars: number;
+	severeChars: number;
+}): string[] {
+	if (length >= severeChars) {
+		return [
+			`${label} is large (${length} chars, severe budget ${severeChars}); prefer summary, path references, or file attachment metadata.`,
+		];
+	}
+	if (length >= warningChars) {
+		return [
+			`${label} is approaching payload budget (${length} chars, warning budget ${warningChars}).`,
+		];
+	}
+	return [];
+}
+
+function getHandoffLedgerPayloadBudget(ledgerLength: number): {
+	ledgerLength: number;
+	payloadBudgetWarningChars: number;
+	payloadBudgetSevereChars: number;
+	payloadBudgetExceeded: boolean;
+	warnings: string[];
+} {
+	return {
+		ledgerLength,
+		payloadBudgetWarningChars: COMMANDER_HANDOFF_LEDGER_WARNING_CHARS,
+		payloadBudgetSevereChars: COMMANDER_HANDOFF_LEDGER_SEVERE_CHARS,
+		payloadBudgetExceeded: ledgerLength >= COMMANDER_HANDOFF_LEDGER_WARNING_CHARS,
+		warnings: getPayloadBudgetWarnings({
+			label: "handoff ledger",
+			length: ledgerLength,
+			warningChars: COMMANDER_HANDOFF_LEDGER_WARNING_CHARS,
+			severeChars: COMMANDER_HANDOFF_LEDGER_SEVERE_CHARS,
+		}),
+	};
+}
 
 function createBoundWorkerLatestResponseTextFieldsForReturn(fields: {
 	rawOutputText: string;
 	outputText: string;
 	screenText: string;
 	viewportText: string;
+}, input: {
+	responseMode: CommanderControllerResponseMode;
+	maxDiagnosticChars: number;
 }): {
 	fields: CommanderControllerBoundWorkerLatestResponseTextFields;
+	budget: CommanderControllerBoundWorkerLatestResponsePayloadBudget;
 	warnings: string[];
 } {
 	const warnings: string[] = [];
+	const fieldEntries = [
+		["rawOutputText", fields.rawOutputText],
+		["outputText", fields.outputText],
+		["screenText", fields.screenText],
+		["viewportText", fields.viewportText],
+	] as const;
+	const diagnosticTextLength = fieldEntries.reduce(
+		(total, [, value]) => total + value.length,
+		0,
+	);
+	const omittedDiagnosticFields =
+		input.responseMode === "summary"
+			? fieldEntries.map(([fieldName]) => fieldName)
+			: [];
+	const truncatedDiagnosticFields: string[] = [];
 	const limitField = (
 		value: string,
 		fieldName: keyof CommanderControllerBoundWorkerLatestResponseTextFields,
 	): string => {
-		if (value.length <= COMMANDER_CONTROLLER_DIAGNOSTIC_TEXT_LIMIT) {
+		if (input.responseMode === "summary") {
+			return "";
+		}
+		if (value.length <= input.maxDiagnosticChars) {
 			return value;
 		}
+		truncatedDiagnosticFields.push(fieldName);
 		warnings.push(
-			`${fieldName} truncated to last ${COMMANDER_CONTROLLER_DIAGNOSTIC_TEXT_LIMIT} chars for Controller response payload`,
+			`${fieldName} truncated to last ${input.maxDiagnosticChars} chars for Controller response payload`,
 		);
-		return value.slice(-COMMANDER_CONTROLLER_DIAGNOSTIC_TEXT_LIMIT);
+		return value.slice(-input.maxDiagnosticChars);
 	};
+	const returnedFields = {
+		rawOutputText: limitField(fields.rawOutputText, "rawOutputText"),
+		outputText: limitField(fields.outputText, "outputText"),
+		screenText: limitField(fields.screenText, "screenText"),
+		viewportText: limitField(fields.viewportText, "viewportText"),
+	};
+	const returnedDiagnosticTextLength = Object.values(returnedFields).reduce(
+		(total, value) => total + value.length,
+		0,
+	);
 	return {
-		fields: {
-			rawOutputText: limitField(fields.rawOutputText, "rawOutputText"),
-			outputText: limitField(fields.outputText, "outputText"),
-			screenText: limitField(fields.screenText, "screenText"),
-			viewportText: limitField(fields.viewportText, "viewportText"),
+		fields: returnedFields,
+		budget: {
+			responseMode: input.responseMode,
+			maxDiagnosticChars: input.maxDiagnosticChars,
+			diagnosticFieldsIncluded: input.responseMode !== "summary",
+			rawOutputIncluded: input.responseMode === "raw",
+			omittedDiagnosticFields,
+			truncatedDiagnosticFields,
+			diagnosticTextLength,
+			returnedDiagnosticTextLength,
 		},
 		warnings,
 	};
@@ -14192,6 +14408,50 @@ function normalizeTerminalOutputSnapshotInput(
 	return {
 		paneId: typeof rawPaneId === "string" ? rawPaneId.trim() || null : null,
 		maxOutputChars,
+	};
+}
+
+function normalizeBoundWorkerLatestResponseInput(
+	input?: CommanderControllerBoundWorkerLatestResponseInput,
+): {
+	responseMode: CommanderControllerResponseMode;
+	maxDiagnosticChars: number;
+} {
+	const record = input && typeof input === "object" ? input : {};
+	const rawResponseMode = normalizeControllerTextInput(
+		(record as CommanderControllerBoundWorkerLatestResponseInput).responseMode,
+	).toLowerCase();
+	const includeRawOutput = normalizeControllerBooleanInput(
+		(record as CommanderControllerBoundWorkerLatestResponseInput).includeRawOutput,
+	);
+	const responseMode: CommanderControllerResponseMode =
+		includeRawOutput === true
+			? "raw"
+			: rawResponseMode === "summary" ||
+					rawResponseMode === "diagnostic" ||
+					rawResponseMode === "raw"
+				? rawResponseMode
+				: "diagnostic";
+	const rawMaxDiagnosticChars = (
+		record as CommanderControllerBoundWorkerLatestResponseInput
+	).maxDiagnosticChars;
+	const defaultMaxDiagnosticChars =
+		responseMode === "raw"
+			? COMMANDER_CONTROLLER_RAW_TEXT_LIMIT
+			: responseMode === "summary"
+				? 0
+				: COMMANDER_CONTROLLER_DIAGNOSTIC_TEXT_LIMIT;
+	const maxDiagnosticChars =
+		typeof rawMaxDiagnosticChars === "number" &&
+		Number.isFinite(rawMaxDiagnosticChars)
+			? Math.max(
+					responseMode === "summary" ? 0 : 1_000,
+					Math.min(Math.floor(rawMaxDiagnosticChars), 1_000_000),
+				)
+			: defaultMaxDiagnosticChars;
+	return {
+		responseMode,
+		maxDiagnosticChars,
 	};
 }
 

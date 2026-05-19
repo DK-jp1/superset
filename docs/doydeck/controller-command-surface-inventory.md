@@ -129,8 +129,8 @@ Implemented:
 | Browser AI | `readBrowserAiLatestReply()` | implemented | Reads latest Browser AI assistant reply and classifications. |
 | Browser AI | `getBrowserAiLatestReply()` | implemented | Alias for `readBrowserAiLatestReply`. |
 | Worker | `sendInstructionToBoundWorker(input)` | implemented | Sends instruction to bound Codex / Claude worker with preflight guard. |
-| Worker | `readBoundWorkerLatestResponse()` | implemented | Reads latest bound worker response and safety/completion flags. |
-| Worker | `getBoundWorkerLatestOutput()` | implemented | Alias for `readBoundWorkerLatestResponse`. |
+| Worker | `readBoundWorkerLatestResponse(input?)` | implemented | Reads latest bound worker response and safety/completion flags. Supports `responseMode: "summary" | "diagnostic" | "raw"`, `includeRawOutput`, and `maxDiagnosticChars` so polling can avoid raw terminal diagnostics. |
+| Worker | `getBoundWorkerLatestOutput(input?)` | implemented | Alias for `readBoundWorkerLatestResponse`; use summary mode for polling and raw mode only for explicit debugging. |
 | Browser AI | `sendBoundWorkerResponseToBrowserAI(input?)` | implemented | Sends worker response back to Browser AI for review. |
 | Browser AI | `sendWorkerResponseToBrowserAI(input?)` | implemented | Alias for `sendBoundWorkerResponseToBrowserAI`. |
 | Browser AI | `getBrowserAiLastSubmission()` | implemented | Last Browser AI submission state. |
@@ -251,10 +251,6 @@ P1 missing or partial:
 - `proposeTaskTabs(input?)`
   - Return create / do-not-create candidates, priorities, reasons, and proposed tab titles.
   - Purpose: let Doy confirm the right tabs before `createTaskTab()`.
-- Handoff / prompt-size warning fields
-  - Warn before sending oversized or stale Handoff content to Browser AI.
-  - Purpose: keep Browser AI prompts short enough for task-local review.
-
 P2 missing:
 
 - `createProposedTaskTabs(input?)`
@@ -313,10 +309,10 @@ P3: 危険または仕様未確定。
 
 次に実装するなら、state-onlyで副作用が小さいもの、またはread-only diagnosticsを優先する。
 
-Candidate 1: Handoff / prompt-size warning fields
+Candidate 1: Handoff / Outcome compaction fields
 
-- Browser AI送信前にHandoff肥大化とstale historyを検出する。
-- `sendBrowserAiPrompt()`で短文送信はできるため、次は長文Handoff側の警告を優先する。
+- Browser AI送信前のHandoff / prompt-size warningは実装済み。
+- 次は長文OutcomeやWorker reportをsummary + path referenceへ寄せ、Handoff本文に全文を抱え込まない設計を優先する。
 
 Candidate 2: Decision Record accessor
 
@@ -375,10 +371,10 @@ Visual sanity checkは以下の場合に使う。
    - 種別: Browser-AI attachment helper。
    - リスク: medium-low。
 
-2. Handoff / prompt-size warning fields
-   - 理由: Browser AI送信前にHandoff肥大化とstale historyを検出する。
-   - 種別: diagnostic warning。
-   - リスク: low。
+2. Handoff / Outcome compaction fields
+   - 理由: warningだけでなく、長文OutcomeやWorker reportをsummary + artifact/path referenceへ寄せる。
+   - 種別: payload lifecycle。
+   - リスク: medium-low。
 
 3. Decision Record accessor
    - 理由: Handoff LedgerからDR-ID短参照をController pathで扱えるようにする。
@@ -401,8 +397,8 @@ Recommended S9.9 / S10 entry:
 
 1. Browser AI attachment follow-ups
    - PDF/画像/複数ファイル/添付済みファイル一覧を短く安全に扱う。
-2. Handoff / prompt-size warning fields
-   - Browser AI送信前にprompt sizeとstale historyを警告する。
+2. Handoff / Outcome compaction fields
+   - warning済みのlarge payloadをsummary + artifact/path referenceへ寄せる。
 3. Decision Record accessor
    - HandoffからDecision Record短参照を使いやすくする。
 4. `getVisibleStateSnapshot(input?)`
