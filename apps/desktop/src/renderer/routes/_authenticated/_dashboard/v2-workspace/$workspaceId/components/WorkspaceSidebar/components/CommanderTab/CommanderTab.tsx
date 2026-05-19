@@ -71,6 +71,11 @@ import {
 	validateWorkerReportForBrowserAiReview,
 } from "./commander-worker-report";
 import {
+	extractWorkerReportedArtifactPathCandidates,
+	type CommanderWorkerReportedArtifactCandidate,
+	type CommanderWorkerReportedArtifactSkippedCandidate,
+} from "./commander-worker-artifacts";
+import {
 	buildSendHandoffLedgerPrompt,
 	generateWorkerPrompt,
 	generateReviewPrompt,
@@ -1117,6 +1122,7 @@ interface CommanderControllerAttachedFilesInventoryResult
 type CommanderControllerLoopReviewArtifactKind =
 	| "selected-file"
 	| "review-screenshot"
+	| "worker-reported-artifact"
 	| "worker-report"
 	| "build-test-summary"
 	| "diff-summary"
@@ -1143,6 +1149,7 @@ interface CommanderControllerLoopArtifactsInput
 	maxFiles?: unknown;
 	expectedTaskRunId?: unknown;
 	expectedDoneTag?: unknown;
+	workerReportText?: unknown;
 }
 
 type CommanderControllerLoopArtifactsStatus =
@@ -1186,6 +1193,12 @@ interface CommanderControllerLoopArtifactsResult
 	workerReportLength: number;
 	workerReportPreview: string;
 	workerStatus: string | null;
+	artifactCandidates: CommanderWorkerReportedArtifactCandidate[];
+	attachableArtifacts: CommanderControllerLoopReviewArtifact[];
+	skippedArtifacts: CommanderControllerSkippedFileSummary[];
+	workerReportedArtifactCount: number;
+	workerReportedAttachableArtifactCount: number;
+	browserAiReviewStatus: CommanderControllerBrowserAiSubmissionVerificationStatus | null;
 	reviewPromptLength: number;
 	loopReady: boolean;
 	warnings: string[];
@@ -1194,6 +1207,12 @@ interface CommanderControllerLoopArtifactsResult
 	nextRequiredAction: string;
 	attachResult?: CommanderControllerAttachFilesResult;
 }
+
+interface CommanderControllerWorkerReportedArtifactsInput
+	extends CommanderControllerLoopArtifactsInput {}
+
+interface CommanderControllerWorkerReportedArtifactsResult
+	extends CommanderControllerLoopArtifactsResult {}
 
 type CommanderControllerLatestReplyStatus =
 	| "READY"
@@ -1813,6 +1832,54 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			],
 		},
 		{
+			name: "extractArtifactsFromWorkerReport",
+			category: "Browser AI",
+			access: "read-only",
+			implemented: true,
+			description:
+				"Extract supported artifact paths from a Worker DONE_TAG report and classify skipped candidates.",
+			typicalUse:
+				"Dry-run a Worker report before attaching its screenshots, markdown, or result files to Browser AI.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: [
+				"Alias of collectWorkerReportedArtifacts; does not send prompts, start Auto Loop, or touch Workers.",
+				"Sensitive paths such as .env, tokens, local.db, app-state.json, node_modules, and .git are skipped.",
+			],
+		},
+		{
+			name: "collectWorkerReportedArtifacts",
+			category: "Browser AI",
+			access: "read-only",
+			implemented: true,
+			description:
+				"Resolve Worker-reported artifact paths, check file existence and attachment support, and return attachable artifacts.",
+			typicalUse:
+				"Prepare the real-file artifact set from a Worker completion report before Browser AI review.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: [
+				"Read-only; unsupported, missing, sensitive, or oversized files are skipped with reasons.",
+				"Does not attach files or send Browser AI prompts.",
+			],
+		},
+		{
+			name: "sendWorkerReportedArtifactsToBrowserAI",
+			category: "Browser AI",
+			access: "write",
+			implemented: true,
+			description:
+				"Attach Worker-reported artifact files to Browser AI and send a review prompt.",
+			typicalUse:
+				"After Worker completion, let Browser AI review the actual files named in the DONE_TAG report and produce STOP or next Worker instruction.",
+			requiresDoyConfirmation: false,
+			riskLevel: "medium",
+			notes: [
+				"Reuses attachTargetFilesToBrowserAI and Browser AI submission verification.",
+				"Does not start Auto Loop or send Worker instructions by itself.",
+			],
+		},
+		{
 			name: "readBrowserAiLatestReply",
 			category: "Browser AI",
 			access: "read-only",
@@ -2337,6 +2404,15 @@ interface CommanderControllerCommands {
 	sendLoopArtifactsToBrowserAI: (
 		input?: CommanderControllerLoopArtifactsInput,
 	) => Promise<CommanderControllerLoopArtifactsResult>;
+	extractArtifactsFromWorkerReport: (
+		input?: CommanderControllerWorkerReportedArtifactsInput,
+	) => Promise<CommanderControllerWorkerReportedArtifactsResult>;
+	collectWorkerReportedArtifacts: (
+		input?: CommanderControllerWorkerReportedArtifactsInput,
+	) => Promise<CommanderControllerWorkerReportedArtifactsResult>;
+	sendWorkerReportedArtifactsToBrowserAI: (
+		input?: CommanderControllerWorkerReportedArtifactsInput,
+	) => Promise<CommanderControllerWorkerReportedArtifactsResult>;
 	readBrowserAiLatestReply: () => Promise<CommanderControllerLatestReplyResult>;
 	getBrowserAiLatestReply: () => Promise<CommanderControllerLatestReplyResult>;
 	sendInstructionToBoundWorker: (
@@ -7452,6 +7528,93 @@ export function CommanderTab({
 			readBoundWorkerLatestResponseController,
 		]);
 
+	const collectWorkerReportedArtifactData = useCallback(
+		async (input?: CommanderControllerWorkerReportedArtifactsInput) => {
+			const normalizedInput = normalizeLoopArtifactsInput(input);
+			const warnings: string[] = [];
+			const workerResponse = normalizedInput.workerReportText
+				? null
+				: await readBoundWorkerLatestResponseController();
+			const rawWorkerReportText =
+				normalizedInput.workerReportText ||
+				workerResponse?.analyzedResponseText ||
+				workerResponse?.latestResponseText ||
+				"";
+			const reportBlock =
+				extractBoundWorkerDoneTagReport(rawWorkerReportText)?.text ||
+				rawWorkerReportText;
+			const extraction = extractWorkerReportedArtifactPathCandidates(reportBlock);
+			const artifactCandidates = extraction.candidates;
+			const skippedArtifacts: CommanderControllerSkippedFileSummary[] =
+				extraction.skipped.map((candidate) => ({
+					path: candidate.path,
+					reason: candidate.reason,
+				}));
+			const targetPaths = artifactCandidates
+				.slice(0, normalizedInput.maxFiles)
+				.map((candidate) => candidate.path);
+			const artifacts: CommanderControllerLoopReviewArtifact[] = [];
+
+			if (targetPaths.length > 0) {
+				const collected =
+					await trpcUtils.doydeckExplorer.collectLoopReviewArtifactFiles.fetch({
+						workspaceId,
+						paths: targetPaths,
+						includeReviewScreenshots: false,
+						maxFiles: normalizedInput.maxFiles,
+					});
+				for (const artifact of collected.artifacts) {
+					artifacts.push({
+						id: `worker-reported-artifact:${artifact.path}`,
+						kind: "worker-reported-artifact",
+						name: artifact.name,
+						path: artifact.path,
+						mimeType: artifact.mimeType,
+						byteLength: artifact.byteLength,
+						attachable: artifact.attachable,
+						source: "worker-report",
+						reason: artifact.reason,
+						preview:
+							artifact.attachable === true
+								? `${artifact.name} (${artifact.mimeType ?? "unknown"}, ${artifact.byteLength ?? 0} bytes)`
+								: artifact.reason ?? "not attachable",
+					});
+					if (!artifact.attachable && artifact.reason) {
+						skippedArtifacts.push({
+							path: artifact.path,
+							reason: artifact.reason,
+						});
+					}
+				}
+			}
+
+			if (extraction.skipped.length > 0) {
+				warnings.push(
+					...extraction.skipped.map(
+						(candidate) =>
+							`worker-reported artifact skipped ${candidate.path}: ${candidate.reason}`,
+					),
+				);
+			}
+
+			const attachableArtifacts = artifacts.filter(
+				(artifact) => artifact.attachable && artifact.path,
+			);
+
+			return {
+				normalizedInput,
+				reportBlock,
+				workerReportPreview: normalizeLoopArtifactPreview(reportBlock, 1800),
+				artifactCandidates,
+				artifacts,
+				attachableArtifacts,
+				skippedArtifacts,
+				warnings,
+			};
+		},
+		[readBoundWorkerLatestResponseController, trpcUtils, workspaceId],
+	);
+
 	const collectLoopReviewArtifactsController =
 		useCallback(async (
 			input?: CommanderControllerLoopArtifactsInput,
@@ -7481,6 +7644,8 @@ export function CommanderTab({
 				normalizedInput.includeSelectedFiles,
 			);
 			const artifacts: CommanderControllerLoopReviewArtifact[] = [];
+			let artifactCandidates: CommanderWorkerReportedArtifactCandidate[] = [];
+			let skippedArtifacts: CommanderControllerSkippedFileSummary[] = [];
 			let workerReportExtracted = false;
 			let workerReportLength = 0;
 			let workerReportPreview = "";
@@ -7609,6 +7774,19 @@ export function CommanderTab({
 								workerResponse.latestResponseText,
 							),
 						);
+						const workerReportedArtifactData =
+							await collectWorkerReportedArtifactData({
+								...normalizedInput,
+								workerReportText:
+									workerResponse.analyzedResponseText ||
+									workerResponse.latestResponseText,
+							});
+						artifactCandidates =
+							workerReportedArtifactData.artifactCandidates;
+						skippedArtifacts =
+							workerReportedArtifactData.skippedArtifacts;
+						artifacts.push(...workerReportedArtifactData.artifacts);
+						warnings.push(...workerReportedArtifactData.warnings);
 					} else if (workerCompletion.status !== "BLOCKED") {
 						warnings.push(
 							`worker report not extracted; worker status=${workerCompletion.status}`,
@@ -7662,10 +7840,18 @@ export function CommanderTab({
 				targetPaths,
 				artifacts,
 				...getEmptyLoopArtifactAttachmentFields(),
+				artifactCandidates,
+				attachableArtifacts,
+				skippedArtifacts,
+				workerReportedArtifactCount: artifactCandidates.length,
+				workerReportedAttachableArtifactCount: attachableArtifacts.filter(
+					(artifact) => artifact.source === "worker-report",
+				).length,
 				workerReportExtracted,
 				workerReportLength,
 				workerReportPreview,
 				workerStatus,
+				browserAiReviewStatus: null,
 				reviewPromptLength: reviewPrompt.length,
 				loopReady,
 				warnings,
@@ -7679,6 +7865,7 @@ export function CommanderTab({
 			};
 		}, [
 			activeTabId,
+			collectWorkerReportedArtifactData,
 			ensureCommanderSessionForActiveTab,
 			getBoundWorkerCompletionStatusController,
 			getCommanderControllerContext,
@@ -7803,6 +7990,7 @@ export function CommanderTab({
 				uiReflected: attachResult.uiReflected,
 				assistantReplyObserved: attachResult.assistantReplyObserved,
 				visualVerificationUsed: attachResult.visualVerificationUsed,
+				browserAiReviewStatus: attachResult.submissionStatus,
 				aiReferencedFile: aiReferenceResult.aiReferencedFile,
 				aiReferencedFileNames: aiReferenceResult.aiReferencedFileNames,
 				reviewPromptLength: reviewPrompt.length,
@@ -7821,6 +8009,225 @@ export function CommanderTab({
 			attachTargetFilesToBrowserAiController,
 			collectLoopReviewArtifactsController,
 			readBrowserAiLatestReplyController,
+		]);
+
+	const collectWorkerReportedArtifactsController =
+		useCallback(async (
+			input?: CommanderControllerWorkerReportedArtifactsInput,
+		): Promise<CommanderControllerWorkerReportedArtifactsResult> => {
+			const normalizedInput = normalizeLoopArtifactsInput(input);
+			const blockers: string[] = [];
+			const warnings: string[] = [];
+			const tabGuard = getExpectedTabWriteGuard(
+				{
+					expectedTabId: normalizedInput.expectedTabId,
+					expectedTitle: normalizedInput.expectedTitle,
+					requireActiveTabMatch: normalizedInput.requireActiveTabMatch,
+				},
+				"collectWorkerReportedArtifacts",
+			);
+			blockers.push(...tabGuard.blockers);
+			warnings.push(
+				...tabGuard.warnings.filter(
+					(warning) => !/unguarded write/i.test(warning),
+				),
+			);
+			const activeTabIdSnapshot = tabGuard.activeTabId ?? activeTabId;
+			if (blockers.length > 0) {
+				return {
+					ok: false,
+					...getCommanderControllerContext(),
+					status: "BLOCKED",
+					activeTabId: activeTabIdSnapshot,
+					activeTabTitle: tabGuard.activeTabTitle,
+					expectedTabId: tabGuard.expectedTabId,
+					expectedTitle: tabGuard.expectedTitle,
+					requireActiveTabMatch: tabGuard.requireActiveTabMatch,
+					provider: normalizedInput.provider || null,
+					artifactCount: 0,
+					attachableArtifactCount: 0,
+					targetPathCount: 0,
+					targetPaths: [],
+					artifacts: [],
+					...getEmptyLoopArtifactAttachmentFields(),
+					workerReportExtracted: false,
+					workerReportLength: 0,
+					workerReportPreview: "",
+					workerStatus: null,
+					reviewPromptLength: 0,
+					loopReady: false,
+					warnings,
+					blockers,
+					message:
+						blockers[0] ??
+						"Worker-reported artifact collection blocked",
+					nextRequiredAction:
+						"Resolve tab guard blocker before collecting Worker-reported artifacts.",
+				};
+			}
+
+			const data = await collectWorkerReportedArtifactData(input);
+			warnings.push(...data.warnings);
+			const targetPaths = data.artifactCandidates.map((candidate) => candidate.path);
+			const reviewPrompt =
+				normalizedInput.reviewPrompt ||
+				buildLoopArtifactsBrowserAiReviewPrompt({
+					artifacts: data.artifacts,
+					workerReportPreview: data.workerReportPreview,
+					loopContext:
+						normalizedInput.loopContext.mode ||
+						normalizedInput.loopContext.purpose
+							? normalizedInput.loopContext
+							: {
+									mode: "bounded-loop",
+									purpose:
+										"Browser AI reviews Worker-reported artifact files and returns STOP or next Worker instruction",
+									allowWorkerInstruction: true,
+									runToCompletion: true,
+								},
+				});
+			const loopReady = data.attachableArtifacts.length > 0;
+			const status: CommanderControllerLoopArtifactsStatus =
+				warnings.length > 0 || data.skippedArtifacts.length > 0
+					? "READY_WITH_NOTES"
+					: "READY";
+			return {
+				ok: true,
+				...getCommanderControllerContext(),
+				status,
+				activeTabId: activeTabIdSnapshot,
+				activeTabTitle: tabGuard.activeTabTitle,
+				expectedTabId: tabGuard.expectedTabId,
+				expectedTitle: tabGuard.expectedTitle,
+				requireActiveTabMatch: tabGuard.requireActiveTabMatch,
+				provider: normalizedInput.provider || null,
+				artifactCount: data.artifacts.length,
+				attachableArtifactCount: data.attachableArtifacts.length,
+				targetPathCount: targetPaths.length,
+				targetPaths,
+				artifacts: data.artifacts,
+				...getEmptyLoopArtifactAttachmentFields(),
+				artifactCandidates: data.artifactCandidates,
+				attachableArtifacts: data.attachableArtifacts,
+				skippedArtifacts: data.skippedArtifacts,
+				workerReportedArtifactCount: data.artifactCandidates.length,
+				workerReportedAttachableArtifactCount:
+					data.attachableArtifacts.length,
+				workerReportExtracted: Boolean(data.reportBlock.trim()),
+				workerReportLength: data.reportBlock.length,
+				workerReportPreview: data.workerReportPreview,
+				workerStatus: null,
+				browserAiReviewStatus: null,
+				reviewPromptLength: reviewPrompt.length,
+				loopReady,
+				warnings,
+				blockers,
+				message: loopReady
+					? "Worker-reported artifacts collected."
+					: "Worker report was scanned, but no attachable artifact files were found.",
+				nextRequiredAction: loopReady
+					? "Call sendWorkerReportedArtifactsToBrowserAI to attach files and request Browser AI review."
+					: "Add supported artifact paths to the Worker report or use selected loop artifacts.",
+			};
+		}, [
+			activeTabId,
+			collectWorkerReportedArtifactData,
+			getCommanderControllerContext,
+			getExpectedTabWriteGuard,
+		]);
+
+	const sendWorkerReportedArtifactsToBrowserAiController =
+		useCallback(async (
+			input?: CommanderControllerWorkerReportedArtifactsInput,
+		): Promise<CommanderControllerWorkerReportedArtifactsResult> => {
+			const normalizedInput = normalizeLoopArtifactsInput(input);
+			const collected = await collectWorkerReportedArtifactsController(input);
+			if (collected.status === "BLOCKED" || collected.status === "FAILED") {
+				return collected;
+			}
+			const targetPaths = collected.attachableArtifacts
+				.filter((artifact) => artifact.path)
+				.map((artifact) => artifact.path as string);
+			if (targetPaths.length === 0) {
+				return {
+					...collected,
+					ok: false,
+					status: "BLOCKED",
+					blockers: [
+						...collected.blockers,
+						"no attachable Worker-reported artifacts found",
+					],
+					message:
+						"Worker-reported artifact Browser AI send blocked: no attachable files.",
+					nextRequiredAction:
+						"Ensure Worker report includes supported artifact paths before Browser AI review.",
+				};
+			}
+			const reviewPrompt =
+				normalizedInput.reviewPrompt ||
+				buildLoopArtifactsBrowserAiReviewPrompt({
+					artifacts: collected.artifacts,
+					workerReportPreview: collected.workerReportPreview,
+					loopContext:
+						normalizedInput.loopContext.mode ||
+						normalizedInput.loopContext.purpose
+							? normalizedInput.loopContext
+							: {
+									mode: "bounded-loop",
+									purpose:
+										"Browser AI reviews Worker-reported artifacts and returns STOP or next Worker instruction",
+									allowWorkerInstruction: true,
+									runToCompletion: true,
+								},
+				});
+			const attachResult = await attachTargetFilesToBrowserAiController({
+				provider: normalizedInput.provider,
+				expectedTabId: normalizedInput.expectedTabId,
+				expectedTitle: normalizedInput.expectedTitle,
+				requireActiveTabMatch: normalizedInput.requireActiveTabMatch,
+				targetPaths,
+				reviewPrompt,
+				sendPromptAfterAttach: true,
+				loopContext:
+					normalizedInput.loopContext.mode || normalizedInput.loopContext.purpose
+						? normalizedInput.loopContext
+						: {
+								mode: "bounded-loop",
+								purpose:
+									"Browser AI reviews Worker-reported artifacts and returns STOP or next Worker instruction",
+								allowWorkerInstruction: true,
+								runToCompletion: true,
+							},
+				dryRun: normalizedInput.dryRun,
+			});
+			return {
+				...collected,
+				ok: attachResult.ok,
+				status: attachResult.status,
+				provider: attachResult.provider,
+				attachedFileCount: attachResult.attachedFileCount,
+				skippedFileCount: attachResult.skippedFileCount,
+				attachedFiles: attachResult.attachedFiles,
+				skippedFiles: attachResult.skippedFiles,
+				attachmentStatus: attachResult.attachmentStatus,
+				attachmentUiReflected: attachResult.attachmentUiReflected,
+				attachedFileNamesVisible: attachResult.attachedFileNamesVisible,
+				submissionStatus: attachResult.submissionStatus,
+				uiReflected: attachResult.uiReflected,
+				assistantReplyObserved: attachResult.assistantReplyObserved,
+				visualVerificationUsed: attachResult.visualVerificationUsed,
+				browserAiReviewStatus: attachResult.submissionStatus,
+				reviewPromptLength: reviewPrompt.length,
+				loopReady: attachResult.loopReady,
+				warnings: [...collected.warnings, ...attachResult.warnings],
+				blockers: [...collected.blockers, ...attachResult.blockers],
+				message: attachResult.message,
+				nextRequiredAction: attachResult.nextRequiredAction,
+				attachResult,
+			};
+		}, [
+			attachTargetFilesToBrowserAiController,
+			collectWorkerReportedArtifactsController,
 		]);
 
 	const sendBoundWorkerResponseToBrowserAiController =
@@ -8609,6 +9016,10 @@ export function CommanderTab({
 			getBrowserAiAttachedFiles: getBrowserAiAttachedFilesController,
 			collectLoopReviewArtifacts: collectLoopReviewArtifactsController,
 			sendLoopArtifactsToBrowserAI: sendLoopArtifactsToBrowserAiController,
+			extractArtifactsFromWorkerReport: collectWorkerReportedArtifactsController,
+			collectWorkerReportedArtifacts: collectWorkerReportedArtifactsController,
+			sendWorkerReportedArtifactsToBrowserAI:
+				sendWorkerReportedArtifactsToBrowserAiController,
 			readBrowserAiLatestReply: readBrowserAiLatestReplyController,
 			getBrowserAiLatestReply: readBrowserAiLatestReplyController,
 			sendInstructionToBoundWorker: sendInstructionToBoundWorkerController,
@@ -8661,6 +9072,8 @@ export function CommanderTab({
 		getBrowserAiAttachedFilesController,
 		collectLoopReviewArtifactsController,
 		sendLoopArtifactsToBrowserAiController,
+		collectWorkerReportedArtifactsController,
+		sendWorkerReportedArtifactsToBrowserAiController,
 		readBrowserAiLatestReplyController,
 		sendInstructionToBoundWorkerController,
 		readBoundWorkerLatestResponseController,
@@ -9478,6 +9891,7 @@ function normalizeLoopArtifactsInput(
 	maxFiles: number;
 	expectedTaskRunId: string;
 	expectedDoneTag: string;
+	workerReportText: string;
 } {
 	const base = normalizeAttachFilesToBrowserAiInput(input);
 	if (!input || typeof input !== "object") {
@@ -9489,6 +9903,7 @@ function normalizeLoopArtifactsInput(
 			maxFiles: 10,
 			expectedTaskRunId: "",
 			expectedDoneTag: "",
+			workerReportText: "",
 		};
 	}
 	const record = input as CommanderControllerLoopArtifactsInput;
@@ -9507,6 +9922,7 @@ function normalizeLoopArtifactsInput(
 		maxFiles: Math.min(Math.max(maxFilesValue, 1), 20),
 		expectedTaskRunId: normalizeControllerTextInput(record.expectedTaskRunId),
 		expectedDoneTag: normalizeControllerTextInput(record.expectedDoneTag),
+		workerReportText: normalizeControllerTextInput(record.workerReportText),
 	};
 }
 
@@ -9763,6 +10179,12 @@ function getEmptyLoopArtifactAttachmentFields(): Pick<
 	| "visualVerificationUsed"
 	| "aiReferencedFile"
 	| "aiReferencedFileNames"
+	| "artifactCandidates"
+	| "attachableArtifacts"
+	| "skippedArtifacts"
+	| "workerReportedArtifactCount"
+	| "workerReportedAttachableArtifactCount"
+	| "browserAiReviewStatus"
 > {
 	return {
 		attachedFileCount: 0,
@@ -9778,6 +10200,12 @@ function getEmptyLoopArtifactAttachmentFields(): Pick<
 		visualVerificationUsed: false,
 		aiReferencedFile: null,
 		aiReferencedFileNames: [],
+		artifactCandidates: [],
+		attachableArtifacts: [],
+		skippedArtifacts: [],
+		workerReportedArtifactCount: 0,
+		workerReportedAttachableArtifactCount: 0,
+		browserAiReviewStatus: null,
 	};
 }
 

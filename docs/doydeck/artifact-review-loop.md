@@ -10,7 +10,8 @@ only reviewing copied text or paths. The intended flow is:
    attachment UI.
 3. Browser AI uses the real attachments to create Worker instructions.
 4. Worker implements and reports with DONE_TAG / END_REPORT.
-5. DoyDeck collects Worker reports and generated review screenshots.
+5. DoyDeck collects Worker reports, generated review screenshots, and any
+   supported artifact paths named inside the Worker report.
 6. DoyDeck sends the collected artifacts back to Browser AI as real attachments.
 7. Browser AI returns STOP or a scoped next Worker instruction.
 
@@ -26,6 +27,12 @@ only reviewing copied text or paths. The intended flow is:
   screenshots, and Worker report metadata for the active tab/run.
 - `sendLoopArtifactsToBrowserAI(input?)`: attach collected artifacts to Browser
   AI and send the artifact review prompt.
+- `extractArtifactsFromWorkerReport(input?)`: extract Worker-reported artifact
+  path candidates without sending.
+- `collectWorkerReportedArtifacts(input?)`: resolve Worker-reported paths,
+  check existence/attachability, and return skipped reasons.
+- `sendWorkerReportedArtifactsToBrowserAI(input?)`: attach Worker-reported
+  files and ask Browser AI to review the real artifacts.
 
 Write/send commands should pass `expectedTabId`, `expectedTitle`, and
 `requireActiveTabMatch:true` where possible.
@@ -37,6 +44,8 @@ Write/send commands should pass `expectedTabId`, `expectedTitle`, and
 - Worker generated `review-screenshots/*.png`, `.jpg`, `.jpeg` under the
   workspace.
 - Worker DONE_TAG / END_REPORT reports.
+- Supported file paths written inside Worker DONE_TAG reports, including
+  absolute paths, workspace-relative paths, Markdown links, and screenshot paths.
 - Build/test/Playwright/console/pageerror and changed-file hints found in the
   Worker report.
 
@@ -47,6 +56,9 @@ Only supported files are attached in the first version:
 - `.png`, `.jpg`, `.jpeg`
 
 Unsupported files are returned as skipped artifacts with reasons.
+Sensitive or excluded paths such as `.env`, token/cookie/secret paths,
+`local.db`, `app-state.json`, `node_modules`, and `.git` are skipped and should
+not be attached.
 
 ## Status Semantics
 

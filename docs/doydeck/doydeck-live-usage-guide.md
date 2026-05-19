@@ -285,22 +285,26 @@ Worker完了後は、Browser AIにテキスト要約だけを返すのではな�
 
 1. WorkerはDONE_TAGからEND_REPORTまでの完了報告を返す。
 2. Workerがスクショを生成する場合は`review-screenshots/*.png`に置く。
-3. Meta AI / Controllerは`collectLoopReviewArtifacts({ expectedTabId, requireActiveTabMatch:true })`で収集する。
-4. `sendLoopArtifactsToBrowserAI()`で対応ファイルをBrowser AIへ実添付し、artifact review promptを送る。
-5. Browser AIは添付ファイル、Worker報告、検証結果を見て、`STOP`または次Worker指示を返す。
-6. vスコープ内の修正ならDoy確認なしで次Worker指示に進める。
+3. Workerが成果物pathを報告に書いた場合は、`collectWorkerReportedArtifacts()`でpath候補を抽出し、存在確認と添付可否を確認する。
+4. Meta AI / Controllerは`collectLoopReviewArtifacts({ expectedTabId, requireActiveTabMatch:true })`で収集する。
+5. Worker報告pathを優先してレビューする場合は`sendWorkerReportedArtifactsToBrowserAI()`を使う。
+6. 選択ファイルやreview-screenshotsも含めたpackageなら`sendLoopArtifactsToBrowserAI()`で対応ファイルをBrowser AIへ実添付し、artifact review promptを送る。
+7. Browser AIは添付ファイル、Worker報告、検証結果を見て、`STOP`または次Worker指示を返す。
+8. vスコープ内の修正ならDoy確認なしで次Worker指示に進める。
 
 収集対象:
 
 - DoyがExplorerで選んだ仕様書、docs、画像、スクショ。
 - Workerが生成した`review-screenshots/*.png`, `.jpg`, `.jpeg`。
 - WorkerのDONE_TAG / END_REPORT報告。
+- Worker報告内に書かれた`.md`, `.txt`, `.json`, `.ts`, `.tsx`, `.js`, `.jsx`, `.png`, `.jpg`, `.jpeg`の成果物path。
 - 報告内のbuild/test/Playwright/console/pageerror/変更ファイルの要約。
 
 注意:
 
 - `ATTACH_ATTEMPTED`や`FILE_INPUT_SET`だけでは成功扱いしない。
 - `ATTACHMENT_UI_REFLECTED`、filename/chip表示、またはBrowser AI返信で現物参照を確認する。
+- `.env`, token, cookie, secret, `local.db`, `app-state.json`, `node_modules`, `.git`を含むpathは添付候補から除外する。
 - Auto Loop本体は勝手に開始しない。Loop中のartifact送信はController commandで明示する。
 - PDF/OCR/zip、複数ファイルUXの細部、添付済みファイルの長期registry UIはfuture。
 

@@ -106,6 +106,8 @@ long Auto Loop run.
 | Browser AI attached-file inventory | `getBrowserAiAttachedFiles()` returns visible filenames/file-input names without sending. |
 | Loop artifact collection | `collectLoopReviewArtifacts()` collects selected files, `review-screenshots/*`, and Worker DONE_TAG report metadata without starting Auto Loop. |
 | Loop artifact review send | `sendLoopArtifactsToBrowserAI({ dryRun:true })` returns attachable artifacts and review prompt; live send must verify filename/chip UI reflection. |
+| Worker-reported artifact extraction | `collectWorkerReportedArtifacts()` extracts supported paths from DONE_TAG report, skips secret/local DB/node_modules/.git paths, and separates missing/unsupported files. |
+| Worker-reported artifact Browser AI review | `sendWorkerReportedArtifactsToBrowserAI()` attaches extracted files and sends Browser AI review prompt without starting Auto Loop or sending Worker instructions. |
 
 ## 9. Docs / Prompt Contract
 

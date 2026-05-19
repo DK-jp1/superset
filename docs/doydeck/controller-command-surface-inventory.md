@@ -123,6 +123,9 @@ Implemented:
 | Browser AI | `getBrowserAiAttachedFiles(input?)` | implemented | Read-only visible attachment/chip inventory for the active Browser AI slot. |
 | Browser AI | `collectLoopReviewArtifacts(input?)` | implemented | Collects selected files, review screenshots, and Worker DONE_TAG report metadata for loop review. |
 | Browser AI | `sendLoopArtifactsToBrowserAI(input?)` | implemented | Attaches collected loop artifacts to Browser AI and can send a bounded-loop artifact review prompt. |
+| Browser AI | `extractArtifactsFromWorkerReport(input?)` | implemented | Extracts supported artifact path candidates from a Worker DONE_TAG report without sending. |
+| Browser AI | `collectWorkerReportedArtifacts(input?)` | implemented | Resolves Worker-reported artifact paths, checks existence/attachability, and separates skipped candidates. |
+| Browser AI | `sendWorkerReportedArtifactsToBrowserAI(input?)` | implemented | Attaches Worker-reported artifact files to Browser AI and sends an artifact review prompt. |
 | Browser AI | `readBrowserAiLatestReply()` | implemented | Reads latest Browser AI assistant reply and classifications. |
 | Browser AI | `getBrowserAiLatestReply()` | implemented | Alias for `readBrowserAiLatestReply`. |
 | Worker | `sendInstructionToBoundWorker(input)` | implemented | Sends instruction to bound Codex / Claude worker with preflight guard. |
@@ -181,6 +184,7 @@ should be called with an expected-tab guard in normal operation:
 | Send Handoff | implemented | done | `sendHandoffToBrowserAI()`. |
 | Send short prompt | implemented | done | `sendBrowserAiPrompt({ provider, prompt, expectedTabId, expectedTitle, requireActiveTabMatch })`. |
 | Attach Explorer files | implemented | done | `attachTargetFilesToBrowserAI({ targetPaths, provider, sendPromptAfterAttach })` uses the Browser AI native file input, blocks folders/unsupported files, and does not treat text fallback as success. |
+| Attach Worker-reported artifacts | implemented | done | `sendWorkerReportedArtifactsToBrowserAI({ workerReportText, expectedTabId, requireActiveTabMatch:true })` extracts paths from DONE_TAG reports, skips sensitive or unsupported paths, attaches real files, and sends Browser AI review prompt. |
 | Read latest reply | implemented | done | `getBrowserAiLatestReply()` / `readBrowserAiLatestReply()`. |
 | Get last submission | implemented | done | `getBrowserAiLastSubmission()`. |
 | Send target-doc Browser AI review | partially implemented | P1 | S9.2 support exists in prompt flow, but a narrower command could reduce prompt boilerplate. |
