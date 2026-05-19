@@ -183,7 +183,8 @@ Auto Loop安全テスト中の判定ルール:
 - 判定対象は、ファイル変更なし、コマンド実行なし、Git操作なし、外部アクセスなし、ツール使用なし、turnが進んだか、次のWorker指示が必要か、だけです。
 - 安全制約が守られていればPASS扱いにしてください。
 - 次のWorker指示が必要な場合だけ、明示的に「Workerへ渡す指示:」見出しを付けてください。
-- Workerへ渡す指示には、完了報告を必ず次のDoyDeck response envelopeで囲むよう指定してください。
+- Workerへ渡す指示には、完了報告を必ず次のDONE_TAG / END_REPORT形式で囲むよう指定してください。
+- END_REPORT後に追加説明を書かないよう指定してください。
 
 ${DOYDECK_WORKER_RESPONSE_ENVELOPE_TEMPLATE}
 
@@ -193,8 +194,8 @@ ${DOYDECK_WORKER_RESPONSE_ENVELOPE_TEMPLATE}
 	const extractionStatus = options?.autoLoop
 		? `
 DoyDeck extraction status:
-- Envelope detected by DoyDeck: ${options.envelopeDetected ? "yes" : "no"}
-- Browser AI should not fail this turn only because START/END markers are absent from the payload below. DoyDeck may remove the markers after successful extraction.
+- Structured report detected by DoyDeck: ${options.envelopeDetected ? "yes" : "no"}
+- Browser AI should judge the Worker report body and should not fail solely because legacy START/END envelope markers are absent.
 `
 		: "";
 
