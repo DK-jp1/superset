@@ -108,6 +108,7 @@ Implemented:
 | Diagnostics | `getSupervisorPilotReadiness()` | implemented | Supervisor pilot readiness snapshot. |
 | Diagnostics | `prepareSupervisorPilotReadiness(input?)` | implemented | Optional Browser AI navigation and existing worker bind. No new worker launch. |
 | Diagnostics | `getControllerCommandInventory(input?)` | implemented | Read-only Controller command surface inventory for Meta AI / Codex / Browser AI self-discovery. |
+| Diagnostics | `getLiveReadinessSummary(input?)` | implemented | Read-only active-tab readiness summary for Browser AI, Worker binding/input, task-run status, Auto Loop, Artifact Review command surface, safety guard sample, and payload budget. Aliases: `runLiveReadinessSmoke`, `getCurrentTabReadiness`. |
 | Worker | `listRecognizedWorkers(input?)` | implemented | Read-only Codex / Claude worker candidate list with ignored shell/unknown candidates separated. |
 | Worker | `bindWorkerToTab(input?)` | implemented | Binds an existing recognized Codex / Claude worker pane to the active tab. |
 | Worker | `getWorkerInputReadiness(input?)` | implemented | Read-only worker UI/input readiness for bound or paneId-selected Codex / Claude workers. |
@@ -221,6 +222,7 @@ should be called with an expected-tab guard in normal operation:
 | Operation | Coverage | Priority | Notes |
 | --- | --- | --- | --- |
 | Auto Loop preflight | implemented | done | `getAutoLoopPreflight()`. |
+| Live readiness summary | implemented | done | `getLiveReadinessSummary()` aggregates tab, Browser AI, Worker, task-run, Auto Loop, Artifact Review, safety, and payload budget checks without sending or starting Loop. |
 | Supervisor readiness | implemented | done | `getSupervisorPilotReadiness()`. |
 | Browser AI preflight | implemented | done | `getBrowserAiPreflight()`. |
 | Worker pane activation diagnostics | implemented | done | `activateTerminalPaneForTab()` result includes identity/focus details. |

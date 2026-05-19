@@ -16,6 +16,7 @@ long Auto Loop run.
 | Controller attach | CDP attach to safe-dev page | `window.__doydeckCommanderController` exists. |
 | Inventory | `getControllerCommandInventory()` | READY; new commands are listed and dangerous future commands are not marked implemented. |
 | Tabs | `listTabs()` / `getActiveTab()` | Active tab and target tab are clear before writes. |
+| Live readiness | `getLiveReadinessSummary({ expectedTabId, expectedTitle, requireActiveTabMatch:true })` | Returns READY / READY_WITH_NOTES / BLOCKED with active tab, Browser AI, Worker, Auto Loop, Artifact Review, safety, and payload budget sections. |
 | Auto Loop | `getAutoLoopPreflight()` | Auto Loop remains off/idle unless Doy explicitly starts it. |
 
 ## 2. Guarded Writes
@@ -135,3 +136,6 @@ long Auto Loop run.
 - Run sections 1, 3, 6, and 8 for Artifact Review Loop changes.
 - Run sections 1 and 8 for Explorer/file handling changes.
 - Run sections 1 and 9 for docs-only prompt/role changes.
+- For pre-task live operation, run the short pack in
+  [`doydeck-live-readiness-smoke-pack.md`](./doydeck-live-readiness-smoke-pack.md)
+  before starting Auto Loop.

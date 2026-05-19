@@ -467,6 +467,10 @@ DoyDeckでtaskを始める前に確認する。
 - 新規Meta AI / Codex / Claude Codeセッションには
   [`meta-ai-starter-prompt.md`](./meta-ai-starter-prompt.md)を貼り、最初に
   `getControllerCommandInventory()`、`listTabs()`、`getActiveTab()`で現在地を確認する。
+- 実タスク開始前は
+  [`doydeck-live-readiness-smoke-pack.md`](./doydeck-live-readiness-smoke-pack.md)
+  に沿って`getLiveReadinessSummary({ expectedTabId, expectedTitle, requireActiveTabMatch:true })`
+  を実行し、READY / READY_WITH_NOTES / BLOCKEDを確認する。
 - Browser AI providerがChatGPTまたはClaude。
 - Browser AI ready。
 - Browser AI composer injection ready。

@@ -59,6 +59,7 @@ import {
 	type CommanderInstructionSafetyFinding,
 	type CommanderInstructionSafetySource,
 } from "./commander-safety";
+import { findAutoLoopDangerousCommandFinding } from "./commander-auto-loop-safety";
 import {
 	extractBoundWorkerDoneTagReport,
 	extractBoundWorkerDoneTagReportForInstructionScope,
@@ -1287,6 +1288,98 @@ interface CommanderControllerWorkerReportedArtifactsInput
 interface CommanderControllerWorkerReportedArtifactsResult
 	extends CommanderControllerLoopArtifactsResult {}
 
+interface CommanderControllerLiveReadinessSummaryInput {
+	expectedTabId?: unknown;
+	expectedTitle?: unknown;
+	requireActiveTabMatch?: unknown;
+}
+
+interface CommanderControllerLiveReadinessCheck {
+	name: string;
+	status: CommanderControllerPreflightStatus;
+	ok: boolean;
+	message: string;
+	blockers: string[];
+	warnings: string[];
+	nextRecommendedAction: string | null;
+}
+
+interface CommanderControllerLiveReadinessSummaryResult
+	extends CommanderControllerCommandResult {
+	status: CommanderControllerPreflightStatus;
+	readinessStatus: CommanderControllerPreflightStatus;
+	activeTab: {
+		status: CommanderControllerTabReadStatus;
+		activeTabId: string | null;
+		activeTabTitle: string | null;
+		tabCount: number;
+		targetMatchesActiveTab: boolean;
+		expectedTabId: string | null;
+		expectedTitle: string | null;
+		requireActiveTabMatch: boolean;
+	};
+	browserAiStatus: {
+		status: CommanderControllerPreflightStatus;
+		provider: string;
+		browserAiReady: boolean;
+		composerInjectionReady: boolean;
+		submitTargetReady: boolean;
+		shortPromptReady: boolean;
+		nextRequiredAction: string;
+	};
+	workerStatus: {
+		status: CommanderControllerPreflightStatus;
+		workerCandidateCount: number;
+		workerBoundToTab: boolean;
+		workerPaneId: string | null;
+		workerType: string;
+		workerIdentityOk: boolean;
+		workerInputReady: boolean;
+		workerUiState: CommanderControllerWorkerUiState;
+		taskRunStatus: CommanderControllerBoundWorkerCompletionStatus;
+		taskRunReady: boolean;
+		responseModeSummaryUsed: boolean;
+		nextRecommendedAction: string;
+	};
+	autoLoopStatus: {
+		status: CommanderControllerPreflightStatus;
+		mode: AutoRelayMode;
+		phase: string;
+		loopReady: boolean;
+		nextRequiredAction: string;
+	};
+	artifactReviewStatus: {
+		status: CommanderControllerPreflightStatus;
+		commandsAvailable: boolean;
+		implementedCommands: string[];
+		missingCommands: string[];
+		loopReady: boolean;
+		nextRecommendedAction: string;
+	};
+	safetyGuardStatus: {
+		status: CommanderControllerPreflightStatus;
+		negatedPolicyTextAllowed: boolean;
+		actualDangerousCommandBlocked: boolean;
+		samplesChecked: string[];
+		dangerousSample: string;
+		nextRecommendedAction: string;
+	};
+	payloadBudgetStatus: {
+		status: CommanderControllerPreflightStatus;
+		handoffLedgerLength: number;
+		payloadBudgetWarningChars: number;
+		payloadBudgetSevereChars: number;
+		payloadBudgetExceeded: boolean;
+		responseModeSummaryUsed: boolean;
+		nextRecommendedAction: string;
+	};
+	checks: CommanderControllerLiveReadinessCheck[];
+	blockers: string[];
+	warnings: string[];
+	nextRecommendedAction: string;
+	message: string;
+}
+
 type CommanderControllerLatestReplyStatus =
 	| "READY"
 	| "WAITING"
@@ -2281,6 +2374,46 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			notes: ["This accessor is static/read-only and does not execute listed commands."],
 		},
 		{
+			name: "getLiveReadinessSummary",
+			category: "Diagnostics",
+			access: "read-only",
+			implemented: true,
+			description:
+				"Return a one-call live readiness summary for the active task tab before Loop / Worker / Browser AI use.",
+			typicalUse:
+				"Let Doy or Meta AI decide whether the current tab is ready for short Browser AI sends, Worker binding, Auto Loop, and Artifact Review.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: [
+				"Read-only; does not send Browser AI prompts, send Worker instructions, attach files, bind workers, or start Auto Loop.",
+				"Aliases runLiveReadinessSmoke and getCurrentTabReadiness are also available.",
+			],
+		},
+		{
+			name: "runLiveReadinessSmoke",
+			category: "Diagnostics",
+			access: "read-only",
+			implemented: true,
+			description: "Alias for getLiveReadinessSummary.",
+			typicalUse:
+				"Compatibility name for short pre-task readiness checks.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["No send, bind, attach, or Auto Loop side effects."],
+		},
+		{
+			name: "getCurrentTabReadiness",
+			category: "Diagnostics",
+			access: "read-only",
+			implemented: true,
+			description: "Alias for getLiveReadinessSummary.",
+			typicalUse:
+				"Read current active-tab readiness before running Browser AI / Worker loops.",
+			requiresDoyConfirmation: false,
+			riskLevel: "low",
+			notes: ["No send, bind, attach, or Auto Loop side effects."],
+		},
+		{
 			name: "getAutoLoopPreflight",
 			category: "Diagnostics",
 			access: "diagnostic",
@@ -2417,6 +2550,15 @@ interface CommanderControllerCommands {
 	getControllerCommandInventory: (
 		input?: unknown,
 	) => CommanderControllerCommandInventoryResult;
+	getLiveReadinessSummary: (
+		input?: CommanderControllerLiveReadinessSummaryInput,
+	) => Promise<CommanderControllerLiveReadinessSummaryResult>;
+	runLiveReadinessSmoke: (
+		input?: CommanderControllerLiveReadinessSummaryInput,
+	) => Promise<CommanderControllerLiveReadinessSummaryResult>;
+	getCurrentTabReadiness: (
+		input?: CommanderControllerLiveReadinessSummaryInput,
+	) => Promise<CommanderControllerLiveReadinessSummaryResult>;
 	getActiveTabId: () => string | null;
 	listTabs: () => CommanderControllerListTabsResult;
 	getActiveTab: () => CommanderControllerGetActiveTabResult;
@@ -9171,6 +9313,350 @@ export function CommanderTab({
 		],
 	);
 
+	const getLiveReadinessSummaryController = useCallback(
+		async (
+			input?: CommanderControllerLiveReadinessSummaryInput,
+		): Promise<CommanderControllerLiveReadinessSummaryResult> => {
+			const tabGuard = getExpectedTabWriteGuard(
+				input ?? {},
+				"getLiveReadinessSummary",
+			);
+			const activeTabResult = getActiveTabController();
+			const tabsResult = listTabsController();
+			const browserAi = await getBrowserAiPreflightController();
+			const browserAiShortPromptReady =
+				browserAi.ok &&
+				browserAi.browserAiReady &&
+				browserAi.composerInjectionReady &&
+				browserAi.submitTargetReady;
+			const workers = listRecognizedWorkersController();
+			const workerInput = getWorkerInputReadinessController();
+			const autoLoop = await getAutoLoopPreflightController();
+			const taskRun = await getBoundWorkerCompletionStatusController({
+				expectedTabId: tabGuard.expectedTabId ?? undefined,
+			});
+			const handoff = buildHandoffLedgerController();
+			const implementedCommands = new Set(
+				COMMANDER_CONTROLLER_COMMAND_INVENTORY.filter(
+					(command) => command.implemented,
+				).map((command) => command.name),
+			);
+			const requiredArtifactCommands = [
+				"attachTargetFilesToBrowserAI",
+				"getBrowserAiAttachedFiles",
+				"collectLoopReviewArtifacts",
+				"sendLoopArtifactsToBrowserAI",
+				"collectWorkerReportedArtifacts",
+				"sendWorkerReportedArtifactsToBrowserAI",
+			];
+			const implementedArtifactCommands = requiredArtifactCommands.filter(
+				(commandName) => implementedCommands.has(commandName),
+			);
+			const missingArtifactCommands = requiredArtifactCommands.filter(
+				(commandName) => !implementedCommands.has(commandName),
+			);
+			const safetyPolicySamples = [
+				"git pushしないでください",
+				"deployはしない",
+				"token/cookieには触らない",
+				"Worker完了報告: pushなし",
+			];
+			const negatedPolicyTextAllowed = safetyPolicySamples.every(
+				(sample) => !findAutoLoopDangerousCommandFinding(sample),
+			);
+			const dangerousSample = "```bash\ngit push origin main\n```";
+			const dangerousFinding = findAutoLoopDangerousCommandFinding(
+				dangerousSample,
+				"actual shell command",
+			);
+			const actualDangerousCommandBlocked =
+				dangerousFinding?.label === "git push";
+			const artifactReviewStatus: CommanderControllerPreflightStatus =
+				missingArtifactCommands.length > 0 ? "BLOCKED" : "READY";
+			const safetyGuardStatus: CommanderControllerPreflightStatus =
+				negatedPolicyTextAllowed && actualDangerousCommandBlocked
+					? "READY"
+					: "BLOCKED";
+			const payloadBudgetStatus: CommanderControllerPreflightStatus =
+				handoff.payloadBudgetExceeded ? "READY_WITH_NOTES" : "READY";
+			const tabBlockers = [...tabGuard.blockers];
+			const tabWarnings = tabGuard.warnings.filter(
+				(warning) => !/unguarded write/i.test(warning),
+			);
+			const workerWarnings = [
+				...workerInput.warnings,
+				...workerInput.workerInputWarnings,
+				...taskRun.warnings.map((warning) => `task run: ${warning}`),
+			];
+			const artifactWarnings =
+				missingArtifactCommands.length > 0
+					? [
+							`artifact review commands missing: ${missingArtifactCommands.join(", ")}`,
+						]
+					: [];
+			const safetyWarnings =
+				safetyGuardStatus === "READY"
+					? []
+					: ["dangerous guard smoke did not match expected policy behavior"];
+			const payloadWarnings = [
+				...(handoff.warnings ?? []),
+				...(handoff.payloadBudgetExceeded
+					? [
+							`handoff ledger length ${handoff.ledgerLength ?? 0} exceeds warning budget ${handoff.payloadBudgetWarningChars ?? 0}`,
+						]
+					: []),
+			];
+			const checks: CommanderControllerLiveReadinessCheck[] = [
+				makeLiveReadinessCheck({
+					name: "active tab / target tab",
+					status: tabBlockers.length > 0 ? "BLOCKED" : activeTabResult.status,
+					ok: tabBlockers.length === 0 && activeTabResult.ok,
+					message: activeTabResult.message,
+					blockers: tabBlockers,
+					warnings: tabWarnings,
+					nextRecommendedAction:
+						tabBlockers[0] ??
+						"Use the active tab id/title as expectedTabId/expectedTitle for guarded commands.",
+				}),
+				makeLiveReadinessCheck({
+					name: "Browser AI readiness",
+					status: browserAi.status,
+					ok: browserAi.ok,
+					message: browserAi.nextRequiredAction,
+					blockers: browserAi.blockers,
+					warnings: browserAi.warnings,
+					nextRecommendedAction: browserAi.nextRequiredAction,
+				}),
+				makeLiveReadinessCheck({
+					name: "Worker binding and input readiness",
+					status:
+						autoLoop.workerBound && workerInput.workerInputReady
+							? workerInput.status
+							: "BLOCKED",
+					ok: autoLoop.workerBound && workerInput.workerInputReady,
+					message: workerInput.message,
+					blockers: [
+						...(autoLoop.workerBound ? [] : ["worker binding required"]),
+						...workerInput.blockers,
+						...workerInput.workerInputBlockers,
+					],
+					warnings: workerWarnings,
+					nextRecommendedAction: autoLoop.workerBound
+						? workerInput.message
+						: "Bind a recognized Codex or Claude worker to the active tab before Loop.",
+				}),
+				makeLiveReadinessCheck({
+					name: "Task run status",
+					status: taskRun.status === "BLOCKED" ? "BLOCKED" : "READY",
+					ok: taskRun.status !== "BLOCKED" && taskRun.status !== "UNKNOWN",
+					message: taskRun.message,
+					blockers: taskRun.blockers,
+					warnings: taskRun.warnings,
+					nextRecommendedAction: taskRun.nextRecommendedAction,
+				}),
+				makeLiveReadinessCheck({
+					name: "Auto Loop preflight",
+					status: autoLoop.status,
+					ok: autoLoop.ok,
+					message: autoLoop.nextRequiredAction,
+					blockers: autoLoop.blockers,
+					warnings: autoLoop.warnings,
+					nextRecommendedAction: autoLoop.nextRequiredAction,
+				}),
+				makeLiveReadinessCheck({
+					name: "Artifact Review Loop commands",
+					status: artifactReviewStatus,
+					ok: missingArtifactCommands.length === 0,
+					message:
+						missingArtifactCommands.length === 0
+							? "Artifact Review Loop commands are available."
+							: "Artifact Review Loop command surface is incomplete.",
+					blockers: missingArtifactCommands.map(
+						(commandName) => `missing artifact command: ${commandName}`,
+					),
+					warnings: artifactWarnings,
+					nextRecommendedAction:
+						missingArtifactCommands.length === 0
+							? "Use attachTargetFilesToBrowserAI / sendWorkerReportedArtifactsToBrowserAI when artifacts need real-file review."
+							: "Implement missing artifact review commands before using Artifact Review Loop.",
+				}),
+				makeLiveReadinessCheck({
+					name: "Safety guard smoke",
+					status: safetyGuardStatus,
+					ok: safetyGuardStatus === "READY",
+					message:
+						safetyGuardStatus === "READY"
+							? "Safety guard allows negated policy text and blocks actual git push command samples."
+							: "Safety guard sample check failed.",
+					blockers:
+						safetyGuardStatus === "READY"
+							? []
+							: ["dangerous guard policy sample mismatch"],
+					warnings: safetyWarnings,
+					nextRecommendedAction:
+						safetyGuardStatus === "READY"
+							? "Continue using source-aware safety checks."
+							: "Run commander-auto-loop-safety tests before starting Loop.",
+				}),
+				makeLiveReadinessCheck({
+					name: "Payload budget",
+					status: payloadBudgetStatus,
+					ok: true,
+					message:
+						payloadBudgetStatus === "READY"
+							? "Handoff Ledger is within payload budget and summary-mode task status was used."
+							: "Payload budget warning is present; prefer summaries and attachments.",
+					blockers: [],
+					warnings: payloadWarnings,
+					nextRecommendedAction:
+						payloadBudgetStatus === "READY"
+							? "Use summary mode for polling and artifacts/paths for large context."
+							: "Reduce Handoff/prompt size before long Loop use.",
+				}),
+			];
+			const blockers = uniqueControllerMessages([
+				...tabBlockers,
+				...browserAi.blockers.map((blocker) => `Browser AI: ${blocker}`),
+				...(!autoLoop.workerBound ? ["Worker: worker binding required"] : []),
+				...workerInput.blockers.map((blocker) => `Worker: ${blocker}`),
+				...workerInput.workerInputBlockers.map(
+					(blocker) => `Worker input: ${blocker}`,
+				),
+				...taskRun.blockers.map((blocker) => `Task run: ${blocker}`),
+				...autoLoop.blockers.map((blocker) => `Auto Loop: ${blocker}`),
+				...missingArtifactCommands.map(
+					(commandName) => `Artifact Review: missing ${commandName}`,
+				),
+				...(safetyGuardStatus === "READY"
+					? []
+					: ["Safety guard: policy sample mismatch"]),
+			]);
+			const warnings = uniqueControllerMessages([
+				...tabWarnings,
+				...browserAi.warnings.map((warning) => `Browser AI: ${warning}`),
+				...workerWarnings.map((warning) => `Worker: ${warning}`),
+				...autoLoop.warnings.map((warning) => `Auto Loop: ${warning}`),
+				...artifactWarnings,
+				...safetyWarnings,
+				...payloadWarnings.map((warning) => `Payload: ${warning}`),
+			]);
+			const readinessStatus = getLiveReadinessStatus(blockers, warnings);
+
+			return {
+				ok: readinessStatus !== "BLOCKED",
+				...getCommanderControllerContext(),
+				status: readinessStatus,
+				readinessStatus,
+				activeTab: {
+					status: activeTabResult.status,
+					activeTabId: activeTabResult.activeTabId,
+					activeTabTitle: activeTabResult.activeTab?.title ?? null,
+					tabCount: tabsResult.tabCount,
+					targetMatchesActiveTab: tabBlockers.length === 0,
+					expectedTabId: tabGuard.expectedTabId,
+					expectedTitle: tabGuard.expectedTitle,
+					requireActiveTabMatch: tabGuard.requireActiveTabMatch,
+				},
+				browserAiStatus: {
+					status: browserAi.status,
+					provider: browserAi.browserAiProvider,
+					browserAiReady: browserAi.browserAiReady,
+					composerInjectionReady: browserAi.composerInjectionReady,
+					submitTargetReady: browserAi.submitTargetReady,
+					shortPromptReady: browserAiShortPromptReady,
+					nextRequiredAction: browserAi.nextRequiredAction,
+				},
+				workerStatus: {
+					status: workerInput.status,
+					workerCandidateCount: workers.workerCount,
+					workerBoundToTab: autoLoop.workerBound,
+					workerPaneId: autoLoop.workerPaneId,
+					workerType: workerInput.workerType,
+					workerIdentityOk: workerInput.workerIdentityOk,
+					workerInputReady: workerInput.workerInputReady,
+					workerUiState: workerInput.workerUiState,
+					taskRunStatus: taskRun.status,
+					taskRunReady:
+						taskRun.status !== "BLOCKED" && taskRun.status !== "UNKNOWN",
+					responseModeSummaryUsed: true,
+					nextRecommendedAction: autoLoop.workerBound
+						? taskRun.nextRecommendedAction
+						: "Bind a recognized Worker to the active tab before Loop.",
+				},
+				autoLoopStatus: {
+					status: autoLoop.status,
+					mode: autoLoop.autoLoopMode,
+					phase: autoLoop.autoLoopPhase,
+					loopReady: autoLoop.ok,
+					nextRequiredAction: autoLoop.nextRequiredAction,
+				},
+				artifactReviewStatus: {
+					status: artifactReviewStatus,
+					commandsAvailable: missingArtifactCommands.length === 0,
+					implementedCommands: implementedArtifactCommands,
+					missingCommands: missingArtifactCommands,
+					loopReady:
+						missingArtifactCommands.length === 0 &&
+						autoLoop.autoLoopMode === "off",
+					nextRecommendedAction:
+						missingArtifactCommands.length === 0
+							? "Use real-file attachment review when Worker reports artifacts."
+							: "Add missing artifact commands before using Artifact Review Loop.",
+				},
+				safetyGuardStatus: {
+					status: safetyGuardStatus,
+					negatedPolicyTextAllowed,
+					actualDangerousCommandBlocked,
+					samplesChecked: safetyPolicySamples,
+					dangerousSample,
+					nextRecommendedAction:
+						safetyGuardStatus === "READY"
+							? "Safety guard sample is healthy."
+							: "Run safety tests and inspect dangerous guard before Loop.",
+				},
+				payloadBudgetStatus: {
+					status: payloadBudgetStatus,
+					handoffLedgerLength: handoff.ledgerLength ?? 0,
+					payloadBudgetWarningChars:
+						handoff.payloadBudgetWarningChars ?? 0,
+					payloadBudgetSevereChars: handoff.payloadBudgetSevereChars ?? 0,
+					payloadBudgetExceeded: handoff.payloadBudgetExceeded === true,
+					responseModeSummaryUsed: true,
+					nextRecommendedAction:
+						payloadBudgetStatus === "READY"
+							? "Continue using summary polling and artifact references."
+							: "Reduce Handoff/prompt size before long Loop use.",
+				},
+				checks,
+				blockers,
+				warnings,
+				nextRecommendedAction: getLiveReadinessNextAction(
+					readinessStatus,
+					blockers,
+					warnings,
+				),
+				message:
+					readinessStatus === "READY"
+						? "Live readiness smoke passed for this tab."
+						: readinessStatus === "READY_WITH_NOTES"
+							? "Live readiness smoke passed with notes; review warnings before starting Loop."
+							: "Live readiness smoke is blocked; resolve blockers before starting Loop.",
+			};
+		},
+		[
+			buildHandoffLedgerController,
+			getActiveTabController,
+			getAutoLoopPreflightController,
+			getBoundWorkerCompletionStatusController,
+			getBrowserAiPreflightController,
+			getCommanderControllerContext,
+			getExpectedTabWriteGuard,
+			getWorkerInputReadinessController,
+			listRecognizedWorkersController,
+			listTabsController,
+		],
+	);
+
 	autoLoopArtifactReviewControllerRef.current = {
 		collectWorkerReportedArtifacts: collectWorkerReportedArtifactsController,
 		sendWorkerReportedArtifactsToBrowserAI:
@@ -9256,6 +9742,9 @@ export function CommanderTab({
 			version: "0.1",
 			workspaceId,
 			getControllerCommandInventory: getControllerCommandInventoryController,
+			getLiveReadinessSummary: getLiveReadinessSummaryController,
+			runLiveReadinessSmoke: getLiveReadinessSummaryController,
+			getCurrentTabReadiness: getLiveReadinessSummaryController,
 			getActiveTabId: getActiveTabIdController,
 			listTabs: listTabsController,
 			getActiveTab: getActiveTabController,
@@ -9323,6 +9812,7 @@ export function CommanderTab({
 		workspaceId,
 		activeTabId,
 		getControllerCommandInventoryController,
+		getLiveReadinessSummaryController,
 		getActiveTabIdController,
 		listTabsController,
 		getActiveTabController,
@@ -14864,6 +15354,61 @@ function getBrowserAiPreflightNextAction(
 		return "Browser AI is usable with notes; review warnings before sending.";
 	}
 	return "Browser AI is ready for send/read operations.";
+}
+
+function uniqueControllerMessages(messages: string[]): string[] {
+	return Array.from(
+		new Set(messages.map((message) => message.trim()).filter(Boolean)),
+	);
+}
+
+function getLiveReadinessStatus(
+	blockers: string[],
+	warnings: string[],
+): CommanderControllerPreflightStatus {
+	if (blockers.length > 0) return "BLOCKED";
+	if (warnings.length > 0) return "READY_WITH_NOTES";
+	return "READY";
+}
+
+function makeLiveReadinessCheck(input: {
+	name: string;
+	status: CommanderControllerPreflightStatus;
+	ok: boolean;
+	message: string;
+	blockers: string[];
+	warnings: string[];
+	nextRecommendedAction: string | null;
+}): CommanderControllerLiveReadinessCheck {
+	return {
+		...input,
+		blockers: uniqueControllerMessages(input.blockers),
+		warnings: uniqueControllerMessages(input.warnings),
+	};
+}
+
+function getLiveReadinessNextAction(
+	status: CommanderControllerPreflightStatus,
+	blockers: string[],
+	warnings: string[],
+): string {
+	if (status === "BLOCKED") {
+		const firstBlocker = blockers[0] ?? "unknown blocker";
+		if (firstBlocker.includes("worker binding required")) {
+			return "Bind a recognized Codex or Claude worker to the active tab, then rerun getLiveReadinessSummary().";
+		}
+		if (firstBlocker.includes("Browser AI")) {
+			return "Prepare Browser AI and verify submission readiness before Loop.";
+		}
+		if (firstBlocker.includes("Task run")) {
+			return "Resolve task-run blocker before treating this tab as Loop-ready.";
+		}
+		return `Resolve blocker before Loop: ${firstBlocker}`;
+	}
+	if (status === "READY_WITH_NOTES") {
+		return `Review readiness warning before Loop: ${warnings[0] ?? "warning present"}`;
+	}
+	return "This tab is ready for the short live-readiness smoke path; start Auto Loop only after Doy approves the task.";
 }
 
 function applySupervisorWorkerCandidateToPreflight(
