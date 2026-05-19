@@ -120,6 +120,7 @@ long Auto Loop run.
 | Bounded-loop artifact review E2E | Worker-reported artifact path is attached through `sendWorkerReportedArtifactsToBrowserAI()`, Browser AI replies with `AI_REFERENCED_FILE: yes`, and the loop resolves to STOP without `artifact attachment command unavailable`. |
 | Artifact attachment chip appears late / `NOT_ATTACHED` first pass | Advisory plus text fallback or retry path; no hard stop unless a structural guarded-write blocker appears. |
 | Artifact review reply omits `AI_REFERENCED_FILE: yes` temporarily | Advisory diagnostic; Browser AI STOP is not accepted as artifact-backed, but Auto Loop is not stopped solely by the missing marker. |
+| Browser AI reply has no `Workerへ渡す指示` block | Advisory diagnostic and visible preview; no automatic `stopped` state unless the reply explicitly requests STOP. |
 | Active-tab loop safety | Auto Loop is armed to the active tab and aborts on tab switch; background/multi-tab concurrent loop scheduling remains out of scope. |
 
 ## 9. Docs / Prompt Contract

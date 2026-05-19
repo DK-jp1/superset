@@ -2913,11 +2913,14 @@ export function usePromptTransfer({
 					setLatestBrowserAiDirectionText(extracted || truncated);
 					if (autoRelayMode === "loop" && !extracted.trim()) {
 						setCapturePreview(truncated);
-						stopAutoLoop(
-							isBrowserCompletionStop(truncated)
-								? "Browser AI requested completion/stop"
-								: "no worker instruction block found",
-						);
+						if (isBrowserCompletionStop(truncated)) {
+							stopAutoLoop("Browser AI requested completion/stop");
+						} else {
+							recordAutoLoopAdvisory("no worker instruction block found", {
+								lastAction:
+									"Browser AI reply had no Worker instruction; waiting for a scoped next action",
+							});
+						}
 						return;
 					}
 					console.log(

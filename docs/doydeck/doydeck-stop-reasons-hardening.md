@@ -45,6 +45,9 @@ diagnostics instead of stopping Auto Loop:
 - Artifact-review delays such as late filename chips, `NOT_ATTACHED`, or
   temporary `AI_REFERENCED_FILE` uncertainty. Prefer retry, text fallback, or
   next-action diagnostics over stopping the loop.
+- Browser AI replies that are readable but do not contain a `Workerへ渡す指示`
+  block. Keep the response visible and ask for a scoped next action instead of
+  stopping Auto Loop automatically.
 
 Findings should include source and matched text when returned through a
 Controller Command so the caller can see what was detected.
@@ -148,6 +151,8 @@ Use this checklist when changing the safety classifier:
   unsent input line still guards direct terminal submission.
 - Idle-only completion text does not count as a Worker response package.
 - Browser AI Worker-response sends check `workerReportValid` before submission.
+- Browser AI replies without a Worker instruction produce advisory diagnostics,
+  not an automatic stopped state.
 - Commander bridge still does not auto-capture `injected` results.
 - Browser AI and Worker sends still keep owner/workspace/tab guards.
 - `getTaskRunStatus()` transitions a current-run DONE_TAG acknowledgement to
