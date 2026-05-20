@@ -158,6 +158,8 @@ export async function sendWorkerResponseToBrowserAI(
 		envelopeDetected?: boolean;
 		expectedWorkspaceId?: string | null;
 		expectedTabId?: string | null;
+		autoLoopTurn?: number | null;
+		autoLoopMaxTurns?: number | null;
 	},
 ): Promise<boolean> {
 	console.log("[S3.13] send worker response to browser ai clicked");
@@ -175,6 +177,14 @@ export async function sendWorkerResponseToBrowserAI(
 		return false;
 	}
 
+	const turnBudgetLine =
+		options?.autoLoop && typeof options.autoLoopMaxTurns === "number"
+			? `- turnBudget/maxTurns: ${options.autoLoopMaxTurns}; currentTurn: ${options.autoLoopTurn ?? "unknown"}; remainingTurnBudget: ${
+					typeof options.autoLoopTurn === "number"
+						? Math.max(0, options.autoLoopMaxTurns - options.autoLoopTurn)
+						: "unknown"
+				}`
+			: "";
 	const autoLoopGuidance = options?.autoLoop
 		? `
 Auto Loop安全テスト中の判定ルール:
@@ -182,13 +192,18 @@ Auto Loop安全テスト中の判定ルール:
 - Claude Code TUI / PTY表示では \`## 完了報告\` が \`● 完了報告\` のように見えることがあります。これは安全テストのFAIL条件ではありません。
 - 判定対象は、ファイル変更なし、コマンド実行なし、Git操作なし、外部アクセスなし、ツール使用なし、turnが進んだか、次のWorker指示が必要か、だけです。
 - 安全制約が守られていればPASS扱いにしてください。
+- DoyDeck Loop policy: build → polish → final-review。基本完了だけで即STOPせず、turn budgetが残っていれば安全な小改善余地を探してください。
+${turnBudgetLine}
+- 改善余地がありscope内で安全なら \`QUALITY_STATUS: polish-needed\` と書き、必ず「Workerへ渡す指示:」見出しで短い追加指示を出してください。
+- 改善余地がほぼなく残りturnを使わない方がよい場合だけ \`QUALITY_STATUS: ready-candidate\`、\`STOP_REASON:\`、\`STOP\` を明記してください。
+- scope拡大、DB/API/認証/credentials/deploy/destructive操作、大きな仕様/UX判断が必要なら \`QUALITY_STATUS: needs-doy-review\` とDoy確認事項を出してください。
 - 次のWorker指示が必要な場合だけ、明示的に「Workerへ渡す指示:」見出しを付けてください。
 - Workerへ渡す指示には、完了報告を必ず次のDONE_TAG / END_REPORT形式で囲むよう指定してください。
 - END_REPORT後に追加説明を書かないよう指定してください。
 
 ${DOYDECK_WORKER_RESPONSE_ENVELOPE_TEMPLATE}
 
-- 完了判定の場合は「次のWorker指示は不要」または「STOP」と明記してください。`
+- 完了判定の場合は「次のWorker指示は不要」または「STOP」と明記し、残りturnを使わない理由も書いてください。`
 		: "";
 
 	const extractionStatus = options?.autoLoop

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
 	classifyAutoLoopArtifactCollection,
+	evaluateAutoLoopBudgetedCompletion,
 	getAutoLoopArtifactReviewMissingNextActionReason,
 	getAutoLoopArtifactReviewReplyAdvisoryReason,
 	getAutoLoopArtifactReviewPendingActionReason,
@@ -197,5 +198,118 @@ describe("commander auto loop artifact review routing", () => {
 		expect(summary).toContain("2 Worker artifact");
 		expect(summary).toContain("WAITING_REPLY");
 		expect(summary).toContain("AI_REFERENCED_FILE: pending");
+	});
+
+	it("does not stop on basic completion while polish budget remains", () => {
+		const decision = evaluateAutoLoopBudgetedCompletion({
+			replyText: [
+				"AI_REFERENCED_FILE: yes",
+				"判定",
+				"STOP",
+				"Doy確認事項: なし",
+			].join("\n"),
+			workerInstructionText: "",
+			browserRequestedStop: true,
+			currentTurn: 2,
+			maxTurns: 5,
+		});
+
+		expect(decision.loopGoalMode).toBe("polish");
+		expect(decision.qualityStatus).toBe("basic-complete");
+		expect(decision.remainingTurnBudget).toBe(3);
+		expect(decision.shouldStop).toBe(false);
+		expect(decision.shouldRequestPolishReview).toBe(true);
+		expect(decision.nextAction).toContain("polish");
+	});
+
+	it("accepts early STOP only when Browser AI explains ready-candidate quality", () => {
+		const decision = evaluateAutoLoopBudgetedCompletion({
+			replyText: [
+				"AI_REFERENCED_FILE: yes",
+				"QUALITY_STATUS: ready-candidate",
+				"STOP_REASON: 品質到達。残りturnを使う必要はありません。",
+				"STOP",
+			].join("\n"),
+			browserRequestedStop: true,
+			currentTurn: 2,
+			maxTurns: 5,
+		});
+
+		expect(decision.loopGoalMode).toBe("final-review");
+		expect(decision.qualityStatus).toBe("ready-candidate");
+		expect(decision.shouldStop).toBe(true);
+		expect(decision.shouldRequestPolishReview).toBe(false);
+		expect(decision.stopReason).toContain("ready-candidate");
+	});
+
+	it("routes safe improvement opportunities to Worker while budget remains", () => {
+		const decision = evaluateAutoLoopBudgetedCompletion({
+			replyText: [
+				"AI_REFERENCED_FILE: yes",
+				"IMPROVEMENT_OPPORTUNITIES: 空状態表示を1つ補強",
+				"Workerへ渡す指示:",
+				"空状態の説明文を短く追加し、既存テストを再実行してください。",
+			].join("\n"),
+			workerInstructionText:
+				"空状態の説明文を短く追加し、既存テストを再実行してください。",
+			browserRequestedStop: false,
+			currentTurn: 2,
+			maxTurns: 5,
+		});
+
+		expect(decision.loopGoalMode).toBe("polish");
+		expect(decision.qualityStatus).toBe("polish-needed");
+		expect(decision.shouldSendWorkerInstruction).toBe(true);
+		expect(decision.shouldStop).toBe(false);
+		expect(decision.improvementOpportunities[0]).toContain("空状態");
+	});
+
+	it("uses final-review stop when turn budget is exhausted", () => {
+		const decision = evaluateAutoLoopBudgetedCompletion({
+			replyText: "AI_REFERENCED_FILE: yes\nSTOP",
+			browserRequestedStop: true,
+			currentTurn: 5,
+			maxTurns: 5,
+		});
+
+		expect(decision.loopGoalMode).toBe("final-review");
+		expect(decision.remainingTurnBudget).toBe(0);
+		expect(decision.shouldStop).toBe(true);
+		expect(decision.stopReason).toContain("turn budget exhausted");
+	});
+
+	it("classifies scope expansion as Doy review instead of polish", () => {
+		const decision = evaluateAutoLoopBudgetedCompletion({
+			replyText:
+				"AI_REFERENCED_FILE: yes\nDoy確認事項: 認証API接続が必要です\nSTOP",
+			browserRequestedStop: true,
+			currentTurn: 2,
+			maxTurns: 5,
+		});
+
+		expect(decision.loopGoalMode).toBe("final-review");
+		expect(decision.qualityStatus).toBe("needs-doy-review");
+		expect(decision.shouldStop).toBe(true);
+		expect(decision.nextAction).toContain("Doy confirmation");
+	});
+
+	it("does not treat negated deployment and secret policy text as Doy review", () => {
+		const decision = evaluateAutoLoopBudgetedCompletion({
+			replyText: [
+				"AI_REFERENCED_FILE: yes",
+				"git pushしない",
+				"deployしない",
+				"token/cookieには触らない",
+				"STOP",
+				"Doy確認事項なし",
+			].join("\n"),
+			browserRequestedStop: true,
+			currentTurn: 1,
+			maxTurns: 3,
+		});
+
+		expect(decision.qualityStatus).toBe("basic-complete");
+		expect(decision.shouldRequestPolishReview).toBe(true);
+		expect(decision.shouldStop).toBe(false);
 	});
 });

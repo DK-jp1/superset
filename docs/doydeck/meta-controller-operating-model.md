@@ -212,8 +212,9 @@ stop rather than route work into a different tab.
 
 ## Auto Loop Operating Model
 
-Doy does not want Auto Loop to be artificially constrained by a tiny turn limit.
-The control mechanism is Meta AI supervision, not blind turn-count caps.
+Doy does not want Auto Loop to stop at the first "basic complete" reply when
+turn budget remains. The control mechanism is Meta AI supervision plus
+budget-aware quality modes, not blind turn-count caps.
 
 Before Auto Loop, Meta AI must verify:
 
@@ -240,9 +241,27 @@ Stop or ask Doy when any of these appears:
 - possible send to the wrong Worker,
 - ambiguous or unsafe external operation.
 
-Auto Loop should be judged semantically by safety conditions, result, and next
-action. Markdown display glitches alone are not a failure if the operational
-contract is satisfied.
+Auto Loop should be judged semantically by safety conditions, result, quality,
+and next action. Markdown display glitches alone are not a failure if the
+operational contract is satisfied.
+
+Budgeted iteration uses three modes:
+
+- Build Mode: implement the requirement, verify it, and produce Worker reports
+  plus artifacts.
+- Polish Mode: after basic completion, use remaining turn budget for safe,
+  scoped improvements. UI tasks check visual state, spacing, responsiveness, and
+  dark mode; code/CLI/backend tasks check edge cases, error handling, types,
+  tests, logs, and reproducibility; docs/prompt tasks check contradictions,
+  missing steps, stale wording, and reuse.
+- Final Review Mode: when the turn budget is exhausted or Browser AI can justify
+  a ready-candidate STOP, classify STOP / Doy confirmation / next-time backlog.
+
+Browser AI should not reply with only "STOP" while turn budget remains. It
+should either provide `Workerへ渡す指示:` for safe scoped improvements, return
+`QUALITY_STATUS: needs-doy-review` for scope or risk gates, or include
+`QUALITY_STATUS: ready-candidate` and `STOP_REASON:` explaining why the remaining
+budget should not be used.
 
 ## Handoff Ledger Operating Model
 

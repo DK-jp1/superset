@@ -13,7 +13,8 @@ only reviewing copied text or paths. The intended flow is:
 5. DoyDeck collects Worker reports, generated review screenshots, and any
    supported artifact paths named inside the Worker report.
 6. DoyDeck sends the collected artifacts back to Browser AI as real attachments.
-7. Browser AI returns STOP or a scoped next Worker instruction.
+7. Browser AI returns a scoped next Worker instruction, a Doy gate, or a final
+   STOP with quality/budget reasoning.
 
 The loop should not ask Doy for step-by-step confirmation after requirements
 are clear. Browser AI and Worker continue within the approved scope until STOP,
@@ -59,13 +60,40 @@ text-only Browser AI review path:
    reflect attachments, stop the loop instead of silently treating the review as
    successful.
 
-Browser AI replies still drive the next transition: `STOP` / `次のWorker指示は不要`
-ends the loop, and `Workerへ渡す指示:` can continue the bounded loop inside the
-approved scope. `AI_REFERENCED_FILE: no` is not considered a completed
-real-file review when files were attached. The loop records a lightweight
-Controller Chain Outcome when an artifact-reviewed reply resolves to STOP,
-next Worker instruction, or a blocked review state; the record keeps summary
-fields and path references rather than embedding full artifact contents.
+Browser AI replies still drive the next transition, but bounded loops are now
+budget-aware. `Workerへ渡す指示:` continues the bounded loop inside the approved
+scope. A basic-complete `STOP` / `次のWorker指示は不要` does not immediately end
+the loop when turn budget remains; DoyDeck asks Browser AI for a Polish Mode
+review unless Browser AI explicitly says the result is a ready candidate and
+explains why remaining budget should not be used. `AI_REFERENCED_FILE: no` is
+not considered a completed real-file review when files were attached. The loop
+records a lightweight Controller Chain Outcome when an artifact-reviewed reply
+resolves to STOP, next Worker instruction, or a blocked review state; the record
+keeps summary fields and path references rather than embedding full artifact
+contents.
+
+## Build / Polish / Final Review Modes
+
+Auto Loop uses these generic quality modes instead of a single "done" state:
+
+- `build`: implement the requested requirement, run build/test/smoke, and report
+  artifacts.
+- `polish`: after basic completion, use remaining turn budget for safe scoped
+  improvements such as UI state polish, edge cases, error handling, docs
+  consistency, reproducibility, or verification gaps.
+- `final-review`: when the turn budget is exhausted or the result is already a
+  ready candidate, ask Browser AI to make the final STOP / Doy confirmation /
+  next-time-improvement decision.
+
+Browser AI should include these signals when possible:
+
+- `QUALITY_STATUS: polish-needed` plus `Workerへ渡す指示:` when safe small
+  improvements remain.
+- `QUALITY_STATUS: ready-candidate` plus `STOP_REASON:` when it chooses not to
+  use remaining budget.
+- `QUALITY_STATUS: needs-doy-review` when the next action requires scope
+  expansion, DB/API/auth/credentials/deploy/destructive work, or a large
+  product/UX judgment.
 
 ## Artifact Sources
 
@@ -136,7 +164,8 @@ referenced:
   attachment.
 
 If a follow-up Worker turn is needed, the reply must start the instruction with
-`Workerへ渡す指示:`. If no follow-up is needed, the reply must include `STOP` or
+`Workerへ渡す指示:`. If no follow-up is needed, the reply must include
+`QUALITY_STATUS: ready-candidate`, `STOP_REASON:`, and `STOP` or
 `次のWorker指示は不要`. If no Doy confirmation is needed, it must include
 `Doy確認事項なし`.
 

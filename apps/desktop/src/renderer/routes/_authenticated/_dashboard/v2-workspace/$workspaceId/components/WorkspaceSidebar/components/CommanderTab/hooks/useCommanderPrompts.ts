@@ -113,7 +113,9 @@ ${DOYDECK_WORKER_RESPONSE_ENVELOPE_TEMPLATE}
 
 Auto Loop時:
 - Workerへ渡す指示が必要なら必ず「Workerへ渡す指示:」で始める
-- 完了なら「次のWorker指示は不要」または「STOP」と明記する
+- DoyDeck Loopは build → polish → final-review。基本完了だけで即STOPせず、turn budgetが残る場合は安全な小改善余地を探す
+- 改善余地がありscope内で安全なら「QUALITY_STATUS: polish-needed」と書き、「Workerへ渡す指示:」で追加指示を出す
+- 残りturnを使わない方がよい場合だけ「QUALITY_STATUS: ready-candidate」「STOP_REASON:」「STOP」または「次のWorker指示は不要」と明記する
 - Worker完了報告は必ずDONE_TAGからEND_REPORTまでの形式で囲ませる
 - Worker完了報告には成果物path、スクショpath、build結果、Playwright結果、console/pageerror、未実装、Doy確認事項、次にやるならを必ず含める
 - Worker報告内に成果物pathがある場合は、現物添付レビュー後にSTOPまたは次Worker指示を判断する
@@ -270,6 +272,8 @@ ${sections.join("\n\n")}
 
 ---
 Execute the goal above. Follow all constraints. Report what you did and any issues found.
+If this is a Polish Mode follow-up, make the requested safe small improvement, rerun the relevant verification, and keep the work inside the approved scope.
+Always include real artifact/report/screenshot paths when they exist.
 Wrap your final response in the DONE_TAG / END_REPORT report format below.
 Do not add text after END_REPORT:
 
@@ -284,7 +288,7 @@ export function generateReviewPrompt(state: CommanderState): string {
 
 	if (sections.length === 0) return "";
 
-	return `# Review Prompt\n\n${sections.join("\n\n")}\n\n---\nReview the worker's output against the goal and constraints above. Check for:\n1. Goal completion — did the worker fully achieve the goal?\n2. Constraint violations — were all constraints respected?\n3. Side effects — any unintended changes?\n4. Quality — code quality, security, correctness\n\nReport: PASS / FAIL with specific findings.`;
+	return `# Review Prompt\n\n${sections.join("\n\n")}\n\n---\nReview the worker's output against the goal and constraints above. Check for:\n1. Goal completion — did the worker fully achieve the goal?\n2. Constraint violations — were all constraints respected?\n3. Side effects — any unintended changes?\n4. Quality — code quality, security, correctness\n5. Budgeted polish — if turn budget remains, are there safe scoped improvements worth another Worker turn?\n\nReport: PASS / FAIL with specific findings.`;
 }
 
 export function generateHandoffPrompt({
@@ -586,7 +590,9 @@ export function buildSendHandoffLedgerPrompt(ledger: string): string {
 	return `以下は現在のDoyDeck作業タブのHandoff Ledgerです。
 内容を読み取り、現在地・未解決・次アクションを整理してください。
 次にWorkerへ作業指示を出す必要がある場合は、必ず「Workerへ渡す指示:」から始めてください。
-完了または追加作業不要なら「次のWorker指示は不要」または「STOP」と明記してください。
+基本完了だけで即STOPせず、turn budgetが残る場合は安全な小改善余地を探してください。
+改善余地がありscope内で安全なら「QUALITY_STATUS: polish-needed」と書き、Worker指示を出してください。
+完了または追加作業不要なら「QUALITY_STATUS: ready-candidate」「STOP_REASON:」「次のWorker指示は不要」または「STOP」と明記してください。
 Doy判断が必要な場合だけ「Doy確認事項:」を書いてください。
 Doy判断が不要なら「Doy確認事項なし」と明記してください。
 単なる観点リストや報告欄として「Doy確認事項」見出しを作らないでください。

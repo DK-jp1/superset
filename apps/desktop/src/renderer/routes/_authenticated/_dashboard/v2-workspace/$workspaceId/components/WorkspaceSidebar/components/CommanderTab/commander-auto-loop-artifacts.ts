@@ -32,8 +32,318 @@ export interface AutoLoopArtifactCollectionDecision {
 	reason: string;
 }
 
+export type AutoLoopGoalMode = "build" | "polish" | "final-review";
+
+export type AutoLoopCompletionPolicy =
+	| "stop-on-basic-complete"
+	| "continue-until-budget"
+	| "stop-only-when-quality-reached";
+
+export type AutoLoopQualityStatus =
+	| "incomplete"
+	| "basic-complete"
+	| "polish-needed"
+	| "ready-candidate"
+	| "needs-doy-review";
+
+export interface AutoLoopBudgetedCompletionDecision {
+	loopGoalMode: AutoLoopGoalMode;
+	completionPolicy: AutoLoopCompletionPolicy;
+	turnBudget: number;
+	currentTurn: number;
+	remainingTurnBudget: number;
+	minPolishTurns: number;
+	qualityStatus: AutoLoopQualityStatus;
+	improvementOpportunities: string[];
+	lastArtifactReviewSummary: string;
+	stopReason: string | null;
+	shouldStop: boolean;
+	shouldRequestPolishReview: boolean;
+	shouldSendWorkerInstruction: boolean;
+	nextAction: string;
+	warnings: string[];
+}
+
+export interface EvaluateAutoLoopBudgetedCompletionInput {
+	replyText: string;
+	workerInstructionText?: string | null;
+	browserRequestedStop: boolean;
+	currentTurn: number;
+	maxTurns: number;
+	minPolishTurns?: number | null;
+	completionPolicy?: AutoLoopCompletionPolicy | null;
+	artifactReviewExpected?: boolean | null;
+}
+
 function joinShortReasons(values?: string[] | null): string {
 	return (values || []).filter(Boolean).slice(0, 3).join("; ");
+}
+
+function normalizeText(text: string): string {
+	return text.replace(/\s+/g, " ").trim();
+}
+
+function extractLineValues(text: string, labels: string[]): string[] {
+	const values: string[] = [];
+	for (const label of labels) {
+		const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		const pattern = new RegExp(`(?:^|\\n)\\s*${escapedLabel}\\s*[:：]\\s*([^\\n]+)`, "gi");
+		let match: RegExpExecArray | null;
+		while ((match = pattern.exec(text)) != null) {
+			const value = match[1]?.trim();
+			if (value) values.push(value);
+		}
+	}
+	return values;
+}
+
+function extractImprovementOpportunities(text: string): string[] {
+	const explicit = extractLineValues(text, [
+		"IMPROVEMENT_OPPORTUNITIES",
+		"改善余地",
+		"改善候補",
+		"次回改善候補",
+	]);
+	const bulletPattern =
+		/(?:^|\n)\s*(?:[-*・]|\d+[.)])\s*(.*(?:改善|polish|refine|検証|整合|見直し).*)/gi;
+	let match: RegExpExecArray | null;
+	while ((match = bulletPattern.exec(text)) != null) {
+		const value = match[1]?.trim();
+		if (value) explicit.push(value);
+	}
+	return Array.from(new Set(explicit.map(normalizeText).filter(Boolean))).slice(0, 8);
+}
+
+function hasDoyReviewOrScopeExpansion(text: string): boolean {
+	const doyConfirmationMatches =
+		text.match(/Doy確認事項\s*[:：]?\s*(?:[^\n]+|\n\s*[^\n]+)?/gi) || [];
+	if (
+		doyConfirmationMatches.some(
+			(line) =>
+				!/(Doy確認事項\s*なし|Doy確認事項\s*[:：]\s*なし|Doy確認事項\s*[:：]\s*none)/i.test(
+					line.trim(),
+				),
+		)
+	) {
+		return true;
+	}
+	const scopeGatePattern =
+		/Doy確認\s*[:：]\s*(?!なし)|Doy判断|Doyに確認|scope拡大|スコープ拡大|認証|credentials?|cookie|token|private API|本番DB|課金|deploy|public release|destructive|破壊的/i;
+	const negatedGatePattern =
+		/しない|禁止|触らない|不要|なし|ありません|未実施|実行なし|操作なし|使用なし|外部アクセスなし/i;
+	return text
+		.split(/\n+/)
+		.some(
+			(line) =>
+				scopeGatePattern.test(line) && !negatedGatePattern.test(line),
+		);
+}
+
+function hasReadyCandidateReason(text: string): boolean {
+	return /QUALITY_STATUS\s*[:：]\s*ready-candidate|qualityStatus\s*[:：]\s*ready-candidate|納品候補品質|品質到達|改善余地(?:は)?(?:ほぼ)?(?:なし|ない)|残り(?:turn|ターン|budget|予算)を使(?:う|わ)(?:必要|なくて)(?:ない|よい|良い)|STOP_REASON\s*[:：]\s*(?!\s*$)|stopReason\s*[:：]\s*(?!\s*$)/i.test(
+		text,
+	);
+}
+
+function inferLastArtifactReviewSummary(text: string): string {
+	const summaryLines = extractLineValues(text, [
+		"lastArtifactReviewSummary",
+		"Artifact Review",
+		"確認結果",
+		"レビュー結果",
+	]);
+	if (summaryLines.length > 0) return summaryLines[0];
+	const normalized = normalizeText(text);
+	return normalized.length <= 220 ? normalized : `${normalized.slice(0, 220)}...`;
+}
+
+export function evaluateAutoLoopBudgetedCompletion(
+	input: EvaluateAutoLoopBudgetedCompletionInput,
+): AutoLoopBudgetedCompletionDecision {
+	const replyText = input.replyText || "";
+	const workerInstructionText = input.workerInstructionText || "";
+	const turnBudget = Math.max(0, Math.floor(input.maxTurns || 0));
+	const currentTurn = Math.max(0, Math.floor(input.currentTurn || 0));
+	const remainingTurnBudget = Math.max(0, turnBudget - currentTurn);
+	const minPolishTurns = Math.max(0, Math.floor(input.minPolishTurns ?? 1));
+	const completionPolicy =
+		input.completionPolicy || "continue-until-budget";
+	const improvementOpportunities = extractImprovementOpportunities(replyText);
+	const hasWorkerInstruction = workerInstructionText.trim().length > 0;
+	const needsDoyReview = hasDoyReviewOrScopeExpansion(replyText);
+	const readyCandidate = hasReadyCandidateReason(replyText);
+	const lastArtifactReviewSummary = inferLastArtifactReviewSummary(replyText);
+	const warnings: string[] = [];
+
+	if (needsDoyReview) {
+		return {
+			loopGoalMode: "final-review",
+			completionPolicy,
+			turnBudget,
+			currentTurn,
+			remainingTurnBudget,
+			minPolishTurns,
+			qualityStatus: "needs-doy-review",
+			improvementOpportunities,
+			lastArtifactReviewSummary,
+			stopReason: "Browser AI requested Doy review or scope expansion",
+			shouldStop: true,
+			shouldRequestPolishReview: false,
+			shouldSendWorkerInstruction: false,
+			nextAction: "Stop and surface Doy confirmation items.",
+			warnings,
+		};
+	}
+
+	if (hasWorkerInstruction) {
+		return {
+			loopGoalMode:
+				input.browserRequestedStop || improvementOpportunities.length > 0
+					? "polish"
+					: "build",
+			completionPolicy,
+			turnBudget,
+			currentTurn,
+			remainingTurnBudget,
+			minPolishTurns,
+			qualityStatus:
+				improvementOpportunities.length > 0 ? "polish-needed" : "incomplete",
+			improvementOpportunities,
+			lastArtifactReviewSummary,
+			stopReason: null,
+			shouldStop: false,
+			shouldRequestPolishReview: false,
+			shouldSendWorkerInstruction: true,
+			nextAction: "Send Browser AI scoped follow-up instruction to Worker.",
+			warnings,
+		};
+	}
+
+	if (turnBudget > 0 && currentTurn >= turnBudget) {
+		return {
+			loopGoalMode: "final-review",
+			completionPolicy,
+			turnBudget,
+			currentTurn,
+			remainingTurnBudget,
+			minPolishTurns,
+			qualityStatus: readyCandidate ? "ready-candidate" : "basic-complete",
+			improvementOpportunities,
+			lastArtifactReviewSummary,
+			stopReason: "turn budget exhausted after final review",
+			shouldStop: true,
+			shouldRequestPolishReview: false,
+			shouldSendWorkerInstruction: false,
+			nextAction: "Stop after final review because no Worker turns remain.",
+			warnings,
+		};
+	}
+
+	if (!input.browserRequestedStop) {
+		return {
+			loopGoalMode: remainingTurnBudget > 0 ? "build" : "final-review",
+			completionPolicy,
+			turnBudget,
+			currentTurn,
+			remainingTurnBudget,
+			minPolishTurns,
+			qualityStatus:
+				improvementOpportunities.length > 0 ? "polish-needed" : "incomplete",
+			improvementOpportunities,
+			lastArtifactReviewSummary,
+			stopReason: null,
+			shouldStop: false,
+			shouldRequestPolishReview: false,
+			shouldSendWorkerInstruction: false,
+			nextAction: "Wait for Browser AI STOP or Worker instruction.",
+			warnings,
+		};
+	}
+
+	if (completionPolicy === "stop-on-basic-complete") {
+		return {
+			loopGoalMode: "final-review",
+			completionPolicy,
+			turnBudget,
+			currentTurn,
+			remainingTurnBudget,
+			minPolishTurns,
+			qualityStatus: readyCandidate ? "ready-candidate" : "basic-complete",
+			improvementOpportunities,
+			lastArtifactReviewSummary,
+			stopReason: readyCandidate
+				? "Browser AI requested STOP with ready-candidate quality"
+				: "Browser AI requested STOP under stop-on-basic-complete policy",
+			shouldStop: true,
+			shouldRequestPolishReview: false,
+			shouldSendWorkerInstruction: false,
+			nextAction: "Stop because policy allows basic-complete STOP.",
+			warnings,
+		};
+	}
+
+	if (readyCandidate) {
+		return {
+			loopGoalMode: "final-review",
+			completionPolicy,
+			turnBudget,
+			currentTurn,
+			remainingTurnBudget,
+			minPolishTurns,
+			qualityStatus: "ready-candidate",
+			improvementOpportunities,
+			lastArtifactReviewSummary,
+			stopReason:
+				"Browser AI requested STOP with ready-candidate quality or no remaining useful improvements",
+			shouldStop: true,
+			shouldRequestPolishReview: false,
+			shouldSendWorkerInstruction: false,
+			nextAction: "Stop; Browser AI explained why remaining budget is unnecessary.",
+			warnings,
+		};
+	}
+
+	if (remainingTurnBudget > 0 && minPolishTurns > 0) {
+		warnings.push(
+			"Browser AI requested basic completion STOP while turn budget remains",
+		);
+		return {
+			loopGoalMode: "polish",
+			completionPolicy,
+			turnBudget,
+			currentTurn,
+			remainingTurnBudget,
+			minPolishTurns,
+			qualityStatus: "basic-complete",
+			improvementOpportunities,
+			lastArtifactReviewSummary,
+			stopReason: null,
+			shouldStop: false,
+			shouldRequestPolishReview: true,
+			shouldSendWorkerInstruction: false,
+			nextAction:
+				"Ask Browser AI for scoped polish opportunities before accepting STOP.",
+			warnings,
+		};
+	}
+
+	return {
+		loopGoalMode: "final-review",
+		completionPolicy,
+		turnBudget,
+		currentTurn,
+		remainingTurnBudget,
+		minPolishTurns,
+		qualityStatus: "basic-complete",
+		improvementOpportunities,
+		lastArtifactReviewSummary,
+		stopReason: "Browser AI requested completion/stop",
+		shouldStop: true,
+		shouldRequestPolishReview: false,
+		shouldSendWorkerInstruction: false,
+		nextAction: "Stop because no polish budget remains.",
+		warnings,
+	};
 }
 
 export function classifyAutoLoopArtifactCollection(

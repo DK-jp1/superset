@@ -45,6 +45,7 @@ import {
 } from "../browser-adapters";
 import {
 	classifyAutoLoopArtifactCollection,
+	evaluateAutoLoopBudgetedCompletion,
 	getAutoLoopArtifactReviewMissingNextActionReason,
 	getAutoLoopArtifactReviewPendingActionReason,
 	getAutoLoopArtifactReviewReplyAdvisoryReason,
@@ -53,6 +54,7 @@ import {
 	getAutoLoopArtifactSendStopReason,
 	hasAutoLoopArtifactReviewNextWorkerInstruction,
 	summarizeAutoLoopArtifactSendResult,
+	type AutoLoopBudgetedCompletionDecision,
 	type AutoLoopWorkerArtifactCollectionLike,
 	type AutoLoopWorkerArtifactSendLike,
 } from "../commander-auto-loop-artifacts";
@@ -185,6 +187,47 @@ function recordAutoLoopArtifactReviewOutcome(input: {
 				error,
 			);
 		});
+}
+
+function buildBudgetedPolishReviewPrompt(input: {
+	decision: AutoLoopBudgetedCompletionDecision;
+	browserAiReplyText: string;
+}): string {
+	const { decision, browserAiReplyText } = input;
+	const opportunities = decision.improvementOpportunities.length
+		? decision.improvementOpportunities
+				.map((item, index) => `${index + 1}. ${item}`)
+				.join("\n")
+		: "未抽出。成果物、Worker報告、添付artifact、検証結果から安全な小改善候補を探してください。";
+	return [
+		"DoyDeck budgeted Auto Loop policy check:",
+		`- loopGoalMode: ${decision.loopGoalMode}`,
+		`- completionPolicy: ${decision.completionPolicy}`,
+		`- turnBudget: ${decision.turnBudget}`,
+		`- currentTurn: ${decision.currentTurn}`,
+		`- remainingTurnBudget: ${decision.remainingTurnBudget}`,
+		`- minPolishTurns: ${decision.minPolishTurns}`,
+		`- qualityStatus: ${decision.qualityStatus}`,
+		"",
+		"あなたの直前の返答は基本完了/STOPとして読めますが、turn budgetが残っています。",
+		"基本完了だけで即STOPせず、残りturnで安全に品質を上げられるかを再評価してください。",
+		"",
+		"確認する観点:",
+		"- UI成果物: 見た目、余白、状態表示、導線、レスポンシブ、dark mode",
+		"- コード/CLI/バックエンド: 型、境界条件、エラー処理、再利用性、テスト、ログ",
+		"- docs/運用/プロンプト: 矛盾、抜け、再現性、古い表現",
+		"",
+		"改善余地:",
+		opportunities,
+		"",
+		"次の返答形式:",
+		"- 改善余地がありscope内で安全なら、必ず `QUALITY_STATUS: polish-needed` と書き、`Workerへ渡す指示:` から短い追加指示を出してください。",
+		"- 改善余地がほぼなく残りturnを使わない方がよい場合だけ、`QUALITY_STATUS: ready-candidate`、`STOP_REASON:`、`STOP` を明記してください。",
+		"- scope拡大、DB/API/認証/credentials/deploy/destructive操作、大きな仕様/UX判断が必要なら、`QUALITY_STATUS: needs-doy-review` とDoy確認事項を出してください。",
+		"",
+		"直前のBrowser AI返答:",
+		browserAiReplyText,
+	].join("\n");
 }
 
 function buildBrowserPathPrompt(pathInfo: CommanderSelectedPath): string {
@@ -1588,6 +1631,13 @@ export function usePromptTransfer({
 	const [autoLoopStopReason, setAutoLoopStopReason] = useState<string | null>(
 		null,
 	);
+	const budgetedPolishRequestTurnRef = useRef<number | null>(null);
+	const requestAutoLoopBudgetedPolishReviewRef = useRef<
+		(
+			decision: AutoLoopBudgetedCompletionDecision,
+			browserAiReplyText: string,
+		) => Promise<boolean>
+	>(async () => false);
 
 	const resolveAutoLoopArtifactReviewController = useCallback(():
 		| AutoLoopArtifactReviewController
@@ -1859,6 +1909,7 @@ export function usePromptTransfer({
 			armedWorkerBinding.bindingStatus;
 		tabContextSeenChangedRef.current = null;
 		setAutoLoopTurn(0);
+		budgetedPolishRequestTurnRef.current = null;
 		setAutoLoopStopReason(strictStopReason);
 		setAutoLoopPhase(strictStopReason ? "stopped" : "waiting-browser-ai");
 		setAutoLoopLastAction(strictStopReason ?? "Auto Loop armed");
@@ -2886,6 +2937,8 @@ export function usePromptTransfer({
 						autoRelayMode === "loop"
 							? extractAutoLoopWorkerInstructionBlock(truncated)
 							: extractInstructionBlock(truncated);
+					const browserRequestedStop =
+						autoRelayMode === "loop" && isBrowserCompletionStop(truncated);
 					logWorkerInstructionExtraction(truncated, extracted);
 					if (autoRelayMode === "loop") {
 						setAutoLoopBrowserCaptureDebug({
@@ -2900,7 +2953,7 @@ export function usePromptTransfer({
 							extractResult: extracted.trim() ? "success" : "fail",
 							extractFailureReason: extracted.trim()
 								? ""
-								: isBrowserCompletionStop(truncated)
+								: browserRequestedStop
 									? "browser-completion-stop"
 									: hasPrimaryWorkerInstructionHeading(truncated) ||
 											hasOtherWorkerInstructionHeading(truncated)
@@ -2916,8 +2969,47 @@ export function usePromptTransfer({
 					setLatestBrowserAiDirectionText(truncated);
 					if (autoRelayMode === "loop" && !extracted.trim()) {
 						setCapturePreview(truncated);
-						if (isBrowserCompletionStop(truncated)) {
-							stopAutoLoop("Browser AI requested completion/stop");
+						if (browserRequestedStop) {
+							const budgetedDecision = evaluateAutoLoopBudgetedCompletion({
+								replyText: truncated,
+								workerInstructionText: extracted,
+								browserRequestedStop,
+								currentTurn: autoLoopTurn,
+								maxTurns: autoLoopMaxTurns,
+							});
+							if (
+								budgetedDecision.shouldRequestPolishReview &&
+								budgetedPolishRequestTurnRef.current !== autoLoopTurn
+							) {
+								budgetedPolishRequestTurnRef.current = autoLoopTurn;
+								recordAutoLoopAdvisory(
+									"Browser AI requested STOP before using remaining turn budget; requesting Polish Mode review",
+									{
+										lastAction: budgetedDecision.nextAction,
+									},
+								);
+								await requestAutoLoopBudgetedPolishReviewRef.current(
+									budgetedDecision,
+									truncated,
+								);
+								return;
+							}
+							if (
+								budgetedDecision.shouldRequestPolishReview &&
+								budgetedPolishRequestTurnRef.current === autoLoopTurn
+							) {
+								recordAutoLoopAdvisory(
+									"Browser AI reaffirmed STOP after budgeted polish request",
+									{
+										lastAction:
+											"Accepting STOP after one Polish Mode challenge",
+									},
+								);
+							}
+							stopAutoLoop(
+								budgetedDecision.stopReason ??
+									"Browser AI requested completion/stop",
+							);
 						} else {
 							recordAutoLoopAdvisory("no worker instruction block found", {
 								lastAction:
@@ -2998,11 +3090,107 @@ export function usePromptTransfer({
 			currentUrl,
 			injectIntoPage,
 			cancelAutoCapture,
+			autoLoopMaxTurns,
+			autoLoopTurn,
 			autoRelayMode,
 			recordAutoLoopAdvisory,
 			stopAutoLoop,
 		],
 	);
+
+	const requestAutoLoopBudgetedPolishReview = useCallback(
+		async (
+			decision: AutoLoopBudgetedCompletionDecision,
+			browserAiReplyText: string,
+		): Promise<boolean> => {
+			const liveUrl = getLiveUrl() || currentUrl;
+			const provider = detectProvider(liveUrl);
+			if (!provider) {
+				recordAutoLoopAdvisory(
+					"budgeted polish review skipped because Browser AI provider is unavailable",
+					{
+						lastAction:
+							"Budgeted polish pending; waiting for Browser AI provider",
+					},
+				);
+				setAutoLoopPhase("waiting-browser-ai");
+				return false;
+			}
+
+			const prompt = buildBudgetedPolishReviewPrompt({
+				decision,
+				browserAiReplyText,
+			});
+			let baseline: AssistantCaptureSnapshot | null = null;
+			try {
+				const rawBaseline = await injectIntoPage(
+					buildAssistantSnapshotScript(provider),
+				);
+				baseline = toAssistantCaptureSnapshot(rawBaseline);
+			} catch (error) {
+				console.log(
+					"[Auto Loop] budgeted polish baseline extraction failed:",
+					error,
+				);
+			}
+
+			setAutoLoopPhase("sending-browser-ai");
+			setAutoLoopLastAction(
+				`Requesting Polish Mode review (${decision.remainingTurnBudget} turn(s) remain)`,
+			);
+			appendAutoLoopEvent(
+				`budgeted polish requested: remaining=${decision.remainingTurnBudget} quality=${decision.qualityStatus}`,
+			);
+
+			try {
+				const result = await injectIntoPage(
+					buildInjectionWithSubmitScript(prompt, provider),
+				);
+				if (result !== "submitted") {
+					recordAutoLoopAdvisory(
+						`budgeted polish request was not submitted: ${String(result)}`,
+						{
+							lastAction:
+								"Budgeted polish request not submitted; waiting for Browser AI",
+						},
+					);
+					setAutoLoopPhase("waiting-browser-ai");
+					return false;
+				}
+
+				setAutoLoopPhase("waiting-browser-ai");
+				setAutoLoopLastAction("Budgeted polish request sent to Browser AI");
+				void startAutoCapture({
+					baseline,
+					prompt: "auto-loop-budgeted-polish-review",
+					triggeredAt: Date.now(),
+				});
+				return true;
+			} catch (error) {
+				recordAutoLoopAdvisory(
+					`budgeted polish request failed: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+					{
+						lastAction:
+							"Budgeted polish request failed; waiting for Browser AI",
+					},
+				);
+				setAutoLoopPhase("waiting-browser-ai");
+				return false;
+			}
+		},
+		[
+			appendAutoLoopEvent,
+			currentUrl,
+			getLiveUrl,
+			injectIntoPage,
+			recordAutoLoopAdvisory,
+			startAutoCapture,
+		],
+	);
+	requestAutoLoopBudgetedPolishReviewRef.current =
+		requestAutoLoopBudgetedPolishReview;
 
 	useEffect(() => {
 		return () => {
@@ -3297,6 +3485,14 @@ export function usePromptTransfer({
 		const browserRequestedStop = isBrowserCompletionStop(browserAiReplyText);
 		const hasNextWorkerInstruction =
 			hasAutoLoopArtifactReviewNextWorkerInstruction(text);
+		const budgetedCompletionDecision = evaluateAutoLoopBudgetedCompletion({
+			replyText: browserAiReplyText,
+			workerInstructionText: text,
+			browserRequestedStop,
+			currentTurn: autoLoopTurn,
+			maxTurns: autoLoopMaxTurns,
+			artifactReviewExpected: autoLoopArtifactReviewExpectedRef.current,
+		});
 		if (autoLoopArtifactReviewExpectedRef.current) {
 			const artifactReviewStopReason =
 				getAutoLoopArtifactReviewReplyStopReason(browserAiReplyText);
@@ -3362,6 +3558,35 @@ export function usePromptTransfer({
 			}
 		}
 		if (browserRequestedStop) {
+			if (
+				budgetedCompletionDecision.shouldRequestPolishReview &&
+				budgetedPolishRequestTurnRef.current !== autoLoopTurn
+			) {
+				autoLoopTerminalFingerprintRef.current = fingerprint;
+				budgetedPolishRequestTurnRef.current = autoLoopTurn;
+				recordAutoLoopAdvisory(
+					"Browser AI requested STOP before using remaining turn budget; requesting Polish Mode review",
+					{
+						lastAction: budgetedCompletionDecision.nextAction,
+					},
+				);
+				void requestAutoLoopBudgetedPolishReview(
+					budgetedCompletionDecision,
+					browserAiReplyText,
+				);
+				return;
+			}
+			if (
+				budgetedCompletionDecision.shouldRequestPolishReview &&
+				budgetedPolishRequestTurnRef.current === autoLoopTurn
+			) {
+				recordAutoLoopAdvisory(
+					"Browser AI reaffirmed STOP after budgeted polish request",
+					{
+						lastAction: "Accepting STOP after one Polish Mode challenge",
+					},
+				);
+			}
 			if (autoLoopArtifactReviewExpectedRef.current) {
 				recordAutoLoopArtifactReviewOutcome({
 					expectedTabId,
@@ -3369,10 +3594,14 @@ export function usePromptTransfer({
 					finalDecision: "STOP",
 					nextAction: "STOP",
 					notes:
+						budgetedCompletionDecision.stopReason ??
 						"Browser AI reviewed attached Worker artifacts with AI_REFERENCED_FILE: yes and requested completion.",
 				}, artifactReviewController);
 			}
-			stopAutoLoop("Browser AI requested completion/stop");
+			stopAutoLoop(
+				budgetedCompletionDecision.stopReason ??
+					"Browser AI requested completion/stop",
+			);
 			return;
 		}
 		const dangerousFinding = findAutoLoopDangerousCommandFinding(
@@ -3387,11 +3616,15 @@ export function usePromptTransfer({
 			);
 		}
 		if (autoLoopTurn >= autoLoopMaxTurns) {
-			stopAutoLoop("max turns reached");
+			stopAutoLoop(
+				budgetedCompletionDecision.stopReason ??
+					"max turns reached after final review",
+			);
 			return;
 		}
 
 		autoLoopTerminalFingerprintRef.current = fingerprint;
+		budgetedPolishRequestTurnRef.current = null;
 		if (autoLoopArtifactReviewExpectedRef.current && hasNextWorkerInstruction) {
 			recordAutoLoopArtifactReviewOutcome({
 				expectedTabId,
@@ -3445,6 +3678,7 @@ export function usePromptTransfer({
 		handleTerminalSubmitBeforeSend,
 		latestBrowserAiDirectionText,
 		recordAutoLoopAdvisory,
+		requestAutoLoopBudgetedPolishReview,
 		resolveAutoLoopArtifactReviewController,
 		stopAutoLoop,
 	]);
@@ -3577,8 +3811,9 @@ export function usePromptTransfer({
 					} else {
 						setWorkerResponsePreview(EMPTY_WORKER_RESPONSE_PREVIEW);
 						if (autoLoopTurn >= autoLoopMaxTurns) {
-							stopAutoLoop("max turns reached");
-							return;
+							appendAutoLoopEvent(
+								"final review armed: turn budget reached after Worker response",
+							);
 						}
 						autoLoopArtifactReviewExpectedRef.current = true;
 						setAutoLoopPhase("waiting-browser-ai");
@@ -3621,6 +3856,8 @@ export function usePromptTransfer({
 				envelopeDetected: workerResponsePreview.reasons.includes("envelope matched"),
 				expectedWorkspaceId: workspaceId,
 				expectedTabId,
+				autoLoopTurn,
+				autoLoopMaxTurns,
 			});
 			if (!ok) {
 				stopAutoLoop("browser injection failed");
@@ -3628,8 +3865,9 @@ export function usePromptTransfer({
 			}
 			setWorkerResponsePreview(EMPTY_WORKER_RESPONSE_PREVIEW);
 			if (autoLoopTurn >= autoLoopMaxTurns) {
-				stopAutoLoop("max turns reached");
-				return;
+				appendAutoLoopEvent(
+					"final review armed: turn budget reached after Worker response",
+				);
 			}
 			setAutoLoopPhase("waiting-browser-ai");
 			setAutoLoopLastAction("Sent Worker response to Browser AI");
