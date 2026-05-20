@@ -113,11 +113,11 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 			body.push(`- ${check.name}: ${check.status} — ${check.detail}`);
 		}
 	}
-	body.push("", "## Auto Loop readiness", "");
-	body.push("- Auto Loop Previewへ切替: UI check resultsを参照");
-	body.push("- Max Turns selector: UI check resultsを参照");
-	body.push("- Diagnostics panel: UI check resultsを参照");
-	body.push("- 実Auto Loop往復: SKIPPED（外部Browser AI / Worker依存のためMVP対象外）");
+	body.push("", "## Automation readiness", "");
+	body.push("- Legacy automation preview: removed from the human-facing Commander UI");
+	body.push("- Max Turns selector: removed");
+	body.push("- Diagnostics panel: removed");
+	body.push("- Manual / Auto Relay Preview: UI check resultsを参照");
 	body.push("", "## Diagnostics snapshot", "");
 	if (diagnosticsText.trim()) {
 		body.push("```text");
@@ -167,7 +167,7 @@ function writeReport({ failedBeforeLaunch = false } = {}) {
 	body.push("", "## 次フェーズ案", "");
 	body.push("- Browser AI fixtureをwebviewに読み込み、外部サービスなしでinjection/captureを検証する。");
 	body.push("- Worker fixtureを用意し、DoyDeck response envelope付き出力を流してAuto Relayを検証する。");
-	body.push("- Browser AI fixture + Worker fixtureでAuto Loop 1ターンを内部完結で検証する。");
+	body.push("- Browser AI fixture + Worker fixtureでManual / Auto Relay Previewを内部完結で検証する。");
 	body.push("- 本物のBrowser AI / Workerを使うE2Eは別scriptに分け、手動承認つきで実行する。");
 	if (failedBeforeLaunch) {
 		body.push("", "## 起動前エラー", "");
@@ -301,68 +301,24 @@ try {
 			"Auto mode selector visible",
 		)
 	) {
-		await autoModeSelector.selectOption("loop");
+		const options = await autoModeSelector
+			.locator("option")
+			.evaluateAll((nodes) => nodes.map((node) => node.value));
+		record(
+			options.length === 2 && options.includes("off") && options.includes("preview")
+				? "PASS"
+				: "FAIL",
+			"Manual relay modes",
+			`mode selector options: ${options.join(", ")}`,
+		);
+		await autoModeSelector.selectOption("preview");
 		await page.waitForTimeout(500);
-		await capture(page, "03-auto-loop-mode");
-		const maxTurnsSelector = page.getByTestId("auto-loop-max-turns-selector");
-		if (
-			await checkVisible(
-				"Max Turns selector",
-				maxTurnsSelector,
-				"Max Turns selector visible",
-			)
-		) {
-			await maxTurnsSelector.selectOption("10");
-			record("PASS", "Max Turns settable", "Selected 10 turns");
-		}
-		await checkVisible(
-			"Auto Loop stop button",
-			page.getByTestId("auto-loop-stop-button"),
-			"Stop button visible",
+		await capture(page, "03-auto-relay-preview-mode");
+		record(
+			"SKIPPED",
+			"Legacy automation diagnostics panel",
+			"Legacy automation controls were removed from the human-facing Commander UI.",
 		);
-		await checkVisible(
-			"Auto Loop phase",
-			page.getByTestId("auto-loop-phase"),
-			"Phase visible",
-		);
-
-		const diagButton = page.getByTestId("commander-diag-button");
-		if (
-			await checkVisible(
-				"Diagnostics / Diag button",
-				diagButton,
-				"Diag button visible in Auto Loop mode",
-			)
-		) {
-			await diagButton.click();
-			await page.waitForTimeout(500);
-			await capture(page, "04-diagnostics-open");
-			const diagnosticsPanel = page.getByTestId("commander-diagnostics-panel");
-			if (
-				await checkVisible(
-					"Diagnostics panel",
-					diagnosticsPanel,
-					"Diagnostics panel opened",
-				)
-			) {
-				diagnosticsText = (await diagnosticsPanel.textContent()) ?? "";
-				const requiredDiagnostics = [
-					["Diagnostics phase field", /Phase:/],
-					["Diagnostics watcher fields", /Browser watcher:|Worker watcher:/],
-					["Diagnostics stop reason field", /Stop reason:/],
-					["Diagnostics timeout field", /Timeout:/],
-				];
-				for (const [name, pattern] of requiredDiagnostics) {
-					record(
-						pattern.test(diagnosticsText) ? "PASS" : "UNKNOWN",
-						name,
-						pattern.test(diagnosticsText)
-							? "field visible"
-							: "field not found in diagnostics text",
-					);
-				}
-			}
-		}
 	}
 
 	record(
@@ -377,8 +333,8 @@ try {
 	);
 	record(
 		"SKIPPED",
-		"Auto Loop 1-turn execution",
-		"Requires Browser AI fixture and Worker fixture or a manually prepared external session.",
+		"Autonomous relay execution",
+		"Autonomous relay is no longer a human-facing DoyDeck path.",
 	);
 	record(
 		"SKIPPED",

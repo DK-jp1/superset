@@ -15,8 +15,9 @@ instance id.
 
 Commander currently gets its terminal target from `useActiveTerminal()`. That
 hook returns the focused terminal pane in the active tab, or the first terminal
-pane in that tab. This is useful for manual workflows, but it is not enough for
-tab-scoped Auto Loop because focus and active terminal can drift.
+pane in that tab. This is useful for manual workflows. Historical 旧自律実行
+notes below describe why explicit Worker binding was added; 旧自律実行 is no
+longer a human-facing primary path.
 
 ## Worker Binding Store
 
@@ -63,9 +64,9 @@ Commander Actions includes a small Worker Binding section:
 This keeps the primary controls unchanged while making binding explicit when
 Doy needs it.
 
-## Auto Loop Connection
+## 旧自律実行 Connection
 
-Auto Loop now snapshots worker context at arm time:
+旧自律実行 now snapshots worker context at arm time:
 
 - active tab id
 - Browser AI slot key
@@ -73,12 +74,12 @@ Auto Loop now snapshots worker context at arm time:
 - terminal id
 - worker binding status
 
-When a bound worker exists, Auto Loop sends Worker instructions to the bound
+When a bound worker exists, 旧自律実行 sends Worker instructions to the bound
 `workerPaneId`. If no binding exists, Phase 1 still allows the existing
 active-terminal fallback, but Diagnostics marks that fallback explicitly. If the
-binding is stale, Auto Loop stops rather than sending to an uncertain terminal.
+binding is stale, 旧自律実行 stops rather than sending to an uncertain terminal.
 
-The next phase should make explicit binding required for Auto Loop once Real
+The next phase should make explicit binding required for 旧自律実行 once Real
 Agent QA and manual workflows confirm the transition is safe.
 
 ## Stale Binding Detection
@@ -94,7 +95,7 @@ of debugging a silent send failure.
 
 ## Diagnostics
 
-Auto Loop Diagnostics now shows:
+旧自律実行 Diagnostics now shows:
 
 - current tab
 - active terminal pane
@@ -126,8 +127,8 @@ clear as `active-terminal` fallback rather than implying a tab-bound Worker.
 
 Recommended Phase 2:
 
-- require explicit worker binding for Auto Loop start,
-- add a small `Bind active terminal` recovery action when Auto Loop is blocked,
+- require explicit worker binding for 旧自律実行 start,
+- add a small `Bind active terminal` recovery action when 旧自律実行 is blocked,
 - promote Worker readiness into app-level diagnostics,
 - keep worker launch commands behind Doy approval,
 - pair `browserSlotKeyAtArm` with `workerPaneIdAtArm` for tab-scoped routing.
@@ -137,20 +138,23 @@ cleanup are stable under Real Agent QA.
 
 ## S5.14 Strict Worker Binding
 
-S5.14 makes explicit Worker binding an Auto Loop safety condition. The goal is to stop Auto Loop from silently sending a Browser AI instruction to whichever Terminal happens to be active when multiple tabs or Terminals are open.
+S5.14 makes explicit Worker binding an 旧自律実行 safety condition. The goal is to stop 旧自律実行 from silently sending a Browser AI instruction to whichever Terminal happens to be active when multiple tabs or Terminals are open.
 
 ### Policy
 
-Auto Loop now carries a Worker binding policy:
+旧自律実行 now carries a Worker binding policy:
 
-- `strict`: Auto Loop requires a bound Worker for the current tab.
-- `fallback`: Auto Loop may use the active terminal fallback, but Diagnostics and QA reports must say fallback was used.
+- `strict`: 旧自律実行 requires a bound Worker for the current tab.
+- `fallback`: 旧自律実行 may use the active terminal fallback, but Diagnostics and QA reports must say fallback was used.
 
-The UI default for Auto Loop Preview is `strict`. Manual mode and Auto Relay Preview are unchanged. The escape hatch is an Actions-menu checkbox, `Require bound Worker for Auto Loop`, so a developer can temporarily allow fallback without changing the send path globally.
+The former 旧自律実行 Preview UI and its `Require bound Worker for 旧自律実行`
+checkbox have been removed from the human-facing Commander surface. Manual mode
+and Auto Relay Preview remain the intended paths; Worker binding is still used to
+avoid accidental sends to the wrong terminal.
 
 ### Start Conditions
 
-When Auto Loop is armed in strict mode:
+Historical 旧自律実行 strict-mode behavior:
 
 - `bound`: snapshot `workerPaneIdAtArm` and `terminalIdAtArm`, then continue.
 - `active-terminal` or `unbound`: do not start; stop reason is `worker binding required`.
@@ -160,9 +164,12 @@ No Browser AI or Terminal send is attempted when the strict start condition fail
 
 ### Send Path
 
-Auto Loop still sends to the arm-time Worker target, not to the current focused terminal. If a bound Worker exists, that pane id is captured as `workerPaneIdAtArm` and used for the loop. If strict mode is on and no arm-time bound Worker exists, the loop is stopped before any terminal write.
+Manual Worker sends should use the bound Worker target, not an incidental focused
+terminal. Historical 旧自律実行 code captured `workerPaneIdAtArm` for the same
+reason.
 
-Fallback mode is retained only as a transitional compatibility path. In fallback mode, Auto Loop can use the active terminal target, and Diagnostics show `Worker policy: fallback` plus `Fallback used: yes` when no explicit binding is present.
+Fallback mode should not be used as a primary path. If compatibility code reports
+fallback, treat it as a diagnostic warning and bind the intended Worker pane.
 
 ### Diagnostics
 
@@ -178,8 +185,14 @@ This keeps the safety policy visible without adding another primary button.
 
 ### Real Agent QA
 
-Real Agent QA reports the binding policy, whether a bound Worker is required, whether fallback was used, and the Worker pane captured at arm time. When real sends are allowed and the Worker has been confirmed ready, the runner binds the active terminal to the current tab before switching into Auto Loop Preview. It does not spawn a Worker or approve any Worker permission flow.
+Real Agent QA reports the binding policy, whether fallback was used, and the
+bound Worker pane. When real sends are allowed and the Worker has been confirmed
+ready, the runner binds the active terminal to the current tab before manual
+Worker send checks. It does not spawn a Worker or approve any Worker permission
+flow.
 
 ### Next Phase
 
-A later phase can make strict binding the only allowed Auto Loop mode and remove fallback once per-tab Worker binding is routine. The same context can also feed a future 1-tab-1-Worker model where each tab owns a Browser AI slot, Worker pane, and Auto Loop run state.
+A later phase can remove the remaining historical 旧自律実行 naming once per-tab
+Worker binding is routine. The same context can also feed a future 1-tab-1-Worker
+model where each tab owns a Browser AI slot and Worker pane.

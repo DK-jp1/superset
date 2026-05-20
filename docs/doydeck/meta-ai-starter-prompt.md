@@ -44,7 +44,8 @@ Meta AIの役割は[`meta-ai-operating-model-v2.md`](./meta-ai-operating-model-v
 - DoyDeck本体開発は外側環境 / 通常Superset / 作業側Codex・CCで進める。
 - DoyDeck本体修正をDoyDeck内Workerへ投げない。safe-dev内Workerは実運用pilotや
   別対象タスクの検証に使う。
-- Auto Loopは勝手に開始しない。
+- 旧自律実行は人間向けの主導線から外す。Manual / Auto Relay Preview /
+  Browser AI添付レビュー / Worker手動送信を優先する。
 - Meta AIは準備係、監視係、管理係、セカンドレビュー役。
 - Meta AIはBrowser AI <-> Worker loopを毎回手動再現する中継係ではない。
 - Meta AIはタブの外側を見る。Browser AIはタブの内側で壁打ち、要件定義、

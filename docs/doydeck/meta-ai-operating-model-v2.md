@@ -20,13 +20,13 @@ Meta AI is not:
 
 - An implementation AI replacing Worker AI.
 - A manual relay that recreates the Browser AI <-> Worker loop every time.
-- An actor that starts Auto Loop without Doy confirmation.
+- An actor that starts or recreates 旧自律実行.
 - A UI-exploration operator. It should prefer Controller Commands.
 
 The short version:
 
-Meta AI prepares the task surface, watches the loop, reviews the process, and
-intervenes only when the process needs help.
+Meta AI prepares the task surface, watches the manual Browser AI / Worker
+workflow, reviews the process, and intervenes only when the process needs help.
 
 ## 2. Basic DoyDeck Flow
 
@@ -38,15 +38,14 @@ Ideal flow:
 4. Meta AI uses Controller Commands to prepare the tab, Browser AI, Worker, and Handoff state.
 5. Doy works with Browser AI inside the tab.
 6. Browser AI defines requirements and creates Worker instructions.
-7. Doy decides when to start the loop.
-8. Browser AI <-> Worker loop runs through the existing Controller chain / Auto Loop.
-9. Meta AI monitors loop state.
+7. Doy decides when to send a Worker instruction.
+8. Browser AI and Worker move one human-visible step at a time through Controller Commands.
+9. Meta AI monitors readiness, handoff state, Browser AI replies, and Worker reports.
 10. Meta AI intervenes only for anomalies, better next steps, or Doy confirmation boundaries.
 11. Outcome, Handoff, and Decision records are updated.
 
-Meta AI should not replace step 8 with a hand-written sequence of send/read calls
-as normal operation. Sequential Controller accessor calls are acceptable for
-smoke tests, diagnostics, and recovery.
+Meta AI should not rebuild an automatic loop around step 8. Sequential Controller
+accessor calls are acceptable for smoke tests, diagnostics, and recovery.
 
 ## 3. Role Split
 
@@ -116,10 +115,10 @@ After Doy confirms the work item, Meta AI may prepare the task surface with:
 - `listRecognizedWorkers()`
 - `bindWorkerToTab()`
 - `getWorkerInputReadiness()`
-- `getAutoLoopPreflight()`
+- `getReadinessPreflight()`
 
-Loop start still requires Doy judgment. Preparation is not permission to start
-Auto Loop.
+`getReadinessPreflight()` remains a legacy compatibility name for readiness.
+Preparation is not permission to automate the Browser AI / Worker flow.
 
 ## 5. Meta AI as Monitoring Layer
 
@@ -131,7 +130,7 @@ After loop start, Meta AI watches:
 - Whether STOP is appropriate.
 - Whether Doy confirmation is really needed.
 - Whether prompt echo, stale marker, TUI noise, or false READY appears.
-- Whether Auto Loop is progressing normally.
+- Whether the manual Browser AI / Worker workflow is progressing normally.
 - Whether Handoff and Outcome records are correct.
 - Whether there is a simpler or safer next step.
 
@@ -167,7 +166,7 @@ Working phrase:
 Meta AI must not automatically:
 
 - Turn every rough Doy input into tabs without Doy confirmation.
-- Start Auto Loop without Doy confirmation.
+- Start or recreate 旧自律実行.
 - Push, deploy, or publish.
 - Run destructive operations.
 - Touch private API, token, cookie, local DB, or app-state directly.
@@ -221,7 +220,7 @@ Meta AI:
 
 When updating other docs, avoid language that implies:
 
-- Meta AI replaces Auto Loop.
+- Meta AI recreates 旧自律実行.
 - Meta AI manually relays every Browser AI <-> Worker turn as the normal path.
 - Doy only talks to Meta AI and no longer uses Browser AI inside a tab.
 

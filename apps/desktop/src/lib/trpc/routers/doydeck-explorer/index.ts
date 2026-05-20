@@ -586,7 +586,7 @@ async function prepareBrowserAiAttachmentFile(input: {
 	};
 }
 
-async function collectLoopReviewScreenshotPaths(input: {
+async function collectReviewScreenshotPaths(input: {
 	workspaceId?: string;
 	maxFiles: number;
 }) {
@@ -630,7 +630,7 @@ async function collectLoopReviewScreenshotPaths(input: {
 		.map((candidate) => candidate.path);
 }
 
-async function summarizeLoopReviewArtifactFile(input: {
+async function summarizeReviewArtifactFile(input: {
 	workspaceId?: string;
 	filePath: string;
 	kind: "selected-file" | "review-screenshot";
@@ -922,7 +922,7 @@ export const createDoyDeckExplorerRouter = () => {
 				};
 			}),
 
-		collectLoopReviewArtifactFiles: publicProcedure
+		collectReviewArtifactFiles: publicProcedure
 			.input(
 				z.object({
 					workspaceId: z.string().optional(),
@@ -935,7 +935,7 @@ export const createDoyDeckExplorerRouter = () => {
 				const maxFiles = input.maxFiles ?? 10;
 				const explicitPaths = input.paths ?? [];
 				const reviewScreenshotPaths = input.includeReviewScreenshots
-					? await collectLoopReviewScreenshotPaths({
+					? await collectReviewScreenshotPaths({
 							workspaceId: input.workspaceId,
 							maxFiles,
 						})
@@ -962,7 +962,7 @@ export const createDoyDeckExplorerRouter = () => {
 				const artifacts = [];
 				for (const candidate of uniqueCandidates.slice(0, maxFiles)) {
 					artifacts.push(
-						await summarizeLoopReviewArtifactFile({
+						await summarizeReviewArtifactFile({
 							workspaceId: input.workspaceId,
 							filePath: candidate.filePath,
 							kind: candidate.kind,

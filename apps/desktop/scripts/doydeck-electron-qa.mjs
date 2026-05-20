@@ -147,10 +147,10 @@ function writeReport({ launchMode, failedBeforeLaunch = false } = {}) {
 	}
 	body.push("", "## 手動確認が必要な項目", "");
 	body.push("- Browser AI webview内の外部サービス操作はMVP対象外です。");
-	body.push("- Terminal Workerへの実送信、Auto Loop実行は行っていません。");
+	body.push("- Terminal Workerへの実送信、自動往復実行は行っていません。");
 	body.push("- 初期workspace状態に依存するUIはUNKNOWNになる場合があります。");
 	body.push("", "## 次に自動化できる項目", "");
-	body.push("- Browser AI providerをmock/fixture化してAuto Loopを内部完結で検証する。");
+	body.push("- Browser AI providerをmock/fixture化してManual / Auto Relay Previewを内部完結で検証する。");
 	body.push("- Terminal paneをQA専用workspaceで起動し、危険操作なしのread-only smoke testを行う。");
 	body.push("- Commander/Explorer以外の主要paneにもdata-testidを追加する。");
 	if (failedBeforeLaunch) {
@@ -283,97 +283,29 @@ try {
 	const autoModeSelector = page.getByTestId("commander-auto-mode-selector");
 	if (
 		await checkVisible(
-			"Auto Loop controls",
+			"Relay controls",
 			autoModeSelector,
 			"Auto mode selector visible",
 		)
 	) {
-		await autoModeSelector.selectOption("loop");
+		const options = await autoModeSelector
+			.locator("option")
+			.evaluateAll((nodes) => nodes.map((node) => node.value));
+		record(
+			options.length === 2 && options.includes("off") && options.includes("preview")
+				? "PASS"
+				: "FAIL",
+			"Manual relay modes",
+			`mode selector options: ${options.join(", ")}`,
+		);
+		await autoModeSelector.selectOption("preview");
 		await page.waitForTimeout(500);
-		await capture(page, "03-auto-loop-mode");
-		const diagButton = page.getByTestId("commander-diag-button");
-		if (
-			await checkVisible(
-				"Diagnostics / Diag button",
-				diagButton,
-				"Diag button visible in Auto Loop mode",
-			)
-		) {
-			await diagButton.click();
-			await page.waitForTimeout(500);
-			await capture(page, "04-diagnostics-open");
-			await checkVisible(
-				"Diagnostics panel",
-				page.getByTestId("commander-diagnostics-panel"),
-				"Diagnostics panel opened",
-			);
-			const slotRegistryStatus = await page
-				.getByTestId("auto-loop-browser-slot-registry-status")
-				.textContent({ timeout: 1000 })
-				.catch(() => "");
-			record(
-				slotRegistryStatus ? "PASS" : "UNKNOWN",
-				"Browser slot registry status",
-				slotRegistryStatus
-					? slotRegistryStatus.trim()
-					: "Slot registry status not found in diagnostics",
-			);
-			const slotWebContentsId = await page
-				.getByTestId("auto-loop-browser-slot-registry-webcontents-id")
-				.textContent({ timeout: 1000 })
-				.catch(() => "");
-			record(
-				slotWebContentsId ? "PASS" : "UNKNOWN",
-				"Browser slot webContents id",
-				slotWebContentsId
-					? slotWebContentsId.trim()
-					: "Slot webContents id not found in diagnostics",
-			);
-			const runtimeOwner = await page
-				.getByTestId("auto-loop-browser-runtime-owner")
-				.textContent({ timeout: 1000 })
-				.catch(() => "");
-			record(
-				runtimeOwner ? "PASS" : "UNKNOWN",
-				"Commander Browser runtime owner",
-				runtimeOwner
-					? runtimeOwner.trim()
-					: "Commander runtime owner not found in diagnostics",
-			);
-			const commanderRuntime = await page
-				.getByTestId("auto-loop-commander-runtime-status")
-				.textContent({ timeout: 1000 })
-				.catch(() => "");
-			record(
-				commanderRuntime ? "PASS" : "UNKNOWN",
-				"Commander Browser runtime status",
-				commanderRuntime
-					? commanderRuntime.trim()
-					: "Commander runtime status not found in diagnostics",
-			);
-			const commanderWebContentsId = await page
-				.getByTestId("auto-loop-commander-runtime-webcontents-id")
-				.textContent({ timeout: 1000 })
-				.catch(() => "");
-			record(
-				commanderWebContentsId ? "PASS" : "UNKNOWN",
-				"Commander Browser webContents id",
-				commanderWebContentsId
-					? commanderWebContentsId.trim()
-					: "Commander webContents id not found in diagnostics",
-			);
-			const commanderSlotCount = await page
-				.getByTestId("auto-loop-commander-runtime-slot-count")
-				.textContent({ timeout: 1000 })
-				.catch(() => "");
-			record(
-				commanderSlotCount ? "PASS" : "UNKNOWN",
-				"Commander Browser slot count",
-				commanderSlotCount
-					? commanderSlotCount.trim()
-					: "Commander slot count not found in diagnostics",
-			);
-		}
+		await capture(page, "03-auto-relay-preview-mode");
+		record(
+			"SKIPPED",
+			"Legacy automation diagnostics panel",
+			"Legacy automation controls were removed from the human-facing Commander UI.",
+		);
 	}
 
 	writeReport();

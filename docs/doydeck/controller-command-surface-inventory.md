@@ -70,7 +70,7 @@ Principle:
   - Decision Record短参照。
 - Diagnostics
   - Browser AI preflight。
-  - Auto Loop preflight。
+  - Worker / Browser readiness preflight（`getReadinessPreflight` command）。
   - Supervisor readiness。
   - worker UI/input readiness。
   - terminal output snapshot / visual sanity check。
@@ -103,12 +103,12 @@ Implemented:
 | Browser AI | `prepareBrowserAiReady(input?)` | implemented | Browser-AI-only provider preparation. Can navigate to ChatGPT / Claude / Gemini when explicitly requested; does not require worker binding. `preferFreshThread` warns about possible context carryover; `forceNewThread` blocks for Doy confirmation. |
 | Browser AI | `getBrowserAiPreflight()` | implemented | Browser-AI-only readiness. Does not require worker binding. |
 | Browser AI | `getBrowserAiSendReadiness()` | implemented | Alias for `getBrowserAiPreflight`. |
-| Diagnostics | `getAutoLoopPreflight()` | implemented | Full Auto Loop / worker readiness preflight. |
-| Diagnostics | `runAutoLoopPreflight()` | implemented | Alias for `getAutoLoopPreflight`. |
+| Diagnostics | `getReadinessPreflight()` | implemented | Legacy compatibility name for Worker / Browser readiness preflight. 旧自律実行 UI is no longer a primary path. |
+| Diagnostics | `runReadinessPreflight()` | implemented | Alias for `getReadinessPreflight`. |
 | Diagnostics | `getSupervisorPilotReadiness()` | implemented | Supervisor pilot readiness snapshot. |
 | Diagnostics | `prepareSupervisorPilotReadiness(input?)` | implemented | Optional Browser AI navigation and existing worker bind. No new worker launch. |
 | Diagnostics | `getControllerCommandInventory(input?)` | implemented | Read-only Controller command surface inventory for Meta AI / Codex / Browser AI self-discovery. |
-| Diagnostics | `getLiveReadinessSummary(input?)` | implemented | Read-only active-tab readiness summary for Browser AI, Worker binding/input, task-run status, Auto Loop, Artifact Review command surface, safety guard sample, and payload budget. Aliases: `runLiveReadinessSmoke`, `getCurrentTabReadiness`. |
+| Diagnostics | `getLiveReadinessSummary(input?)` | implemented | Read-only active-tab readiness summary for Browser AI, Worker binding/input, task-run status, Artifact Review command surface, safety guard sample, and payload budget. Aliases: `runLiveReadinessSmoke`, `getCurrentTabReadiness`. |
 | Worker | `listRecognizedWorkers(input?)` | implemented | Read-only Codex / Claude worker candidate list with ignored shell/unknown candidates separated. |
 | Worker | `bindWorkerToTab(input?)` | implemented | Binds an existing recognized Codex / Claude worker pane to the active tab. |
 | Worker | `getWorkerInputReadiness(input?)` | implemented | Read-only worker UI/input readiness for bound or paneId-selected Codex / Claude workers. |
@@ -123,7 +123,7 @@ Implemented:
 | Browser AI | `attachSelectedExplorerFileToBrowserAI(input?)` | implemented | Alias used by the Explorer UI action for the selected file. |
 | Browser AI | `getBrowserAiAttachedFiles(input?)` | implemented | Read-only visible attachment/chip inventory for the active Browser AI slot. |
 | Browser AI | `collectLoopReviewArtifacts(input?)` | implemented | Collects selected files, review screenshots, and Worker DONE_TAG report metadata for loop review. |
-| Browser AI | `sendLoopArtifactsToBrowserAI(input?)` | implemented | Attaches collected loop artifacts to Browser AI and can send a bounded-loop artifact review prompt. |
+| Browser AI | `sendReviewArtifactsToBrowserAI(input?)` | implemented | Attaches collected loop artifacts to Browser AI and can send a manual-review artifact review prompt. |
 | Browser AI | `extractArtifactsFromWorkerReport(input?)` | implemented | Extracts supported artifact path candidates from a Worker DONE_TAG report without sending. |
 | Browser AI | `collectWorkerReportedArtifacts(input?)` | implemented | Resolves Worker-reported artifact paths, checks existence/attachability, and separates skipped candidates. |
 | Browser AI | `sendWorkerReportedArtifactsToBrowserAI(input?)` | implemented | Attaches Worker-reported artifact files to Browser AI and sends an artifact review prompt. |
@@ -198,7 +198,7 @@ should be called with an expected-tab guard in normal operation:
 | Bind active terminal | partially implemented | P1 | UI button exists. Controller command currently binds by explicit paneId to avoid accidental shell binding. |
 | Bind worker by paneId | implemented | done | `bindWorkerToTab({ paneId })` binds only recognized Codex / Claude panes and blocks shell/unknown. |
 | Activate worker pane | implemented | done | `activateTerminalPaneForTab()` / aliases. |
-| Worker readiness | implemented | done | `getSupervisorPilotReadiness()` and `getAutoLoopPreflight()`. |
+| Worker readiness | implemented | done | `getSupervisorPilotReadiness()` and `getReadinessPreflight()`. |
 | Send instruction to bound worker | implemented | done | `sendInstructionToBoundWorker()`. |
 | Read worker response | implemented | done | `readBoundWorkerLatestResponse()`. |
 | Send worker response to Browser AI | implemented | done | `sendBoundWorkerResponseToBrowserAI()`. |
@@ -221,8 +221,8 @@ should be called with an expected-tab guard in normal operation:
 
 | Operation | Coverage | Priority | Notes |
 | --- | --- | --- | --- |
-| Auto Loop preflight | implemented | done | `getAutoLoopPreflight()`. |
-| Live readiness summary | implemented | done | `getLiveReadinessSummary()` aggregates tab, Browser AI, Worker, task-run, Auto Loop, Artifact Review, safety, and payload budget checks without sending or starting Loop. |
+| Worker / Browser readiness preflight | implemented | done | `getReadinessPreflight()` remains as a legacy compatibility name. |
+| Live readiness summary | implemented | done | `getLiveReadinessSummary()` aggregates tab, Browser AI, Worker, task-run, Artifact Review, safety, and payload budget checks without sending. |
 | Supervisor readiness | implemented | done | `getSupervisorPilotReadiness()`. |
 | Browser AI preflight | implemented | done | `getBrowserAiPreflight()`. |
 | Worker pane activation diagnostics | implemented | done | `activateTerminalPaneForTab()` result includes identity/focus details. |
@@ -240,8 +240,7 @@ P1 missing or partial:
 
 - Browser AI attachment follow-ups
   - Multiple-file UX polish, PDF attachment validation, image review flow,
-    fallback text excerpt mode, attached-file list retrieval, and Auto Loop
-    reuse of already attached files.
+    fallback text excerpt mode and attached-file list retrieval.
   - Purpose: keep real attachments as the primary path while making larger
     review packages easier to manage.
 - Decision Record accessor
@@ -336,7 +335,8 @@ Candidate 3: task intake proposal accessors
 
 このController surfaceでは、以下を通常operationとして実装しない。
 
-- Auto Loop開始。
+- 旧自律実行開始。
+  - 旧自律実行 is no longer a human-facing primary path; do not add new start/resume commands.
 - destructive操作。
 - cookie / token / private API操作。
 - `local.db` / `app-state.json`直接操作。

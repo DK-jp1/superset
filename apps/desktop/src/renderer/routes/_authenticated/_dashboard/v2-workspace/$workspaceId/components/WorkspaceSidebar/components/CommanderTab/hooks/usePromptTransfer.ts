@@ -1,26 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "@superset/ui/sonner";
 import { workspaceTrpc } from "@superset/workspace-client";
-import {
-	COMMANDER_BROWSER_AI_PANE_ID,
-	COMMANDER_BROWSER_SLOT_MODE,
-	createBrowserSlotIdentity,
-	createBrowserSlotKey,
-	type BrowserSlotMode,
-} from "renderer/lib/doydeck-browser-slot-key";
 import { electronTrpcClient } from "renderer/lib/trpc-client";
 import type {
 	DoyDeckWorkerBindingSnapshot,
-	DoyDeckWorkerBindingStatus,
 	DoyDeckWorkerType,
 } from "renderer/stores/doydeck-worker-bindings";
 import { evaluateDoyDeckWorkerIdentity } from "renderer/stores/doydeck-worker-bindings";
 import { useTabsStore } from "renderer/stores/tabs/store";
-import { useWorkspaceEvent } from "renderer/hooks/host-service/useWorkspaceEvent";
-import {
-	browserRuntimeRegistry,
-	type BrowserSlotRegistryStatus,
-} from "renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/hooks/usePaneRegistry/components/BrowserPane/browserRuntimeRegistry";
 import {
 	getOutputLogOffset,
 	getOutputLogSince,
@@ -43,22 +30,6 @@ import {
 	buildAssistantSnapshotScript,
 	buildExtractionScript,
 } from "../browser-adapters";
-import {
-	classifyAutoLoopArtifactCollection,
-	evaluateAutoLoopBudgetedCompletion,
-	getAutoLoopArtifactReviewMissingNextActionReason,
-	getAutoLoopArtifactReviewPendingActionReason,
-	getAutoLoopArtifactReviewReplyAdvisoryReason,
-	getAutoLoopArtifactReviewReplyStopReason,
-	getAutoLoopArtifactSendAdvisoryReason,
-	getAutoLoopArtifactSendStopReason,
-	hasAutoLoopArtifactReviewNextWorkerInstruction,
-	summarizeAutoLoopArtifactSendResult,
-	type AutoLoopBudgetedCompletionDecision,
-	type AutoLoopWorkerArtifactCollectionLike,
-	type AutoLoopWorkerArtifactSendLike,
-} from "../commander-auto-loop-artifacts";
-import { findAutoLoopDangerousCommandFinding } from "../commander-auto-loop-safety";
 import { sendWorkerResponseToBrowserAI } from "../commander-bridge";
 import type { CommanderBrowserRuntimeSnapshot } from "../commander-browser-runtime";
 import { getTerminalSelection } from "../useActiveTerminal";
@@ -136,100 +107,6 @@ async function fetchCurrentWorkspaceRootPath(
 	return currentWorkspaceRoot.absolutePath.trim() || null;
 }
 
-interface AutoLoopArtifactReviewController {
-	collectWorkerReportedArtifacts?: (
-		input?: Record<string, unknown>,
-	) => Promise<AutoLoopWorkerArtifactCollectionLike>;
-	sendWorkerReportedArtifactsToBrowserAI?: (
-		input?: Record<string, unknown>,
-	) => Promise<AutoLoopWorkerArtifactSendLike>;
-	recordControllerChainOutcome?: (
-		input?: Record<string, unknown>,
-	) => Promise<unknown>;
-}
-
-function getWindowAutoLoopArtifactReviewController():
-	| AutoLoopArtifactReviewController
-	| null {
-	if (typeof window === "undefined") return null;
-	const controller = (window as Window & {
-		__doydeckCommanderController?: AutoLoopArtifactReviewController;
-	}).__doydeckCommanderController;
-	if (!controller) return null;
-	return controller;
-}
-
-function recordAutoLoopArtifactReviewOutcome(input: {
-	expectedTabId: string | null;
-	chainStatus: "PASS" | "STOP" | "BLOCKED" | "FAILED";
-	finalDecision: string;
-	nextAction: string;
-	notes: string;
-}, controller?: AutoLoopArtifactReviewController | null): void {
-	const resolvedController =
-		controller ?? getWindowAutoLoopArtifactReviewController();
-	if (!resolvedController?.recordControllerChainOutcome) return;
-	void resolvedController
-		.recordControllerChainOutcome({
-			expectedTabId: input.expectedTabId,
-			requireActiveTabMatch: Boolean(input.expectedTabId),
-			chainMode: "browser-worker-review",
-			expectBrowserAiReview: true,
-			expectWorkerResponse: true,
-			chainStatus: input.chainStatus,
-			finalDecision: input.finalDecision,
-			nextAction: input.nextAction,
-			notes: input.notes,
-		})
-		.catch((error) => {
-			console.warn(
-				"[Auto Loop] artifact review outcome record failed:",
-				error,
-			);
-		});
-}
-
-function buildBudgetedPolishReviewPrompt(input: {
-	decision: AutoLoopBudgetedCompletionDecision;
-	browserAiReplyText: string;
-}): string {
-	const { decision, browserAiReplyText } = input;
-	const opportunities = decision.improvementOpportunities.length
-		? decision.improvementOpportunities
-				.map((item, index) => `${index + 1}. ${item}`)
-				.join("\n")
-		: "未抽出。成果物、Worker報告、添付artifact、検証結果から安全な小改善候補を探してください。";
-	return [
-		"DoyDeck budgeted Auto Loop policy check:",
-		`- loopGoalMode: ${decision.loopGoalMode}`,
-		`- completionPolicy: ${decision.completionPolicy}`,
-		`- turnBudget: ${decision.turnBudget}`,
-		`- currentTurn: ${decision.currentTurn}`,
-		`- remainingTurnBudget: ${decision.remainingTurnBudget}`,
-		`- minPolishTurns: ${decision.minPolishTurns}`,
-		`- qualityStatus: ${decision.qualityStatus}`,
-		"",
-		"あなたの直前の返答は基本完了/STOPとして読めますが、turn budgetが残っています。",
-		"基本完了だけで即STOPせず、残りturnで安全に品質を上げられるかを再評価してください。",
-		"",
-		"確認する観点:",
-		"- UI成果物: 見た目、余白、状態表示、導線、レスポンシブ、dark mode",
-		"- コード/CLI/バックエンド: 型、境界条件、エラー処理、再利用性、テスト、ログ",
-		"- docs/運用/プロンプト: 矛盾、抜け、再現性、古い表現",
-		"",
-		"改善余地:",
-		opportunities,
-		"",
-		"次の返答形式:",
-		"- 改善余地がありscope内で安全なら、必ず `QUALITY_STATUS: polish-needed` と書き、`Workerへ渡す指示:` から短い追加指示を出してください。",
-		"- 改善余地がほぼなく残りturnを使わない方がよい場合だけ、`QUALITY_STATUS: ready-candidate`、`STOP_REASON:`、`STOP` を明記してください。",
-		"- scope拡大、DB/API/認証/credentials/deploy/destructive操作、大きな仕様/UX判断が必要なら、`QUALITY_STATUS: needs-doy-review` とDoy確認事項を出してください。",
-		"",
-		"直前のBrowser AI返答:",
-		browserAiReplyText,
-	].join("\n");
-}
-
 function buildBrowserPathPrompt(pathInfo: CommanderSelectedPath): string {
 	return `以下のファイル/フォルダを前提に、次の作業方針を整理してください。
 
@@ -286,19 +163,6 @@ const INSTRUCTION_KEYWORDS = [
 ];
 
 const HEADING_KEYWORD_PATTERN = INSTRUCTION_KEYWORDS.join("|");
-const AUTO_LOOP_WORKER_INSTRUCTION_KEYWORDS = [
-	"Worker\\s*Prompt",
-	"Worker[へに]渡す指示",
-	"Worker指示",
-	"Claude\\s*Code[へに]渡す指示",
-	"Claude\\s*Code[へに]投げる指示",
-	"Codex[へに]渡す指示",
-	"Codex[へに]投げる指示",
-];
-const AUTO_LOOP_WORKER_INSTRUCTION_HEADING_PATTERN =
-	AUTO_LOOP_WORKER_INSTRUCTION_KEYWORDS.join("|");
-const AUTO_LOOP_WORKER_INSTRUCTION_HEADING_PREFIX_PATTERN =
-	"(?:>\\s*)?(?:[-*•・]\\s*)?(?:#{1,6}\\s*)?(?:\\*\\*)?";
 const WORKER_INSTRUCTION_META_BOUNDARY_PATTERN =
 	/^(?:#{1,6}\s*)?(?:\*\*)?(?:補足|判断|解説|理由|参考)(?:\*\*)?[：:]?\s*$|^もし必要なら\b|^以上[。.\s]*$/i;
 const MIN_CAPTURE_TEXT_LENGTH = 30;
@@ -313,92 +177,18 @@ const AUTO_RELAY_OUTPUT_STABLE_MS = 2000;
 const AUTO_RELAY_PROMPT_RETURNED_STABLE_MS = 2000;
 const AUTO_RELAY_MAX_DETECTION_WAIT_MS = 10000;
 const AUTO_RELAY_TIMEOUT_MS = 120000;
-const AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS = 180000;
-const AUTO_LOOP_HARD_MAX_WAIT_MS = 600000;
 const TERMINAL_ENTER_INPUT = "\r";
 const TERMINAL_ENTER_DELAY_MS = 150;
 const TERMINAL_BRACKETED_PASTE_START = "\x1b[200~";
 const TERMINAL_BRACKETED_PASTE_END = "\x1b[201~";
 const DEBUG_AUTO_RELAY_WATCHER = false;
-export type AutoRelayMode = "off" | "preview" | "loop";
-export type AutoLoopMaxTurns = 10 | 25 | 50 | 100;
-export type AutoLoopPhase =
-	| "idle"
-	| "waiting-browser-ai"
-	| "sending-worker"
-	| "waiting-worker"
-	| "sending-browser-ai"
-	| "stopped";
-export type AutoLoopWorkerBindingPolicy = "strict" | "fallback";
-export type WorkerResponseConfidence = "high" | "medium" | "low";
-export type AutoLoopDiagnosticEvent = {
-	id: number;
-	at: number;
-	label: string;
-};
-// S5.8 Phase 1 (active-tab-only guard): tab context status surfaced in the
-// Diagnostics panel. Auto Loop snapshots `activeTabIdAtArm` when it arms and
-// aborts with `auto loop aborted by tab switch` if the user moves to another
-// tab while a loop is running. See
-// docs/doydeck/browser-ai-runtime-architecture.md.
-export type TabContextStatus = "same" | "changed" | "unknown";
+export type AutoRelayMode = "off" | "preview";
 
-export type AutoLoopDiagnostics = {
-	browserWatcherActive: boolean;
-	workerWatcherActive: boolean;
-	browserActivityAt: number | null;
-	workerActivityAt: number | null;
-	currentOutputOffset: number | null;
-	markerOffset: number | null;
-	activeTimeoutType: string;
-	noActivityRemainingMs: number | null;
-	hardMaxRemainingMs: number | null;
-	noActivityDeadlineAt: number | null;
-	hardMaxDeadlineAt: number | null;
-	recentEvents: AutoLoopDiagnosticEvent[];
-	activeTabIdAtArm: string | null;
-	currentActiveTabId: string | null;
-	tabContextStatus: TabContextStatus;
-	browserSlotKeyAtArm: string | null;
-	currentBrowserSlotKey: string | null;
-	browserSlotWorkspaceId: string | null;
-	browserSlotPaneId: string | null;
-	browserSlotMode: BrowserSlotMode;
-	browserSlotRegistryStatus: BrowserSlotRegistryStatus;
-	browserSlotRegistryReason: string | null;
-	browserSlotRegistryPaneId: string | null;
-	browserSlotRegistrySlotKey: string | null;
-	browserSlotRegistryResolvedPaneId: string | null;
-	browserSlotRegistryWebContentsId: number | null;
-	browserRuntimeOwner: string;
-	commanderRuntimeStatus: string;
-	commanderRuntimeReason: string | null;
-	commanderRuntimeSlotKey: string | null;
-	commanderRuntimeWebContentsId: number | null;
-	commanderRuntimeProvider: string | null;
-	commanderRuntimeUrl: string | null;
-	commanderRuntimeUsableWidth: number | null;
-	commanderRuntimeVisualStatus: "PASS" | "NEEDS_FIX" | "UNKNOWN";
-	commanderRuntimeBridgeAvailable: boolean;
-	commanderRuntimeSlotCount: number | null;
-	commanderRuntimeMaxSlots: number | null;
-	activeTerminalPaneId: string | null;
-	activeTerminalId: string | null;
-	boundWorkerPaneId: string | null;
-	boundTerminalId: string | null;
-	currentWorkerPaneId: string | null;
-	currentWorkerTerminalId: string | null;
-	workerPaneIdAtArm: string | null;
-	terminalIdAtArm: string | null;
-	workerType: DoyDeckWorkerType;
-	workerBindingStatus: DoyDeckWorkerBindingStatus;
-	workerBindingStatusAtArm: DoyDeckWorkerBindingStatus;
-	workerBindingMismatch: boolean;
-	workerBindingReason: string | null;
-	workerBindingPolicy: AutoLoopWorkerBindingPolicy;
-	requireBoundWorker: boolean;
-	workerBindingFallbackUsed: boolean;
-};
+function isPreviewRelayMode(mode: AutoRelayMode): boolean {
+	return mode === "preview";
+}
+
+export type WorkerResponseConfidence = "high" | "medium" | "low";
 
 type CaptureForTerminalPreviewSource =
 	| "browser-ai"
@@ -439,63 +229,6 @@ const EMPTY_WORKER_RESPONSE_PREVIEW: {
 	text: "",
 	confidence: "low",
 	reasons: [],
-};
-
-const EMPTY_AUTO_LOOP_DIAGNOSTICS: AutoLoopDiagnostics = {
-	browserWatcherActive: false,
-	workerWatcherActive: false,
-	browserActivityAt: null,
-	workerActivityAt: null,
-	currentOutputOffset: null,
-	markerOffset: null,
-	activeTimeoutType: "none",
-	noActivityRemainingMs: null,
-	hardMaxRemainingMs: null,
-	noActivityDeadlineAt: null,
-	hardMaxDeadlineAt: null,
-	recentEvents: [],
-	activeTabIdAtArm: null,
-	currentActiveTabId: null,
-	tabContextStatus: "unknown",
-	browserSlotKeyAtArm: null,
-	currentBrowserSlotKey: null,
-	browserSlotWorkspaceId: null,
-	browserSlotPaneId: null,
-	browserSlotMode: COMMANDER_BROWSER_SLOT_MODE,
-	browserSlotRegistryStatus: "unknown",
-	browserSlotRegistryReason: null,
-	browserSlotRegistryPaneId: null,
-	browserSlotRegistrySlotKey: null,
-	browserSlotRegistryResolvedPaneId: null,
-	browserSlotRegistryWebContentsId: null,
-	browserRuntimeOwner: "unknown",
-	commanderRuntimeStatus: "unknown",
-	commanderRuntimeReason: null,
-	commanderRuntimeSlotKey: null,
-	commanderRuntimeWebContentsId: null,
-	commanderRuntimeProvider: null,
-	commanderRuntimeUrl: null,
-	commanderRuntimeUsableWidth: null,
-	commanderRuntimeVisualStatus: "UNKNOWN",
-	commanderRuntimeBridgeAvailable: false,
-	commanderRuntimeSlotCount: null,
-	commanderRuntimeMaxSlots: null,
-	activeTerminalPaneId: null,
-	activeTerminalId: null,
-	boundWorkerPaneId: null,
-	boundTerminalId: null,
-	currentWorkerPaneId: null,
-	currentWorkerTerminalId: null,
-	workerPaneIdAtArm: null,
-	terminalIdAtArm: null,
-	workerType: "unknown",
-	workerBindingStatus: "unbound",
-	workerBindingStatusAtArm: "unbound",
-	workerBindingMismatch: false,
-	workerBindingReason: null,
-	workerBindingPolicy: "strict",
-	requireBoundWorker: true,
-	workerBindingFallbackUsed: false,
 };
 
 function debugAutoRelayWatcher(...args: unknown[]): void {
@@ -747,44 +480,6 @@ function extractWorkerInstructionFromHeading(text: string): string {
 	return "";
 }
 
-function extractAutoLoopWorkerInstructionBlock(text: string): string {
-	const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-	const headingPattern = new RegExp(
-		`^\\s*${AUTO_LOOP_WORKER_INSTRUCTION_HEADING_PREFIX_PATTERN}(?:${AUTO_LOOP_WORKER_INSTRUCTION_HEADING_PATTERN})(?:[：:]?\\*\\*|\\*\\*[：:]|[：:]|\\*\\*)?\\s*$`,
-		"i",
-	);
-	const inlineHeadingPattern = new RegExp(
-		`^\\s*${AUTO_LOOP_WORKER_INSTRUCTION_HEADING_PREFIX_PATTERN}(?:${AUTO_LOOP_WORKER_INSTRUCTION_HEADING_PATTERN})(?:[：:]?\\*\\*|\\*\\*[：:]|[：:]|\\*\\*)?\\s+(.+)$`,
-		"i",
-	);
-
-	for (let i = 0; i < lines.length; i++) {
-		const line = lines[i];
-		const inlineMatch = inlineHeadingPattern.exec(line);
-		const isHeading = headingPattern.test(line);
-		if (!inlineMatch && !isHeading) continue;
-
-		const bodyLines: string[] = [];
-		if (inlineMatch?.[1]?.trim()) bodyLines.push(inlineMatch[1]);
-
-		for (let j = i + 1; j < lines.length; j++) {
-			const next = lines[j].trim();
-			if (
-				bodyLines.some((bodyLine) => bodyLine.trim().length > 0) &&
-				WORKER_INSTRUCTION_META_BOUNDARY_PATTERN.test(next)
-			) {
-				break;
-			}
-			bodyLines.push(lines[j]);
-		}
-
-		const body = bodyLines.join("\n").trim();
-		if (body) return body;
-	}
-
-	return "";
-}
-
 export async function sendToTerminal(
 	paneId: string,
 	text: string,
@@ -937,43 +632,6 @@ function logWorkerInstructionExtraction(raw: string, extracted: string): void {
 		"[S3.13] extracted worker instruction preview last 300 chars =",
 		previewChars(extracted, "last"),
 	);
-}
-
-type AutoLoopBrowserCaptureDebug = {
-	at: string;
-	source: string;
-	text: string;
-	textLength: number;
-	textPreview: string;
-	extractedText: string;
-	extractedLength: number;
-	extractedPreview: string;
-	extractResult: "success" | "fail";
-	extractFailureReason: string;
-	containsPrimaryWorkerHeading: boolean;
-	containsOtherWorkerHeading: boolean;
-};
-
-function hasPrimaryWorkerInstructionHeading(text: string): boolean {
-	return /Worker\s*[へに]\s*渡す\s*指示\s*[：:]/i.test(text);
-}
-
-function hasOtherWorkerInstructionHeading(text: string): boolean {
-	return /(Worker\s*指示|Codex\s*[へに]\s*渡す\s*指示|Claude\s*Code\s*[へに]\s*渡す\s*指示)\s*[：:]/i.test(
-		text,
-	);
-}
-
-function setAutoLoopBrowserCaptureDebug(
-	payload: AutoLoopBrowserCaptureDebug,
-): void {
-	if (typeof window === "undefined") return;
-	const debugWindow = window as Window & {
-		doydeckQa?: { terminalOutputLogAccessorEnabled?: boolean };
-		__doydeckAutoLoopLastBrowserCapture?: AutoLoopBrowserCaptureDebug;
-	};
-	if (!debugWindow.doydeckQa?.terminalOutputLogAccessorEnabled) return;
-	debugWindow.__doydeckAutoLoopLastBrowserCapture = payload;
 }
 
 function fingerprintText(text: string): string {
@@ -1545,7 +1203,6 @@ interface UsePromptTransferParams {
 	activeTerminal: string | null;
 	workerBinding: DoyDeckWorkerBindingSnapshot;
 	autoRelayMode: AutoRelayMode;
-	requireBoundWorkerForAutoLoop: boolean;
 	getLiveUrl: () => string;
 	currentUrl: string;
 	injectIntoPage: (script: string) => Promise<unknown>;
@@ -1558,9 +1215,6 @@ interface UsePromptTransferParams {
 	onSetView: (view: CommanderView) => void;
 	workerPrompt: string;
 	reviewPrompt: string;
-	getAutoLoopArtifactReviewController?: () =>
-		| AutoLoopArtifactReviewController
-		| null;
 }
 
 export function usePromptTransfer({
@@ -1571,7 +1225,6 @@ export function usePromptTransfer({
 	activeTerminal,
 	workerBinding,
 	autoRelayMode,
-	requireBoundWorkerForAutoLoop,
 	getLiveUrl,
 	currentUrl,
 	injectIntoPage,
@@ -1582,7 +1235,6 @@ export function usePromptTransfer({
 	onSetView,
 	workerPrompt,
 	reviewPrompt,
-	getAutoLoopArtifactReviewController,
 }: UsePromptTransferParams) {
 	const [formSendPreview, setFormSendPreview] = useState<{
 		text: string;
@@ -1625,38 +1277,6 @@ export function usePromptTransfer({
 		latestAppliedBrowserSessionSourceText,
 		setLatestAppliedBrowserSessionSourceText,
 	] = useState("");
-	const [autoLoopMaxTurns, setAutoLoopMaxTurns] =
-		useState<AutoLoopMaxTurns>(10);
-	const [autoLoopTurn, setAutoLoopTurn] = useState(0);
-	const [autoLoopStopReason, setAutoLoopStopReason] = useState<string | null>(
-		null,
-	);
-	const budgetedPolishRequestTurnRef = useRef<number | null>(null);
-	const requestAutoLoopBudgetedPolishReviewRef = useRef<
-		(
-			decision: AutoLoopBudgetedCompletionDecision,
-			browserAiReplyText: string,
-		) => Promise<boolean>
-	>(async () => false);
-
-	const resolveAutoLoopArtifactReviewController = useCallback(():
-		| AutoLoopArtifactReviewController
-		| null => {
-		return (
-			getAutoLoopArtifactReviewController?.() ??
-			getWindowAutoLoopArtifactReviewController()
-		);
-	}, [getAutoLoopArtifactReviewController]);
-	const [autoLoopPhase, setAutoLoopPhaseState] =
-		useState<AutoLoopPhase>("idle");
-	const [autoLoopLastAction, setAutoLoopLastAction] = useState("");
-
-	// S5.8 Phase 1: tab context snapshot. `activeTabIdAtArmRef` freezes the tab
-	// id at the moment the loop arms; `currentActiveTabId` is a reactive read
-	// of the same store key. If they diverge while a loop is running we abort
-	// to keep Auto Loop from sending Worker prompts to a tab the user has
-	// already moved away from.
-	const activeTabIdAtArmRef = useRef<string | null>(null);
 	const currentActiveTabId = useTabsStore(
 		(s) => (workspaceId ? s.activeTabIds[workspaceId] ?? null : null),
 	);
@@ -1668,37 +1288,6 @@ export function usePromptTransfer({
 	const createDirectoryMutation =
 		workspaceTrpc.filesystem.createDirectory.useMutation();
 	const writeFileMutation = workspaceTrpc.filesystem.writeFile.useMutation();
-	const getBrowserSlotForTab = useCallback(
-		(tabId: string | null) => {
-			const identity = createBrowserSlotIdentity({
-				workspaceId,
-				tabId,
-				paneId: COMMANDER_BROWSER_AI_PANE_ID,
-			});
-			return {
-				identity,
-				key: createBrowserSlotKey(identity),
-			};
-		},
-		[workspaceId],
-	);
-	const getBrowserSlotRegistryDiagnostics = useCallback(
-		(expectedBrowserSlotKey: string | null) =>
-			browserRuntimeRegistry.getSlotDiagnostics(
-				COMMANDER_BROWSER_AI_PANE_ID,
-				expectedBrowserSlotKey,
-			),
-		[],
-	);
-	// S5.10 Phase 1: track the tab id we've already logged a `tab context
-	// changed` event for, so we don't append a duplicate every poll while the
-	// user is on the wrong tab.
-	const tabContextSeenChangedRef = useRef<string | null>(null);
-	const [autoLoopLastActivityAt, setAutoLoopLastActivityAt] =
-		useState<number | null>(null);
-	const [autoLoopDiagnostics, setAutoLoopDiagnostics] =
-		useState<AutoLoopDiagnostics>(EMPTY_AUTO_LOOP_DIAGNOSTICS);
-	const autoLoopPhaseRef = useRef<AutoLoopPhase>("idle");
 	const autoCaptureRef = useRef<{
 		intervalId: ReturnType<typeof setInterval>;
 		timeoutId: ReturnType<typeof setTimeout>;
@@ -1715,46 +1304,11 @@ export function usePromptTransfer({
 		lastObservedFingerprint: string;
 	} | null>(null);
 	const autoRelayRef = useRef<AutoRelayTracker | null>(null);
-	const autoLoopTerminalFingerprintRef = useRef("");
-	const autoLoopWorkerFingerprintRef = useRef("");
-	const autoLoopWorkerPaneIdAtArmRef = useRef<string | null>(null);
-	const autoLoopTerminalIdAtArmRef = useRef<string | null>(null);
-	const autoLoopWorkerBindingStatusAtArmRef =
-		useRef<DoyDeckWorkerBindingStatus>("unbound");
-	const autoLoopDiagnosticEventIdRef = useRef(0);
-	const autoLoopArtifactReviewExpectedRef = useRef(false);
-	const previousAutoRelayModeRef = useRef<AutoRelayMode>(autoRelayMode);
 	const workerBindingRef = useRef(workerBinding);
-	const requireBoundWorkerForAutoLoopRef = useRef(
-		requireBoundWorkerForAutoLoop,
-	);
 
 	useEffect(() => {
 		workerBindingRef.current = workerBinding;
 	}, [workerBinding]);
-	useEffect(() => {
-		requireBoundWorkerForAutoLoopRef.current =
-			requireBoundWorkerForAutoLoop;
-	}, [requireBoundWorkerForAutoLoop]);
-
-	const appendAutoLoopEvent = useCallback((label: string) => {
-		const at = Date.now();
-		const id = (autoLoopDiagnosticEventIdRef.current += 1);
-		setAutoLoopDiagnostics((prev) => ({
-			...prev,
-			recentEvents: [{ id, at, label }, ...prev.recentEvents].slice(0, 10),
-		}));
-	}, []);
-
-	const setAutoLoopPhase = useCallback((nextPhase: AutoLoopPhase) => {
-		const prevPhase = autoLoopPhaseRef.current;
-		if (prevPhase !== nextPhase) {
-			console.log("[S5.2] phase changed:", prevPhase, "->", nextPhase);
-			appendAutoLoopEvent(`phase changed: ${prevPhase} -> ${nextPhase}`);
-		}
-		autoLoopPhaseRef.current = nextPhase;
-		setAutoLoopPhaseState(nextPhase);
-	}, [appendAutoLoopEvent]);
 
 	const cancelAutoCapture = useCallback((reason?: string) => {
 		const ref = autoCaptureRef.current;
@@ -1764,28 +1318,8 @@ export function usePromptTransfer({
 			clearTimeout(ref.timeoutId);
 			autoCaptureRef.current = null;
 		}
-		if (ref) {
-			appendAutoLoopEvent(`browser watcher cleared: ${reason ?? "unknown"}`);
-		}
-		setAutoLoopDiagnostics((prev) => {
-			const workerStillActive =
-				prev.workerWatcherActive && autoLoopPhaseRef.current === "waiting-worker";
-			return {
-				...prev,
-				browserWatcherActive: false,
-				activeTimeoutType: workerStillActive ? "worker no activity" : "none",
-				noActivityRemainingMs: workerStillActive
-					? prev.noActivityRemainingMs
-					: null,
-				hardMaxRemainingMs: workerStillActive ? prev.hardMaxRemainingMs : null,
-				noActivityDeadlineAt: workerStillActive
-					? prev.noActivityDeadlineAt
-					: null,
-				hardMaxDeadlineAt: workerStillActive ? prev.hardMaxDeadlineAt : null,
-			};
-		});
 		setAutoCaptureStatus("idle");
-	}, [appendAutoLoopEvent]);
+	}, []);
 
 	const cancelAutoRelay = useCallback((reason?: string) => {
 		const ref = autoRelayRef.current;
@@ -1798,428 +1332,8 @@ export function usePromptTransfer({
 			console.log("[S3.13-stream] armed cleared reason =", reason ?? "unknown");
 			autoRelayRef.current = null;
 		}
-		if (ref) {
-			appendAutoLoopEvent(`worker watcher cleared: ${reason ?? "unknown"}`);
-		}
-		setAutoLoopDiagnostics((prev) => {
-			const browserStillActive =
-				prev.browserWatcherActive &&
-				autoLoopPhaseRef.current === "waiting-browser-ai";
-			return {
-				...prev,
-				workerWatcherActive: false,
-				activeTimeoutType: browserStillActive ? "browser no activity" : "none",
-				noActivityRemainingMs: browserStillActive
-					? prev.noActivityRemainingMs
-					: null,
-				hardMaxRemainingMs: browserStillActive ? prev.hardMaxRemainingMs : null,
-				noActivityDeadlineAt: browserStillActive
-					? prev.noActivityDeadlineAt
-					: null,
-				hardMaxDeadlineAt: browserStillActive ? prev.hardMaxDeadlineAt : null,
-				currentOutputOffset: prev.currentOutputOffset,
-				markerOffset: ref ? null : prev.markerOffset,
-			};
-		});
 		setAutoRelayStatus("idle");
-	}, [appendAutoLoopEvent]);
-
-	const stopAutoLoop = useCallback(
-		(reason: string) => {
-			if (autoRelayMode !== "loop") return;
-			console.log("[S5.2] stop reason =", reason);
-			appendAutoLoopEvent(`stopped: ${reason}`);
-			setAutoLoopStopReason(reason);
-			setAutoLoopPhase("stopped");
-			setAutoLoopLastAction(reason);
-			autoLoopArtifactReviewExpectedRef.current = false;
-			cancelAutoCapture(`auto-loop-stopped:${reason}`);
-			cancelAutoRelay(`auto-loop-stopped:${reason}`);
-			console.warn("[S5.2] Auto Loop stopped:", reason);
-			toast.warning(`Auto Loop stopped: ${reason}`);
-		},
-		[
-			appendAutoLoopEvent,
-			autoRelayMode,
-			cancelAutoCapture,
-			cancelAutoRelay,
-			setAutoLoopPhase,
-		],
-	);
-
-	const recordAutoLoopAdvisory = useCallback(
-		(
-			reason: string,
-			options?: { lastAction?: string; toastUser?: boolean },
-		) => {
-			if (autoRelayMode !== "loop") return;
-			appendAutoLoopEvent(`advisory: ${reason}`);
-			setAutoLoopLastAction(options?.lastAction ?? reason);
-			if (options?.toastUser) {
-				toast.warning(`Auto Loop advisory: ${reason}`);
-			}
-		},
-		[appendAutoLoopEvent, autoRelayMode],
-	);
-
-	const resetAutoLoopState = useCallback(() => {
-		const now = Date.now();
-		// S5.8 Phase 1: snapshot the active tab at arm time. Reads via
-		// `useTabsStore.getState()` because this callback runs outside of the
-		// React subscription path and we want the value at the call site.
-		const armedTabId = workspaceId
-			? useTabsStore.getState().activeTabIds[workspaceId] ?? null
-			: null;
-		const armedBrowserSlot = getBrowserSlotForTab(armedTabId);
-		const armedSlotDiagnostics = getBrowserSlotRegistryDiagnostics(
-			armedBrowserSlot.key,
-		);
-		const commanderRuntime = getCommanderBrowserRuntimeSnapshot();
-		const armedWorkerBinding = workerBindingRef.current;
-		const requireBoundWorker = requireBoundWorkerForAutoLoopRef.current;
-		const workerBindingPolicy: AutoLoopWorkerBindingPolicy =
-			requireBoundWorker ? "strict" : "fallback";
-		const bindingFallbackUsed =
-			!requireBoundWorker && armedWorkerBinding.bindingStatus !== "bound";
-		const armedWorkerIdentity = evaluateDoyDeckWorkerIdentity(
-			armedWorkerBinding.workerType,
-		);
-		const bindingStopReason =
-			requireBoundWorker && armedWorkerBinding.bindingStatus !== "bound"
-				? armedWorkerBinding.bindingStatus === "stale"
-					? "bound worker stale"
-					: "worker binding required"
-				: null;
-		const identityStopReason =
-			requireBoundWorker &&
-			armedWorkerBinding.bindingStatus === "bound" &&
-			!armedWorkerIdentity.workerIdentityOk
-				? (armedWorkerIdentity.workerIdentityBlockers[0] ??
-					"worker identity could not be verified")
-				: null;
-		const strictStopReason = bindingStopReason ?? identityStopReason;
-		activeTabIdAtArmRef.current = armedTabId;
-		autoLoopWorkerPaneIdAtArmRef.current = strictStopReason
-			? null
-			: armedWorkerBinding.workerPaneId;
-		autoLoopTerminalIdAtArmRef.current = strictStopReason
-			? null
-			: armedWorkerBinding.terminalId;
-		autoLoopWorkerBindingStatusAtArmRef.current =
-			armedWorkerBinding.bindingStatus;
-		tabContextSeenChangedRef.current = null;
-		setAutoLoopTurn(0);
-		budgetedPolishRequestTurnRef.current = null;
-		setAutoLoopStopReason(strictStopReason);
-		setAutoLoopPhase(strictStopReason ? "stopped" : "waiting-browser-ai");
-		setAutoLoopLastAction(strictStopReason ?? "Auto Loop armed");
-		setAutoLoopLastActivityAt(null);
-		// S5.10 Phase 1: surface the tab the loop armed against in the arm
-		// event itself. The Diag panel already shows `Armed tab` / `Current
-		// tab` / `Tab context` separately, but having the same id in the
-		// event log lets us trace tab context through a screenshot or QA
-		// report without having to read the static panel fields.
-		const armedTabSuffix = armedTabId ? armedTabId.slice(-8) : "(none)";
-		const armedEventId = (autoLoopDiagnosticEventIdRef.current += 1);
-		setAutoLoopDiagnostics({
-			...EMPTY_AUTO_LOOP_DIAGNOSTICS,
-			activeTimeoutType: "browser no activity",
-			noActivityRemainingMs: AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
-			hardMaxRemainingMs: AUTO_LOOP_HARD_MAX_WAIT_MS,
-			noActivityDeadlineAt: now + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
-			hardMaxDeadlineAt: now + AUTO_LOOP_HARD_MAX_WAIT_MS,
-			recentEvents: [
-				{
-					id: armedEventId,
-					at: now,
-					label: strictStopReason
-						? `auto loop blocked: ${strictStopReason}`
-						: `auto loop armed for tab ${armedTabSuffix}`,
-				},
-			],
-			activeTabIdAtArm: armedTabId,
-			currentActiveTabId: armedTabId,
-			tabContextStatus: armedTabId ? "same" : "unknown",
-			browserSlotKeyAtArm: armedBrowserSlot.key,
-			currentBrowserSlotKey: armedBrowserSlot.key,
-			browserSlotWorkspaceId: armedBrowserSlot.identity?.workspaceId ?? null,
-			browserSlotPaneId: COMMANDER_BROWSER_AI_PANE_ID,
-			browserSlotMode: commanderRuntime.browserSlotMode,
-			browserSlotRegistryStatus: armedSlotDiagnostics.status,
-			browserSlotRegistryReason: armedSlotDiagnostics.reason,
-			browserSlotRegistryPaneId: armedSlotDiagnostics.paneId,
-			browserSlotRegistrySlotKey:
-				armedSlotDiagnostics.registrySlotKeyForPaneId,
-			browserSlotRegistryResolvedPaneId:
-				armedSlotDiagnostics.paneIdResolvedFromSlotKey,
-			browserSlotRegistryWebContentsId: armedSlotDiagnostics.webContentsId,
-			browserRuntimeOwner: commanderRuntime.ownerType,
-			commanderRuntimeStatus: commanderRuntime.status,
-			commanderRuntimeReason: commanderRuntime.reason,
-			commanderRuntimeSlotKey: commanderRuntime.browserSlotKey,
-			commanderRuntimeWebContentsId: commanderRuntime.webContentsId,
-			commanderRuntimeProvider: commanderRuntime.providerLabel,
-			commanderRuntimeUrl: commanderRuntime.currentUrl,
-			commanderRuntimeUsableWidth: commanderRuntime.usableWidth,
-			commanderRuntimeVisualStatus: commanderRuntime.visualStatus,
-			commanderRuntimeBridgeAvailable: commanderRuntime.bridgeAvailable,
-			commanderRuntimeSlotCount: commanderRuntime.slotCount,
-			commanderRuntimeMaxSlots: commanderRuntime.maxSlotCount,
-			activeTerminalPaneId: armedWorkerBinding.activeTerminalPaneId,
-			activeTerminalId: armedWorkerBinding.activeTerminalId,
-			boundWorkerPaneId: armedWorkerBinding.boundWorkerPaneId,
-			boundTerminalId: armedWorkerBinding.boundTerminalId,
-			currentWorkerPaneId: strictStopReason
-				? null
-				: armedWorkerBinding.workerPaneId,
-			currentWorkerTerminalId: strictStopReason
-				? null
-				: armedWorkerBinding.terminalId,
-			workerPaneIdAtArm: strictStopReason
-				? null
-				: armedWorkerBinding.workerPaneId,
-			terminalIdAtArm: strictStopReason
-				? null
-				: armedWorkerBinding.terminalId,
-			workerType: armedWorkerBinding.workerType,
-			workerBindingStatus: armedWorkerBinding.bindingStatus,
-			workerBindingStatusAtArm: armedWorkerBinding.bindingStatus,
-			workerBindingMismatch: armedWorkerBinding.workerBindingMismatch,
-			workerBindingReason:
-				strictStopReason ?? armedWorkerBinding.reason,
-			workerBindingPolicy,
-			requireBoundWorker,
-			workerBindingFallbackUsed: bindingFallbackUsed,
-		});
-		if (strictStopReason) {
-			console.warn("[S5.14] Auto Loop blocked:", strictStopReason);
-			toast.warning(`Auto Loop stopped: ${strictStopReason}`);
-		} else if (armedWorkerBinding.bindingStatus !== "bound") {
-			appendAutoLoopEvent(
-				`worker binding ${armedWorkerBinding.bindingStatus}: ${armedWorkerBinding.reason ?? "no explicit binding"}`,
-			);
-		}
-		autoLoopTerminalFingerprintRef.current = "";
-		autoLoopWorkerFingerprintRef.current = "";
-		autoLoopArtifactReviewExpectedRef.current = false;
-	}, [
-		appendAutoLoopEvent,
-		getCommanderBrowserRuntimeSnapshot,
-		getBrowserSlotForTab,
-		getBrowserSlotRegistryDiagnostics,
-		setAutoLoopPhase,
-		workspaceId,
-	]);
-
-	// S5.8 Phase 1: mirror current tab/slot/worker context into diagnostics
-	// while Auto Loop UI is selected. Abort behavior is still limited to
-	// phases that can actually relay, but the Diag panel must keep reflecting
-	// current binding state even after a loop is stopped.
-	useEffect(() => {
-		if (autoRelayMode !== "loop") return;
-		const loopCanRelay = autoLoopPhase !== "idle" && autoLoopPhase !== "stopped";
-		const armed = activeTabIdAtArmRef.current;
-		const armedBrowserSlot = getBrowserSlotForTab(armed);
-		const currentBrowserSlot = getBrowserSlotForTab(currentActiveTabId);
-		const currentSlotDiagnostics = getBrowserSlotRegistryDiagnostics(
-			currentBrowserSlot.key,
-		);
-		const currentCommanderRuntime = getCommanderBrowserRuntimeSnapshot();
-		const requireBoundWorker = requireBoundWorkerForAutoLoopRef.current;
-		const workerBindingPolicy: AutoLoopWorkerBindingPolicy =
-			requireBoundWorker ? "strict" : "fallback";
-		const bindingFallbackUsed =
-			!requireBoundWorker && workerBinding.bindingStatus !== "bound";
-		// Reflect current tab id in diagnostics every time the active tab id
-		// changes; this keeps the Diag panel readable while the loop is live.
-		setAutoLoopDiagnostics((prev) => {
-			const status: TabContextStatus =
-				armed && currentActiveTabId
-					? currentActiveTabId === armed
-						? "same"
-						: "changed"
-					: "unknown";
-			if (
-				prev.currentActiveTabId === currentActiveTabId &&
-				prev.tabContextStatus === status &&
-				prev.activeTabIdAtArm === armed &&
-				prev.browserSlotKeyAtArm === armedBrowserSlot.key &&
-				prev.currentBrowserSlotKey === currentBrowserSlot.key &&
-				prev.browserSlotRegistryStatus === currentSlotDiagnostics.status &&
-				prev.browserSlotRegistryReason === currentSlotDiagnostics.reason &&
-				prev.browserSlotRegistrySlotKey ===
-					currentSlotDiagnostics.registrySlotKeyForPaneId &&
-				prev.browserSlotRegistryResolvedPaneId ===
-					currentSlotDiagnostics.paneIdResolvedFromSlotKey &&
-				prev.browserSlotRegistryWebContentsId ===
-					currentSlotDiagnostics.webContentsId &&
-				prev.browserRuntimeOwner === currentCommanderRuntime.ownerType &&
-				prev.commanderRuntimeStatus === currentCommanderRuntime.status &&
-				prev.commanderRuntimeReason === currentCommanderRuntime.reason &&
-				prev.commanderRuntimeSlotKey === currentCommanderRuntime.browserSlotKey &&
-				prev.commanderRuntimeWebContentsId ===
-					currentCommanderRuntime.webContentsId &&
-				prev.commanderRuntimeProvider ===
-					currentCommanderRuntime.providerLabel &&
-				prev.commanderRuntimeUrl === currentCommanderRuntime.currentUrl &&
-				prev.commanderRuntimeUsableWidth ===
-					currentCommanderRuntime.usableWidth &&
-				prev.commanderRuntimeVisualStatus ===
-					currentCommanderRuntime.visualStatus &&
-				prev.commanderRuntimeBridgeAvailable ===
-					currentCommanderRuntime.bridgeAvailable &&
-				prev.commanderRuntimeSlotCount === currentCommanderRuntime.slotCount &&
-				prev.commanderRuntimeMaxSlots ===
-					currentCommanderRuntime.maxSlotCount &&
-				prev.activeTerminalPaneId === workerBinding.activeTerminalPaneId &&
-				prev.activeTerminalId === workerBinding.activeTerminalId &&
-				prev.boundWorkerPaneId === workerBinding.boundWorkerPaneId &&
-				prev.boundTerminalId === workerBinding.boundTerminalId &&
-				prev.currentWorkerPaneId === workerBinding.workerPaneId &&
-				prev.currentWorkerTerminalId === workerBinding.terminalId &&
-				prev.workerType === workerBinding.workerType &&
-				prev.workerBindingStatus === workerBinding.bindingStatus &&
-				prev.workerBindingMismatch === workerBinding.workerBindingMismatch &&
-				prev.workerBindingReason === workerBinding.reason &&
-				prev.workerBindingPolicy === workerBindingPolicy &&
-				prev.requireBoundWorker === requireBoundWorker &&
-				prev.workerBindingFallbackUsed === bindingFallbackUsed
-			) {
-				return prev;
-			}
-			return {
-				...prev,
-				activeTabIdAtArm: armed,
-				currentActiveTabId,
-				tabContextStatus: status,
-				browserSlotKeyAtArm: armedBrowserSlot.key,
-				currentBrowserSlotKey: currentBrowserSlot.key,
-				browserSlotWorkspaceId:
-					currentBrowserSlot.identity?.workspaceId ??
-					armedBrowserSlot.identity?.workspaceId ??
-					null,
-				browserSlotPaneId: COMMANDER_BROWSER_AI_PANE_ID,
-				browserSlotMode: currentCommanderRuntime.browserSlotMode,
-				browserSlotRegistryStatus: currentSlotDiagnostics.status,
-				browserSlotRegistryReason: currentSlotDiagnostics.reason,
-				browserSlotRegistryPaneId: currentSlotDiagnostics.paneId,
-				browserSlotRegistrySlotKey:
-					currentSlotDiagnostics.registrySlotKeyForPaneId,
-				browserSlotRegistryResolvedPaneId:
-					currentSlotDiagnostics.paneIdResolvedFromSlotKey,
-				browserSlotRegistryWebContentsId:
-					currentSlotDiagnostics.webContentsId,
-				browserRuntimeOwner: currentCommanderRuntime.ownerType,
-				commanderRuntimeStatus: currentCommanderRuntime.status,
-				commanderRuntimeReason: currentCommanderRuntime.reason,
-				commanderRuntimeSlotKey: currentCommanderRuntime.browserSlotKey,
-				commanderRuntimeWebContentsId:
-					currentCommanderRuntime.webContentsId,
-				commanderRuntimeProvider: currentCommanderRuntime.providerLabel,
-				commanderRuntimeUrl: currentCommanderRuntime.currentUrl,
-				commanderRuntimeUsableWidth: currentCommanderRuntime.usableWidth,
-				commanderRuntimeVisualStatus: currentCommanderRuntime.visualStatus,
-				commanderRuntimeBridgeAvailable:
-					currentCommanderRuntime.bridgeAvailable,
-				commanderRuntimeSlotCount: currentCommanderRuntime.slotCount,
-				commanderRuntimeMaxSlots: currentCommanderRuntime.maxSlotCount,
-				activeTerminalPaneId: workerBinding.activeTerminalPaneId,
-				activeTerminalId: workerBinding.activeTerminalId,
-				boundWorkerPaneId: workerBinding.boundWorkerPaneId,
-				boundTerminalId: workerBinding.boundTerminalId,
-				currentWorkerPaneId: workerBinding.workerPaneId,
-				currentWorkerTerminalId: workerBinding.terminalId,
-				workerType: workerBinding.workerType,
-				workerBindingStatus: workerBinding.bindingStatus,
-				workerBindingMismatch: workerBinding.workerBindingMismatch,
-				workerBindingReason: workerBinding.reason,
-				workerBindingPolicy,
-				requireBoundWorker,
-				workerBindingFallbackUsed: bindingFallbackUsed,
-			};
-		});
-		// S5.10 Phase 1: emit a discrete recent event the moment the tab
-		// context shifts from "same" to "changed". The abort event below
-		// already covers the same instant, but having a dedicated
-		// `tab context changed` line in recentEvents makes the cause
-		// readable even after the loop has stopped and `Tab context` reads
-		// "changed" statically. We do NOT log "same" each poll — that
-		// would flood the event log.
-		if (
-			loopCanRelay &&
-			armed &&
-			currentActiveTabId &&
-			currentActiveTabId !== armed &&
-			tabContextSeenChangedRef.current !== currentActiveTabId
-		) {
-			tabContextSeenChangedRef.current = currentActiveTabId;
-			appendAutoLoopEvent(
-				`tab context changed: ${armed.slice(-8)} -> ${currentActiveTabId.slice(-8)}`,
-			);
-		}
-		if (
-			loopCanRelay &&
-			armed &&
-			currentActiveTabId &&
-			currentActiveTabId !== armed
-		) {
-			appendAutoLoopEvent(
-				`tab switched from ${armed} to ${currentActiveTabId}, aborting auto loop`,
-			);
-			stopAutoLoop("auto loop aborted by tab switch");
-		}
-	}, [
-		currentActiveTabId,
-		currentUrl,
-		autoRelayMode,
-		autoLoopPhase,
-		appendAutoLoopEvent,
-		getCommanderBrowserRuntimeSnapshot,
-		getBrowserSlotForTab,
-		getBrowserSlotRegistryDiagnostics,
-		stopAutoLoop,
-		workerBinding,
-	]);
-
-	// S5.9 Phase 1 — surface Superset EventBus lifecycle signals in the
-	// Auto Loop Diagnostics panel. We only subscribe while the loop is in
-	// `waiting-worker`; outside of that phase the hooks are still called
-	// (rules-of-hooks) but `enabled=false` so the underlying
-	// `getEventBus().on()` is not actually attached. We DELIBERATELY do
-	// NOT use these signals for phase transitions or stop decisions —
-	// today they only feed the recent-events log. Phase 2 may later use
-	// `agent:lifecycle Stop` as a Worker-completion hint, but that is
-	// out of scope here.
-	const lifecycleSubscriptionEnabled =
-		autoRelayMode === "loop" &&
-		autoLoopPhase === "waiting-worker" &&
-		!!workspaceId;
-	useWorkspaceEvent(
-		"agent:lifecycle",
-		workspaceId ?? "",
-		(payload) => {
-			const terminalSuffix = payload.terminalId
-				? payload.terminalId.slice(-8)
-				: "?";
-			appendAutoLoopEvent(
-				`agent lifecycle: ${payload.eventType} (terminal=${terminalSuffix})`,
-			);
-		},
-		lifecycleSubscriptionEnabled,
-	);
-	useWorkspaceEvent(
-		"terminal:lifecycle",
-		workspaceId ?? "",
-		(payload) => {
-			const terminalSuffix = payload.terminalId
-				? payload.terminalId.slice(-8)
-				: "?";
-			appendAutoLoopEvent(
-				`terminal lifecycle: ${payload.eventType} exit=${payload.exitCode} (terminal=${terminalSuffix})`,
-			);
-		},
-		lifecycleSubscriptionEnabled,
-	);
+	}, []);
 
 	const startAutoRelayPreview = useCallback(
 		(
@@ -2227,17 +1341,11 @@ export function usePromptTransfer({
 			markerOffset: number,
 			source: AutoRelayTracker["source"] = "terminal-submit",
 		) => {
-			if (autoRelayMode !== "preview" && autoRelayMode !== "loop") return;
+			if (autoRelayMode !== "preview") return;
 
 			cancelAutoRelay("start-new-relay");
 			setWorkerResponsePreview(EMPTY_WORKER_RESPONSE_PREVIEW);
 			setAutoRelayStatus(source === "terminal-submit" ? "watching" : "idle");
-			if (autoRelayMode === "loop" && source === "terminal-submit") {
-				setAutoLoopPhase("waiting-worker");
-				setAutoLoopLastAction("Waiting for Worker response");
-				setAutoLoopLastActivityAt(Date.now());
-				cancelAutoCapture("worker-phase-started");
-			}
 			console.log("[S3.13-stream] auto relay mode state =", autoRelayMode);
 			console.log("[S3.13-stream] terminal output capture armed =", {
 				paneId,
@@ -2246,22 +1354,6 @@ export function usePromptTransfer({
 			console.log("[S3.13-stream] marker offset =", markerOffset);
 
 			const startedAt = Date.now();
-			if (autoRelayMode === "loop") {
-				appendAutoLoopEvent("worker watcher armed");
-				setAutoLoopDiagnostics((prev) => ({
-					...prev,
-					workerWatcherActive: true,
-					browserWatcherActive: false,
-					workerActivityAt: startedAt,
-					currentOutputOffset: markerOffset,
-					markerOffset,
-					activeTimeoutType: "worker no activity",
-					noActivityRemainingMs: AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
-					hardMaxRemainingMs: AUTO_LOOP_HARD_MAX_WAIT_MS,
-					noActivityDeadlineAt: startedAt + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
-					hardMaxDeadlineAt: startedAt + AUTO_LOOP_HARD_MAX_WAIT_MS,
-				}));
-			}
 			const relayRef: AutoRelayTracker = {
 				paneId,
 				markerOffset,
@@ -2278,42 +1370,34 @@ export function usePromptTransfer({
 				lastEnvelopeIncompleteReason: null,
 			};
 
+			const completeRelay = (report: string, detection: WorkerResponseDetection) => {
+				cancelAutoRelay("worker-response-detected");
+				setLatestWorkerResponseText(report);
+				setWorkerResponsePreview({
+					visible: true,
+					text: report,
+					confidence: detection.confidence,
+					reasons: detection.reasons,
+				});
+				toast.success("Worker Responseを検出しました");
+			};
+
 			const executeCapture = (reason: string) => {
 				const rawDelta = getOutputLogSince(paneId, relayRef.markerOffset);
 				const current = stripAnsi(rawDelta);
-				const headingCandidates = findWorkerCompletionHeadingCandidates(current);
-				const completionReportCount = headingCandidates.length;
 				const now = Date.now();
 				const currentOffset = getOutputLogOffset(paneId);
 				const outputStableMs = now - relayRef.lastOutputChangedAt;
 				const promptReturned = hasWorkerPromptReturned(current);
 				const envelope = extractDoyDeckWorkerResponseEnvelope(current);
+
 				if (envelope.status === "incomplete" || envelope.status === "invalid") {
 					if (relayRef.envelopeIncompleteSince === null) {
 						relayRef.envelopeIncompleteSince = now;
 						relayRef.lastEnvelopeIncompleteReason = envelope.reason;
-						if (autoRelayMode === "loop") {
-							appendAutoLoopEvent(
-								`worker response envelope incomplete: ${envelope.reason}`,
-							);
-						}
 					} else if (relayRef.lastEnvelopeIncompleteReason !== envelope.reason) {
 						relayRef.lastEnvelopeIncompleteReason = envelope.reason;
 						relayRef.envelopeIncompleteSince = now;
-					}
-					const incompleteWaitMs = now - relayRef.envelopeIncompleteSince;
-					if (
-						autoRelayMode === "loop" &&
-						outputStableMs >= AUTO_RELAY_OUTPUT_STABLE_MS &&
-						incompleteWaitMs >= AUTO_RELAY_MAX_DETECTION_WAIT_MS
-					) {
-						const stopReason =
-							envelope.status === "incomplete"
-								? "worker response envelope incomplete"
-								: "worker response extraction incomplete";
-						appendAutoLoopEvent(`${stopReason}: ${envelope.reason}`);
-						cancelAutoRelay(stopReason);
-						stopAutoLoop(stopReason);
 					}
 					return;
 				}
@@ -2321,56 +1405,21 @@ export function usePromptTransfer({
 					relayRef.envelopeIncompleteSince = null;
 					relayRef.lastEnvelopeIncompleteReason = null;
 				}
+
 				const detection = detectWorkerResponse(current);
 				const report = detection?.text ?? "";
 				debugAutoRelayWatcher("[S3.13-stream] capture executed =", reason);
 				debugAutoRelayWatcher("[S3.13-stream] raw delta length =", rawDelta.length);
 				debugAutoRelayWatcher("[S3.13-stream] clean delta length =", current.length);
-				debugAutoRelayWatcher(
-					"[S3.13-stream] clean delta preview =",
-					previewText(current),
-				);
-				if (
-					DEBUG_AUTO_RELAY_WATCHER &&
-					(current.includes("完了報告") || headingCandidates.length > 0)
-				) {
-					debugAutoRelayWatcher(
-						"[S3.13-stream] captured worker text first 1000 chars =",
-						current.slice(0, 1000),
-					);
-					debugAutoRelayWatcher(
-						"[S3.13-stream] captured worker text last 1000 chars =",
-						current.slice(-1000),
-					);
-					debugAutoRelayWatcher(
-						"[S3.13-stream] detected report heading candidates =",
-						summarizeWorkerCompletionCandidates(headingCandidates),
-					);
-				}
-				debugAutoRelayWatcher(
-					"[S3.13-stream] completion report count =",
-					completionReportCount,
-				);
-				debugAutoRelayWatcher("[S3.13-stream] has completion report =", Boolean(report));
-				debugAutoRelayWatcher(
-					"[S3.13-stream] final extracted worker response length =",
-					report.length,
-				);
+				debugAutoRelayWatcher("[S3.13-stream] has worker report =", Boolean(report));
 				debugAutoRelayWatcher("[S3.13-stream] worker response detection =", detection);
-				debugAutoRelayWatcher("[S3.13-stream] worker response envelope =", envelope);
-				debugAutoRelayWatcher("[S3.13-stream] worker response envelope indices =", {
-					status: envelope.status,
-					startIndex: envelope.status === "none" ? null : envelope.startIndex,
-					endIndex: envelope.status === "matched" ? envelope.endIndex : null,
-					extractedLength: envelope.status === "matched" ? envelope.text.length : null,
-				});
 				debugAutoRelayWatcher("[S3.13-stream] output settled state =", {
 					currentOffset,
 					lastObservedOffset: relayRef.lastObservedOffset,
 					outputStableMs,
 					promptReturned,
 				});
-				if (!report) return;
+				if (!detection || !report) return;
 
 				const fingerprint = fingerprintText(report);
 				if (fingerprint !== relayRef.lastFingerprint) {
@@ -2378,10 +1427,6 @@ export function usePromptTransfer({
 					relayRef.lastChangedAt = now;
 					relayRef.detectionFirstSeenAt = now;
 					relayRef.lastDetection = detection;
-					debugAutoRelayWatcher(
-						"[S3.13-stream] selected completion report preview =",
-						previewText(report),
-					);
 					return;
 				}
 
@@ -2392,686 +1437,112 @@ export function usePromptTransfer({
 						: now - relayRef.detectionFirstSeenAt;
 				const readyByPromptReturned =
 					promptReturned && outputStableMs >= AUTO_RELAY_PROMPT_RETURNED_STABLE_MS;
-				const readyByOutputStable =
-					outputStableMs >= AUTO_RELAY_OUTPUT_STABLE_MS;
+				const readyByOutputStable = outputStableMs >= AUTO_RELAY_OUTPUT_STABLE_MS;
 				const readyByMaxWait =
 					detectionWaitMs >= AUTO_RELAY_MAX_DETECTION_WAIT_MS &&
 					outputStableMs >= AUTO_RELAY_PROMPT_RETURNED_STABLE_MS;
-				debugAutoRelayWatcher("[S3.13-stream] idle ms =", idleMs);
-				debugAutoRelayWatcher("[S3.13-stream] preview readiness =", {
-					detectionWaitMs,
-					readyByPromptReturned,
-					readyByOutputStable,
-					readyByMaxWait,
-				});
-				if (idleMs < AUTO_RELAY_IDLE_MS) return;
-				if (!readyByPromptReturned && !readyByOutputStable && !readyByMaxWait) {
-					return;
+				if (
+					idleMs >= AUTO_RELAY_IDLE_MS &&
+					(readyByPromptReturned || readyByOutputStable || readyByMaxWait)
+				) {
+					completeRelay(report, detection);
 				}
-
-				console.log(
-					"[S3.13] worker response idle; showing preview:",
-					previewText(report),
-				);
-				cancelAutoRelay("worker-response-preview-ready");
-				console.log(
-					"[S3.13-stream] setting worker response preview length =",
-					report.length,
-				);
-				console.log(
-					"[S3.13-stream] normalized worker response length =",
-					report.length,
-				);
-				const truncatedReport = truncateWithWarning(report, "Worker返答");
-				setLatestWorkerResponseText(truncatedReport);
-				if (autoRelayMode === "loop") {
-					setAutoLoopPhase("sending-browser-ai");
-					setAutoLoopLastAction(
-						`Worker response captured (${detection?.confidence ?? "low"} confidence)`,
-					);
-					appendAutoLoopEvent(
-						detection?.reasons.includes("envelope matched")
-							? `capture succeeded: worker response envelope matched start=${envelope.status === "matched" ? envelope.startIndex : "n/a"} end=${envelope.status === "matched" ? envelope.endIndex : "n/a"} length=${report.length}`
-							: "capture succeeded: worker response",
-					);
-				}
-				setWorkerResponsePreview({
-					visible: true,
-					text: truncatedReport,
-					confidence: detection?.confidence ?? "low",
-					reasons: detection?.reasons ?? ["terminal idle fallback"],
-				});
-				console.log("[S3.13-stream] workerResponsePreview state set");
 			};
 
 			const scheduleCapture = (reason: string) => {
-				const currentOffset = getOutputLogOffset(paneId);
-				const outputDeltaLength = Math.max(
-					0,
-					currentOffset - relayRef.markerOffset,
-				);
-				if (autoRelayMode === "loop" && reason !== "polling-stability-check") {
-					appendAutoLoopEvent(`capture scheduled: ${reason}`);
+				const activeRef = autoRelayRef.current;
+				if (activeRef !== relayRef) return;
+				if (activeRef.captureDebounceId) {
+					clearTimeout(activeRef.captureDebounceId);
 				}
-				debugAutoRelayWatcher("[S3.13-stream] capture scheduled =", {
-					reason,
-					currentOffset,
-					outputDeltaLength,
-				});
-				if (relayRef.firstOutputAt === null) {
-					relayRef.firstOutputAt = Date.now();
-					setAutoRelayStatus("watching");
-					console.log("[S3.13-stream] terminal output capture trigger fired", {
-						paneId,
-						source: relayRef.source,
-						outputDeltaLength,
-					});
-				}
-				if (relayRef.captureDebounceId) {
-					clearTimeout(relayRef.captureDebounceId);
-				}
-				relayRef.captureDebounceId = setTimeout(
-					() => executeCapture(reason),
-					AUTO_RELAY_CAPTURE_DEBOUNCE_MS,
-				);
+				activeRef.captureDebounceId = setTimeout(() => {
+					if (autoRelayRef.current !== relayRef) return;
+					activeRef.captureDebounceId = undefined;
+					executeCapture(reason);
+				}, AUTO_RELAY_CAPTURE_DEBOUNCE_MS);
 			};
 
-			relayRef.unsubscribeOutputLog = subscribeOutputLog(paneId, (snapshot) => {
-				debugAutoRelayWatcher("[S3.13-stream] subscription fired =", snapshot);
-				if (
-					autoRelayMode === "loop" &&
-					autoLoopPhaseRef.current !== "waiting-worker"
-				) {
-					appendAutoLoopEvent("worker watcher cleared: phase mismatch");
-					console.log("[S5.2] worker watcher cleared outside worker phase", {
-						phase: autoLoopPhaseRef.current,
-					});
-					cancelAutoRelay("worker-phase-mismatch");
-					return;
-				}
-				if (snapshot.offset <= relayRef.markerOffset) return;
-				if (snapshot.offset > relayRef.lastObservedOffset) {
-					const before = relayRef.lastObservedOffset;
-					relayRef.lastObservedOffset = snapshot.offset;
-					const now = Date.now();
+			relayRef.unsubscribeOutputLog = subscribeOutputLog(paneId, (entry) => {
+				if (autoRelayRef.current !== relayRef) return;
+				const now = Date.now();
+				const offset = getOutputLogOffset(paneId);
+				if (offset > relayRef.lastObservedOffset) {
+					relayRef.lastObservedOffset = offset;
 					relayRef.lastOutputChangedAt = now;
-					if (autoRelayMode === "loop") {
-						setAutoLoopLastActivityAt(now);
-						setAutoLoopLastAction("Worker output activity detected");
-						setAutoLoopDiagnostics((prev) => ({
-							...prev,
-							workerActivityAt: now,
-							currentOutputOffset: snapshot.offset,
-							markerOffset: relayRef.markerOffset,
-							noActivityRemainingMs: AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
-							hardMaxRemainingMs: Math.max(
-								0,
-								AUTO_LOOP_HARD_MAX_WAIT_MS - (now - relayRef.startedAt),
-							),
-							noActivityDeadlineAt:
-								now + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
-							hardMaxDeadlineAt:
-								relayRef.startedAt + AUTO_LOOP_HARD_MAX_WAIT_MS,
-						}));
-						appendAutoLoopEvent("worker activity updated");
-						console.log("[S5.2] worker activity updated", {
-							before,
-							after: snapshot.offset,
-						});
-					}
+					relayRef.firstOutputAt = relayRef.firstOutputAt ?? now;
+					scheduleCapture("output-log");
 				}
-				scheduleCapture("subscription");
 			});
 
 			relayRef.intervalId = setInterval(() => {
+				if (autoRelayRef.current !== relayRef) return;
 				const currentOffset = getOutputLogOffset(paneId);
 				const now = Date.now();
-				if (
-					autoRelayMode === "loop" &&
-					autoLoopPhaseRef.current !== "waiting-worker"
-				) {
-					appendAutoLoopEvent("worker timeout ignored: phase mismatch");
-					console.log("[S5.2] worker timeout ignored because phase mismatch", {
-						phase: autoLoopPhaseRef.current,
-					});
-					cancelAutoRelay("worker-phase-mismatch");
-					return;
-				}
-				const outputDeltaLength = Math.max(
-					0,
-					currentOffset - relayRef.markerOffset,
-				);
-				debugAutoRelayWatcher("[S3.13-stream] polling tick =", {
-					paneId,
-					source: relayRef.source,
-					markerOffset: relayRef.markerOffset,
-					currentOffset,
-					outputDeltaLength,
-				});
-				if (currentOffset <= relayRef.markerOffset) {
-					if (
-						autoRelayMode === "loop" &&
-						now - relayRef.lastOutputChangedAt >= AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS
-					) {
-						relayRef.lastOutputChangedAt = now;
-						recordAutoLoopAdvisory("worker no activity timeout", {
-							lastAction: "Worker has not produced output recently; continuing wait",
-						});
-						setAutoLoopDiagnostics((prev) => ({
-							...prev,
-							noActivityRemainingMs: AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
-							noActivityDeadlineAt:
-								now + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
-						}));
-					}
-					return;
-				}
 				if (currentOffset > relayRef.lastObservedOffset) {
-					const before = relayRef.lastObservedOffset;
 					relayRef.lastObservedOffset = currentOffset;
 					relayRef.lastOutputChangedAt = now;
-					if (autoRelayMode === "loop") {
-						setAutoLoopLastActivityAt(now);
-						setAutoLoopLastAction("Worker output activity detected");
-						setAutoLoopDiagnostics((prev) => ({
-							...prev,
-							workerActivityAt: now,
-							currentOutputOffset: currentOffset,
-							markerOffset: relayRef.markerOffset,
-							noActivityRemainingMs: AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
-							hardMaxRemainingMs: Math.max(
-								0,
-								AUTO_LOOP_HARD_MAX_WAIT_MS - (now - relayRef.startedAt),
-							),
-							noActivityDeadlineAt:
-								now + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
-							hardMaxDeadlineAt:
-								relayRef.startedAt + AUTO_LOOP_HARD_MAX_WAIT_MS,
-						}));
-						appendAutoLoopEvent("worker activity updated");
-						console.log("[S5.2] worker activity updated", {
-							before,
-							after: currentOffset,
-						});
-					}
-					scheduleCapture("polling-output-increased");
+					relayRef.firstOutputAt = relayRef.firstOutputAt ?? now;
+					scheduleCapture("polling-offset-change");
 					return;
 				}
-				if (
-					autoRelayMode === "loop" &&
-					now - relayRef.lastOutputChangedAt >= AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS
-				) {
-					appendAutoLoopEvent("advisory: timeout fired: worker no activity");
-					console.log("[S5.2] timeout fired with current phase", {
-						type: "worker no activity timeout",
-						phase: autoLoopPhaseRef.current,
-					});
-					relayRef.lastOutputChangedAt = now;
-					recordAutoLoopAdvisory("worker no activity timeout", {
-						lastAction: "Worker output is quiet; continuing wait",
-					});
-					setAutoLoopDiagnostics((prev) => ({
-						...prev,
-						noActivityRemainingMs: AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
-						noActivityDeadlineAt: now + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
-					}));
-					return;
-				}
-				if (relayRef.firstOutputAt !== null) {
-					scheduleCapture("polling-stability-check");
+				if (!relayRef.firstOutputAt) return;
+				if (now - relayRef.lastOutputChangedAt >= AUTO_RELAY_OUTPUT_STABLE_MS) {
+					executeCapture("polling-stability-check");
 				}
 			}, AUTO_RELAY_POLL_INTERVAL_MS);
 
 			relayRef.timeoutId = setTimeout(() => {
-				const reason =
-					autoRelayMode === "loop"
-						? "hard-max-wait-timeout"
-						: relayRef.firstOutputAt === null
-							? "timeout-no-output"
-							: "timeout";
-				if (autoRelayMode === "loop") {
-					if (autoLoopPhaseRef.current === "waiting-worker") {
-						appendAutoLoopEvent("advisory: timeout fired: hard max wait");
-						console.log("[S5.2] timeout fired with current phase", {
-							type: "hard max wait timeout",
-							phase: autoLoopPhaseRef.current,
-						});
-						recordAutoLoopAdvisory("hard max wait timeout", {
-							lastAction: "Worker exceeded hard max wait; continuing to monitor",
-						});
-						const timeoutAt = Date.now();
-						setAutoLoopDiagnostics((prev) => ({
-							...prev,
-							hardMaxRemainingMs: 0,
-							hardMaxDeadlineAt: timeoutAt,
-						}));
-					} else {
-						appendAutoLoopEvent("timeout ignored: worker phase mismatch");
-						console.log(
-							"[S5.2] hard max worker timeout ignored because phase mismatch",
-							{ phase: autoLoopPhaseRef.current },
-						);
-					}
-				} else {
-					cancelAutoRelay(reason);
-				}
-				console.log("[S3.13] auto relay timeout after ms:", {
-					source: relayRef.source,
-					elapsedMs: Date.now() - startedAt,
-					firstOutputAt: relayRef.firstOutputAt,
-				});
-			}, autoRelayMode === "loop" ? AUTO_LOOP_HARD_MAX_WAIT_MS : AUTO_RELAY_TIMEOUT_MS);
+				if (autoRelayRef.current !== relayRef) return;
+				cancelAutoRelay(
+					relayRef.firstOutputAt ? "timeout" : "timeout-no-output",
+				);
+			}, AUTO_RELAY_TIMEOUT_MS);
 
 			autoRelayRef.current = relayRef;
+			scheduleCapture("initial");
 		},
-		[
-			autoRelayMode,
-			cancelAutoCapture,
-			cancelAutoRelay,
-			recordAutoLoopAdvisory,
-			stopAutoLoop,
-		],
+		[autoRelayMode, cancelAutoRelay],
 	);
 
 	const startAutoCapture = useCallback(
-		async (options?: AutoCaptureStartOptions) => {
+		async (options: AutoCaptureStartOptions = {}) => {
 			console.log("[S3.11] startAutoCapture called");
-			if (
-				autoRelayMode === "loop" &&
-				autoLoopPhaseRef.current !== "waiting-browser-ai" &&
-				autoLoopPhaseRef.current !== "sending-browser-ai"
-			) {
-				console.log("[S5.2] browser watcher not armed outside browser phase", {
-					phase: autoLoopPhaseRef.current,
-				});
-				return;
-			}
-			cancelAutoCapture("start-new-capture");
-			setCaptureForTerminalPreview(EMPTY_CAPTURE_FOR_TERMINAL_PREVIEW);
-			setCapturePreview(null);
-
 			const liveUrl = getLiveUrl() || currentUrl;
-			console.log(
-				"[S3.11] startAutoCapture liveUrl =",
-				liveUrl,
-				"currentUrl =",
-				currentUrl,
-			);
 			const provider = detectProvider(liveUrl);
 			if (!provider) {
 				console.log("[S3.11] startAutoCapture: no provider detected, aborting");
-				setAutoCaptureStatus("idle");
 				return;
 			}
-			console.log("[S3.11] startAutoCapture: provider =", provider);
 
-			let baseline: AssistantCaptureSnapshot | null =
-				options?.baseline && isAssistantCaptureSnapshot(options.baseline)
-					? options.baseline
-					: null;
-			try {
-				if (!baseline) {
-					const raw = await injectIntoPage(
+			cancelAutoCapture("start-new-capture");
+			let safeBaseline = options.baseline ?? null;
+			if (!safeBaseline) {
+				try {
+					const rawBaseline = await injectIntoPage(
 						buildAssistantSnapshotScript(provider),
 					);
-					baseline = toAssistantCaptureSnapshot(raw);
+					safeBaseline = toAssistantCaptureSnapshot(rawBaseline);
+				} catch (error) {
+					console.log(
+						"[S3.11] startAutoCapture: baseline extraction failed",
+						error,
+					);
 				}
-				console.log(
-					"[S3.11] startAutoCapture: baseline assistant count =",
-					baseline?.assistantCount ?? 0,
-					"baseline latest text preview =",
-					previewText(baseline?.latestText ?? ""),
-				);
-			} catch {
-				console.log(
-					"[S3.11] startAutoCapture: baseline extraction failed (continuing)",
-				);
+			}
+			if (!safeBaseline) {
+				safeBaseline = {
+					assistantCount: 0,
+					latestText: "",
+					latestFingerprint: "",
+				};
 			}
 
-			const safeBaseline = baseline ?? emptyAssistantCaptureSnapshot();
-			const prompt = options?.prompt ?? "";
-			const triggeredAt = options?.triggeredAt ?? Date.now();
-			console.log(
-				"[S3.11] startAutoCapture: setting autoCaptureStatus = waiting",
-			);
+			const prompt = options.prompt ?? "";
+			const triggeredAt = options.triggeredAt ?? Date.now();
 			setAutoCaptureStatus("waiting");
-			if (autoRelayMode === "loop") {
-				setAutoLoopPhase("waiting-browser-ai");
-				setAutoLoopLastAction("Waiting for Browser AI response");
-				setAutoLoopLastActivityAt(triggeredAt);
-				appendAutoLoopEvent("browser watcher armed");
-				setAutoLoopDiagnostics((prev) => ({
-					...prev,
-					browserWatcherActive: true,
-					workerWatcherActive: false,
-					browserActivityAt: triggeredAt,
-					activeTimeoutType: "browser no activity",
-					noActivityRemainingMs: AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
-					hardMaxRemainingMs: AUTO_LOOP_HARD_MAX_WAIT_MS,
-					noActivityDeadlineAt:
-						triggeredAt + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
-					hardMaxDeadlineAt: triggeredAt + AUTO_LOOP_HARD_MAX_WAIT_MS,
-				}));
-				console.log("[S5.2] browser watcher armed", {
-					phase: autoLoopPhaseRef.current,
-				});
-			}
-
-			const intervalId = setInterval(async () => {
-				const url = getLiveUrl() || currentUrl;
-				const prov = detectProvider(url);
-				if (!prov) return;
-
-				try {
-					const raw = await injectIntoPage(buildAssistantSnapshotScript(prov));
-					const snapshot = toAssistantCaptureSnapshot(raw);
-					const text = snapshot.latestText;
-					const reason = getCaptureReason(safeBaseline, snapshot);
-					const ref = autoCaptureRef.current;
-					if (!ref) return;
-					if (
-						autoRelayMode === "loop" &&
-						autoLoopPhaseRef.current !== "waiting-browser-ai"
-					) {
-						console.log(
-							"[S5.2] browser timeout ignored because phase mismatch",
-							{ phase: autoLoopPhaseRef.current },
-						);
-						cancelAutoCapture("browser-phase-mismatch");
-						return;
-					}
-					const now = Date.now();
-					const snapshotFingerprint =
-						snapshot.latestFingerprint || fingerprintText(snapshot.latestText);
-					if (
-						snapshot.assistantCount !== ref.lastObservedAssistantCount ||
-						snapshotFingerprint !== ref.lastObservedFingerprint
-					) {
-						ref.lastObservedAssistantCount = snapshot.assistantCount;
-						ref.lastObservedFingerprint = snapshotFingerprint;
-						ref.lastActivityAt = now;
-						if (autoRelayMode === "loop") {
-							setAutoLoopLastActivityAt(now);
-							setAutoLoopLastAction("Browser AI response activity detected");
-							setAutoLoopDiagnostics((prev) => ({
-								...prev,
-								browserActivityAt: now,
-								noActivityRemainingMs: AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
-								hardMaxRemainingMs: Math.max(
-									0,
-									AUTO_LOOP_HARD_MAX_WAIT_MS - (now - ref.startedAt),
-								),
-								noActivityDeadlineAt:
-									now + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
-								hardMaxDeadlineAt:
-									ref.startedAt + AUTO_LOOP_HARD_MAX_WAIT_MS,
-							}));
-							appendAutoLoopEvent("browser activity updated");
-							console.log("[S5.2] browser activity updated", {
-								assistantCount: snapshot.assistantCount,
-							});
-						}
-					}
-					if (
-						autoRelayMode === "loop" &&
-						now - ref.lastActivityAt >= AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS
-					) {
-						appendAutoLoopEvent("advisory: timeout fired: browser no activity");
-						console.log("[S5.2] timeout fired with current phase", {
-							type: "browser ai no activity timeout",
-							phase: autoLoopPhaseRef.current,
-						});
-						ref.lastActivityAt = now;
-						recordAutoLoopAdvisory("browser ai no activity timeout", {
-							lastAction: "Browser AI reply is quiet; continuing wait",
-						});
-						setAutoLoopDiagnostics((prev) => ({
-							...prev,
-							noActivityRemainingMs: AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
-							noActivityDeadlineAt:
-								now + AUTO_LOOP_NO_ACTIVITY_TIMEOUT_MS,
-						}));
-						return;
-					}
-					console.log(
-						"[S3.11] auto-capture poll current assistant count =",
-						snapshot.assistantCount,
-						"current latest text preview =",
-						previewText(snapshot.latestText),
-						"capture reason =",
-						reason ?? "none",
-					);
-					if (!reason) return;
-					if (!text || text.trim().length < MIN_CAPTURE_TEXT_LENGTH) return;
-					if (isTransientAssistantText(text)) return;
-
-					const fingerprint = snapshotFingerprint;
-					if (fingerprint !== ref.candidateFingerprint) {
-						ref.candidateText = text;
-						ref.candidateFingerprint = fingerprint;
-						ref.candidateStableCount = 1;
-						ref.candidateFirstSeenAt = now;
-						console.log(
-							"[S3.11] candidate changed, reset stable count:",
-							previewText(text),
-						);
-						console.log(
-							"[S3.11] candidate detected preview:",
-							previewText(text),
-						);
-						console.log(
-							"[S3.11] candidate stable count:",
-							ref.candidateStableCount,
-						);
-						return;
-					}
-
-					ref.candidateText = text;
-					ref.candidateStableCount += 1;
-					const stableMs = now - ref.candidateFirstSeenAt;
-					console.log(
-						"[S3.11] candidate stable count:",
-						ref.candidateStableCount,
-						"stable ms =",
-						stableMs,
-					);
-					if (
-						ref.candidateStableCount < AUTO_CAPTURE_STABLE_POLLS ||
-						stableMs < AUTO_CAPTURE_STABLE_MS
-					) {
-						return;
-					}
-
-					console.log(
-						"[S3.11] capturing stable response:",
-						previewText(ref.candidateText),
-					);
-
-					const finalRaw = await injectIntoPage(buildExtractionScript(prov));
-					const finalText =
-						typeof finalRaw === "string" ? finalRaw : ref.candidateText;
-					if (
-						!finalText ||
-						finalText.trim().length < MIN_CAPTURE_TEXT_LENGTH ||
-						isTransientAssistantText(finalText)
-					) {
-						return;
-					}
-					const finalFingerprint = fingerprintText(finalText);
-					if (finalFingerprint !== ref.candidateFingerprint) {
-						ref.candidateText = finalText;
-						ref.candidateFingerprint = finalFingerprint;
-						ref.candidateStableCount = 1;
-						ref.candidateFirstSeenAt = Date.now();
-						console.log(
-							"[S3.11] candidate changed, reset stable count:",
-							previewText(finalText),
-						);
-						console.log(
-							"[S3.11] candidate detected preview:",
-							previewText(finalText),
-						);
-						console.log(
-							"[S3.11] candidate stable count:",
-							ref.candidateStableCount,
-						);
-						return;
-					}
-
-					cancelAutoCapture("response-captured");
-					const truncated = truncateWithWarning(finalText, "返答");
-					console.log(
-						"[S3.11] response captured raw length =",
-						truncated.length,
-						"captured text preview =",
-						previewText(truncated),
-						"capture reason =",
-						reason,
-						"prompt age ms =",
-						Date.now() - triggeredAt,
-						"prompt preview =",
-						previewText(prompt),
-					);
-					console.log("[S3.11] final raw preview:", previewText(truncated));
-					const extracted =
-						autoRelayMode === "loop"
-							? extractAutoLoopWorkerInstructionBlock(truncated)
-							: extractInstructionBlock(truncated);
-					const browserRequestedStop =
-						autoRelayMode === "loop" && isBrowserCompletionStop(truncated);
-					logWorkerInstructionExtraction(truncated, extracted);
-					if (autoRelayMode === "loop") {
-						setAutoLoopBrowserCaptureDebug({
-							at: new Date().toISOString(),
-							source: reason,
-							text: truncated,
-							textLength: truncated.length,
-							textPreview: previewText(truncated),
-							extractedText: extracted,
-							extractedLength: extracted.length,
-							extractedPreview: previewText(extracted),
-							extractResult: extracted.trim() ? "success" : "fail",
-							extractFailureReason: extracted.trim()
-								? ""
-								: browserRequestedStop
-									? "browser-completion-stop"
-									: hasPrimaryWorkerInstructionHeading(truncated) ||
-											hasOtherWorkerInstructionHeading(truncated)
-										? "worker instruction heading matched but body was empty"
-										: "no worker instruction block found",
-							containsPrimaryWorkerHeading:
-								hasPrimaryWorkerInstructionHeading(truncated),
-							containsOtherWorkerHeading:
-								hasOtherWorkerInstructionHeading(truncated),
-						});
-					}
-					console.log("[S3.11] final extracted length:", extracted.length);
-					setLatestBrowserAiDirectionText(truncated);
-					if (autoRelayMode === "loop" && !extracted.trim()) {
-						setCapturePreview(truncated);
-						if (browserRequestedStop) {
-							const budgetedDecision = evaluateAutoLoopBudgetedCompletion({
-								replyText: truncated,
-								workerInstructionText: extracted,
-								browserRequestedStop,
-								currentTurn: autoLoopTurn,
-								maxTurns: autoLoopMaxTurns,
-							});
-							if (
-								budgetedDecision.shouldRequestPolishReview &&
-								budgetedPolishRequestTurnRef.current !== autoLoopTurn
-							) {
-								budgetedPolishRequestTurnRef.current = autoLoopTurn;
-								recordAutoLoopAdvisory(
-									"Browser AI requested STOP before using remaining turn budget; requesting Polish Mode review",
-									{
-										lastAction: budgetedDecision.nextAction,
-									},
-								);
-								await requestAutoLoopBudgetedPolishReviewRef.current(
-									budgetedDecision,
-									truncated,
-								);
-								return;
-							}
-							if (
-								budgetedDecision.shouldRequestPolishReview &&
-								budgetedPolishRequestTurnRef.current === autoLoopTurn
-							) {
-								recordAutoLoopAdvisory(
-									"Browser AI reaffirmed STOP after budgeted polish request",
-									{
-										lastAction:
-											"Accepting STOP after one Polish Mode challenge",
-									},
-								);
-							}
-							stopAutoLoop(
-								budgetedDecision.stopReason ??
-									"Browser AI requested completion/stop",
-							);
-						} else {
-							recordAutoLoopAdvisory("no worker instruction block found", {
-								lastAction:
-									"Browser AI reply had no Worker instruction; waiting for a scoped next action",
-							});
-						}
-						return;
-					}
-					console.log(
-						"[S3.11] setting captureForTerminalPreview, length =",
-						extracted.length,
-					);
-					if (autoRelayMode === "loop") {
-						setAutoLoopPhase("sending-worker");
-						setAutoLoopLastAction("Browser AI worker instruction captured");
-						appendAutoLoopEvent("capture succeeded: browser instruction");
-					}
-					setCaptureForTerminalPreview({
-						visible: true,
-						text: extracted,
-						source: "browser-ai",
-					});
-				} catch {
-					// extraction失敗は無視、次回retry
-				}
-			}, AUTO_CAPTURE_POLL_INTERVAL_MS);
-
-			const timeoutId = setTimeout(() => {
-				if (autoRelayMode === "loop") {
-					if (autoLoopPhaseRef.current === "waiting-browser-ai") {
-						appendAutoLoopEvent("advisory: timeout fired: hard max wait");
-						console.log("[S5.2] timeout fired with current phase", {
-							type: "hard max wait timeout",
-							phase: autoLoopPhaseRef.current,
-						});
-						recordAutoLoopAdvisory("hard max wait timeout", {
-							lastAction:
-								"Browser AI exceeded hard max wait; continuing to monitor",
-						});
-						setAutoLoopDiagnostics((prev) => ({
-							...prev,
-							hardMaxRemainingMs: 0,
-							hardMaxDeadlineAt: Date.now(),
-						}));
-					} else {
-						appendAutoLoopEvent("timeout ignored: browser phase mismatch");
-						console.log(
-							"[S5.2] hard max browser timeout ignored because phase mismatch",
-							{ phase: autoLoopPhaseRef.current },
-						);
-					}
-				} else {
-					cancelAutoCapture("timeout");
-					toast.warning(
-						"AI返答の自動取得がタイムアウトしました — 手動で ← AI → Term を使ってください",
-					);
-				}
-			}, autoRelayMode === "loop" ? AUTO_LOOP_HARD_MAX_WAIT_MS : 60000);
-
-			autoCaptureRef.current = {
-				intervalId,
-				timeoutId,
+			const ref = {
+				intervalId: undefined as unknown as ReturnType<typeof setInterval>,
+				timeoutId: undefined as unknown as ReturnType<typeof setTimeout>,
 				baseline: safeBaseline,
 				prompt,
 				triggeredAt,
@@ -3084,113 +1555,61 @@ export function usePromptTransfer({
 				lastObservedAssistantCount: safeBaseline.assistantCount,
 				lastObservedFingerprint: safeBaseline.latestFingerprint,
 			};
-		},
-		[
-			getLiveUrl,
-			currentUrl,
-			injectIntoPage,
-			cancelAutoCapture,
-			autoLoopMaxTurns,
-			autoLoopTurn,
-			autoRelayMode,
-			recordAutoLoopAdvisory,
-			stopAutoLoop,
-		],
-	);
 
-	const requestAutoLoopBudgetedPolishReview = useCallback(
-		async (
-			decision: AutoLoopBudgetedCompletionDecision,
-			browserAiReplyText: string,
-		): Promise<boolean> => {
-			const liveUrl = getLiveUrl() || currentUrl;
-			const provider = detectProvider(liveUrl);
-			if (!provider) {
-				recordAutoLoopAdvisory(
-					"budgeted polish review skipped because Browser AI provider is unavailable",
-					{
-						lastAction:
-							"Budgeted polish pending; waiting for Browser AI provider",
-					},
-				);
-				setAutoLoopPhase("waiting-browser-ai");
-				return false;
-			}
+			const settleCandidate = (text: string) => {
+				const truncated = truncateWithWarning(text, "AI返答");
+				setCapturePreview(truncated);
+				setLatestBrowserAiDirectionText(truncated);
+				cancelAutoCapture("assistant-response-captured");
+				toast.success("Browser AI返答を取得しました");
+			};
 
-			const prompt = buildBudgetedPolishReviewPrompt({
-				decision,
-				browserAiReplyText,
-			});
-			let baseline: AssistantCaptureSnapshot | null = null;
-			try {
-				const rawBaseline = await injectIntoPage(
-					buildAssistantSnapshotScript(provider),
-				);
-				baseline = toAssistantCaptureSnapshot(rawBaseline);
-			} catch (error) {
-				console.log(
-					"[Auto Loop] budgeted polish baseline extraction failed:",
-					error,
-				);
-			}
+			const poll = async () => {
+				if (autoCaptureRef.current !== ref) return;
+				try {
+					const raw = await injectIntoPage(buildAssistantSnapshotScript(provider));
+					const snapshot = toAssistantCaptureSnapshot(raw);
+					if (!snapshot) return;
+					const latestText = snapshot.latestText.trim();
+					const latestFingerprint = snapshot.latestFingerprint || fingerprintText(latestText);
+					const hasNewAssistant =
+						snapshot.assistantCount > ref.baseline.assistantCount ||
+						(latestText && latestFingerprint !== ref.baseline.latestFingerprint);
+					if (!hasNewAssistant || latestText.length < MIN_CAPTURE_TEXT_LENGTH) return;
 
-			setAutoLoopPhase("sending-browser-ai");
-			setAutoLoopLastAction(
-				`Requesting Polish Mode review (${decision.remainingTurnBudget} turn(s) remain)`,
-			);
-			appendAutoLoopEvent(
-				`budgeted polish requested: remaining=${decision.remainingTurnBudget} quality=${decision.qualityStatus}`,
-			);
+					if (latestFingerprint !== ref.candidateFingerprint) {
+						ref.candidateText = latestText;
+						ref.candidateFingerprint = latestFingerprint;
+						ref.candidateStableCount = 1;
+						ref.candidateFirstSeenAt = Date.now();
+						return;
+					}
 
-			try {
-				const result = await injectIntoPage(
-					buildInjectionWithSubmitScript(prompt, provider),
-				);
-				if (result !== "submitted") {
-					recordAutoLoopAdvisory(
-						`budgeted polish request was not submitted: ${String(result)}`,
-						{
-							lastAction:
-								"Budgeted polish request not submitted; waiting for Browser AI",
-						},
-					);
-					setAutoLoopPhase("waiting-browser-ai");
-					return false;
+					ref.candidateStableCount += 1;
+					const stableMs = Date.now() - ref.candidateFirstSeenAt;
+					if (
+						ref.candidateStableCount >= AUTO_CAPTURE_STABLE_POLLS &&
+						stableMs >= AUTO_CAPTURE_STABLE_MS
+					) {
+						settleCandidate(ref.candidateText);
+					}
+				} catch (error) {
+					console.log("[S3.11] auto capture poll failed", error);
 				}
+			};
 
-				setAutoLoopPhase("waiting-browser-ai");
-				setAutoLoopLastAction("Budgeted polish request sent to Browser AI");
-				void startAutoCapture({
-					baseline,
-					prompt: "auto-loop-budgeted-polish-review",
-					triggeredAt: Date.now(),
-				});
-				return true;
-			} catch (error) {
-				recordAutoLoopAdvisory(
-					`budgeted polish request failed: ${
-						error instanceof Error ? error.message : String(error)
-					}`,
-					{
-						lastAction:
-							"Budgeted polish request failed; waiting for Browser AI",
-					},
-				);
-				setAutoLoopPhase("waiting-browser-ai");
-				return false;
-			}
+			ref.intervalId = setInterval(() => {
+				void poll();
+			}, AUTO_CAPTURE_POLL_INTERVAL_MS);
+			ref.timeoutId = setTimeout(() => {
+				if (autoCaptureRef.current !== ref) return;
+				cancelAutoCapture("timeout");
+			}, 60000);
+			autoCaptureRef.current = ref;
+			void poll();
 		},
-		[
-			appendAutoLoopEvent,
-			currentUrl,
-			getLiveUrl,
-			injectIntoPage,
-			recordAutoLoopAdvisory,
-			startAutoCapture,
-		],
+		[getLiveUrl, currentUrl, injectIntoPage, cancelAutoCapture],
 	);
-	requestAutoLoopBudgetedPolishReviewRef.current =
-		requestAutoLoopBudgetedPolishReview;
 
 	useEffect(() => {
 		return () => {
@@ -3219,15 +1638,9 @@ export function usePromptTransfer({
 			}
 			cancelAutoCapture("active-terminal-lost");
 			cancelAutoRelay("active-terminal-lost");
-			if (autoRelayMode === "loop" && !autoLoopWorkerPaneIdAtArmRef.current) {
-				setAutoLoopStopReason("no active terminal");
-				setAutoLoopPhase("stopped");
-				setAutoLoopLastAction("no active terminal");
-			}
 		}
 	}, [
 		activeTerminal,
-		autoRelayMode,
 		formSendPreview,
 		selectionPreview,
 		captureForTerminalPreview.visible,
@@ -3242,29 +1655,8 @@ export function usePromptTransfer({
 	}, [autoRelayMode, cancelAutoRelay]);
 
 	useEffect(() => {
-		const previousAutoRelayMode = previousAutoRelayModeRef.current;
-		previousAutoRelayModeRef.current = autoRelayMode;
-		if (autoRelayMode === "loop") {
-			if (previousAutoRelayMode === "loop") return;
-			resetAutoLoopState();
-			return;
-		}
-		setAutoLoopPhase("idle");
-		setAutoLoopLastAction("");
-		setAutoLoopStopReason(null);
-		autoLoopTerminalFingerprintRef.current = "";
-		autoLoopWorkerFingerprintRef.current = "";
-		autoLoopArtifactReviewExpectedRef.current = false;
-	}, [autoRelayMode, resetAutoLoopState]);
-
-	useEffect(() => {
-		if (autoRelayMode !== "preview" && autoRelayMode !== "loop") return;
-		if (autoRelayMode === "loop" && autoLoopStopReason) return;
-		if (autoRelayMode === "loop" && autoLoopPhase !== "waiting-worker") return;
-		const relayPaneId =
-			autoRelayMode === "loop"
-				? autoLoopWorkerPaneIdAtArmRef.current
-				: activeTerminal;
+		if (autoRelayMode !== "preview") return;
+		const relayPaneId = activeTerminal;
 		if (!relayPaneId) return;
 		if (workerResponsePreview.visible) return;
 		const currentRelay = autoRelayRef.current;
@@ -3277,9 +1669,7 @@ export function usePromptTransfer({
 		startAutoRelayPreview(relayPaneId, markerOffset, "mode-armed");
 	}, [
 		activeTerminal,
-		autoLoopPhase,
 		autoRelayMode,
-		autoLoopStopReason,
 		startAutoRelayPreview,
 		workerResponsePreview.visible,
 	]);
@@ -3297,42 +1687,6 @@ export function usePromptTransfer({
 			cancelAutoCapture("url-changed");
 		}
 	}, [currentUrl, cancelAutoCapture]);
-
-	useEffect(() => {
-		if (autoRelayMode !== "loop") return;
-		if (autoLoopStopReason) return;
-		if (autoLoopPhase !== "waiting-browser-ai") return;
-		if (autoCaptureStatus !== "idle") return;
-		if (captureForTerminalPreview.visible) return;
-		if (workerResponsePreview.visible) return;
-		const liveUrl = getLiveUrl() || currentUrl;
-		const provider = detectProvider(liveUrl);
-		if (!provider) {
-			stopAutoLoop("no Browser AI provider");
-			return;
-		}
-		setAutoLoopPhase("waiting-browser-ai");
-		setAutoLoopLastAction("Waiting for Browser AI response");
-		console.log("[S5.2] passive Browser AI response watcher armed", {
-			provider,
-			liveUrl,
-		});
-		void startAutoCapture({
-			prompt: "auto-loop-passive-browser-ai-watch",
-			triggeredAt: Date.now(),
-		});
-	}, [
-		autoCaptureStatus,
-		autoLoopPhase,
-		autoLoopStopReason,
-		autoRelayMode,
-		captureForTerminalPreview.visible,
-		currentUrl,
-		getLiveUrl,
-		startAutoCapture,
-		stopAutoLoop,
-		workerResponsePreview.visible,
-	]);
 
 	const doInject = useCallback(
 		async (prompt: string) => {
@@ -3415,7 +1769,7 @@ export function usePromptTransfer({
 
 	const handleTerminalSubmitBeforeSend = useCallback(
 		(paneId: string): (() => void) | null => {
-			if (autoRelayMode !== "preview" && autoRelayMode !== "loop") return null;
+			if (!isPreviewRelayMode(autoRelayMode)) return null;
 			const markerOffset = getOutputLogOffset(paneId);
 			console.log("[S3.13] marker captured before send");
 			console.log("[S3.13-stream] marker offset =", markerOffset);
@@ -3437,456 +1791,6 @@ export function usePromptTransfer({
 		});
 		if (ok) setWorkerResponsePreview(EMPTY_WORKER_RESPONSE_PREVIEW);
 	}, [workerResponsePreview, workspaceId]);
-
-	useEffect(() => {
-		if (autoRelayMode !== "loop") return;
-		if (autoLoopStopReason) return;
-		if (!captureForTerminalPreview.visible) return;
-		if (captureForTerminalPreview.source !== "browser-ai") return;
-
-		const text = captureForTerminalPreview.text;
-		const browserAiReplyText = latestBrowserAiDirectionText || text;
-		const fingerprint = fingerprintText(`terminal:${text}`);
-		if (autoLoopTerminalFingerprintRef.current === fingerprint) return;
-
-		const workerPaneId = autoLoopWorkerPaneIdAtArmRef.current;
-		if (
-			requireBoundWorkerForAutoLoopRef.current &&
-			autoLoopWorkerBindingStatusAtArmRef.current !== "bound"
-		) {
-			stopAutoLoop(
-				autoLoopWorkerBindingStatusAtArmRef.current === "stale"
-					? "bound worker stale"
-					: "worker binding required",
-			);
-			return;
-		}
-		if (autoLoopWorkerBindingStatusAtArmRef.current === "stale") {
-			stopAutoLoop("bound worker terminal is stale");
-			return;
-		}
-		if (!workerPaneId) {
-			stopAutoLoop("no bound or active worker terminal");
-			return;
-		}
-		if (!detectProvider(getLiveUrl() || currentUrl)) {
-			stopAutoLoop("no Browser AI provider");
-			return;
-		}
-		if (!text.trim()) {
-			stopAutoLoop("Terminal Send Preview is empty");
-			return;
-		}
-		const expectedTabId = workspaceId
-			? useTabsStore.getState().activeTabIds[workspaceId] ?? null
-			: null;
-		const artifactReviewController =
-			resolveAutoLoopArtifactReviewController();
-		const browserRequestedStop = isBrowserCompletionStop(browserAiReplyText);
-		const hasNextWorkerInstruction =
-			hasAutoLoopArtifactReviewNextWorkerInstruction(text);
-		const budgetedCompletionDecision = evaluateAutoLoopBudgetedCompletion({
-			replyText: browserAiReplyText,
-			workerInstructionText: text,
-			browserRequestedStop,
-			currentTurn: autoLoopTurn,
-			maxTurns: autoLoopMaxTurns,
-			artifactReviewExpected: autoLoopArtifactReviewExpectedRef.current,
-		});
-		if (autoLoopArtifactReviewExpectedRef.current) {
-			const artifactReviewStopReason =
-				getAutoLoopArtifactReviewReplyStopReason(browserAiReplyText);
-			if (artifactReviewStopReason) {
-				recordAutoLoopArtifactReviewOutcome({
-					expectedTabId,
-					chainStatus: "BLOCKED",
-					finalDecision: "ARTIFACT_REVIEW_NOT_ESTABLISHED",
-					nextAction: "Stop bounded loop and reattach artifacts or request a valid artifact review.",
-					notes: artifactReviewStopReason,
-				}, artifactReviewController);
-				stopAutoLoop(artifactReviewStopReason);
-				return;
-			}
-			const artifactReviewAdvisoryReason =
-				getAutoLoopArtifactReviewReplyAdvisoryReason(browserAiReplyText);
-			if (artifactReviewAdvisoryReason) {
-				recordAutoLoopAdvisory(artifactReviewAdvisoryReason, {
-					lastAction:
-						"Artifact review advisory recorded; continuing bounded Loop",
-				});
-			}
-			const artifactReviewPendingActionReason =
-				getAutoLoopArtifactReviewPendingActionReason(browserAiReplyText);
-			if (artifactReviewPendingActionReason) {
-				autoLoopTerminalFingerprintRef.current = fingerprint;
-				recordAutoLoopArtifactReviewOutcome({
-					expectedTabId,
-					chainStatus: "BLOCKED",
-					finalDecision: "ARTIFACT_REVIEW_PENDING",
-					nextAction:
-						"Reattach Worker artifacts to Browser AI or request a valid artifact review before sending another Worker turn.",
-					notes: artifactReviewPendingActionReason,
-				}, artifactReviewController);
-				recordAutoLoopAdvisory(artifactReviewPendingActionReason, {
-					lastAction:
-						"Artifact review pending; waiting for valid Browser AI artifact review instead of sending Worker",
-				});
-				setAutoLoopPhase("waiting-browser-ai");
-				return;
-			}
-			const missingNextActionReason =
-				getAutoLoopArtifactReviewMissingNextActionReason({
-					replyText: browserAiReplyText,
-					workerInstructionText: text,
-					browserRequestedStop,
-				});
-			if (missingNextActionReason) {
-				const reason = missingNextActionReason;
-				autoLoopTerminalFingerprintRef.current = fingerprint;
-				recordAutoLoopArtifactReviewOutcome({
-					expectedTabId,
-					chainStatus: "PASS",
-					finalDecision: "ARTIFACT_REVIEW_NEXT_ACTION_MISSING",
-					nextAction: "Wait for STOP or Workerへ渡す指示, or ask Browser AI for a scoped next action.",
-					notes: reason,
-				}, artifactReviewController);
-				recordAutoLoopAdvisory(reason, {
-					lastAction:
-						"Artifact review has no next action yet; keeping Loop observable",
-				});
-				return;
-			}
-		}
-		if (browserRequestedStop) {
-			if (
-				budgetedCompletionDecision.shouldRequestPolishReview &&
-				budgetedPolishRequestTurnRef.current !== autoLoopTurn
-			) {
-				autoLoopTerminalFingerprintRef.current = fingerprint;
-				budgetedPolishRequestTurnRef.current = autoLoopTurn;
-				recordAutoLoopAdvisory(
-					"Browser AI requested STOP before using remaining turn budget; requesting Polish Mode review",
-					{
-						lastAction: budgetedCompletionDecision.nextAction,
-					},
-				);
-				void requestAutoLoopBudgetedPolishReview(
-					budgetedCompletionDecision,
-					browserAiReplyText,
-				);
-				return;
-			}
-			if (
-				budgetedCompletionDecision.shouldRequestPolishReview &&
-				budgetedPolishRequestTurnRef.current === autoLoopTurn
-			) {
-				recordAutoLoopAdvisory(
-					"Browser AI reaffirmed STOP after budgeted polish request",
-					{
-						lastAction: "Accepting STOP after one Polish Mode challenge",
-					},
-				);
-			}
-			if (autoLoopArtifactReviewExpectedRef.current) {
-				recordAutoLoopArtifactReviewOutcome({
-					expectedTabId,
-					chainStatus: "STOP",
-					finalDecision: "STOP",
-					nextAction: "STOP",
-					notes:
-						budgetedCompletionDecision.stopReason ??
-						"Browser AI reviewed attached Worker artifacts with AI_REFERENCED_FILE: yes and requested completion.",
-				}, artifactReviewController);
-			}
-			stopAutoLoop(
-				budgetedCompletionDecision.stopReason ??
-					"Browser AI requested completion/stop",
-			);
-			return;
-		}
-		const dangerousFinding = findAutoLoopDangerousCommandFinding(
-			text,
-			"browser ai reply",
-		);
-		if (dangerousFinding) {
-			const advisory = `safety advisory: ${dangerousFinding.label} [source=${dangerousFinding.source}; matched=${dangerousFinding.matchedText}; reason=${dangerousFinding.reason}; nextAction=${dangerousFinding.nextAction}]`;
-			appendAutoLoopEvent(advisory);
-			setAutoLoopLastAction(
-				"Safety advisory recorded; continuing Auto Loop",
-			);
-		}
-		if (autoLoopTurn >= autoLoopMaxTurns) {
-			stopAutoLoop(
-				budgetedCompletionDecision.stopReason ??
-					"max turns reached after final review",
-			);
-			return;
-		}
-
-		autoLoopTerminalFingerprintRef.current = fingerprint;
-		budgetedPolishRequestTurnRef.current = null;
-		if (autoLoopArtifactReviewExpectedRef.current && hasNextWorkerInstruction) {
-			recordAutoLoopArtifactReviewOutcome({
-				expectedTabId,
-				chainStatus: "PASS",
-				finalDecision: "NEXT_WORKER_INSTRUCTION",
-				nextAction: "Send Browser AI scoped follow-up instruction to Worker.",
-				notes:
-					"Browser AI reviewed attached Worker artifacts with AI_REFERENCED_FILE: yes and provided Workerへ渡す指示.",
-			}, artifactReviewController);
-		}
-		autoLoopArtifactReviewExpectedRef.current = false;
-		const nextTurn = autoLoopTurn + 1;
-		setAutoLoopTurn(nextTurn);
-		setAutoLoopPhase("sending-worker");
-		setAutoLoopLastAction(`Sending turn ${nextTurn}/${autoLoopMaxTurns} to Worker`);
-		cancelAutoCapture("sending-to-worker");
-		const startRelay = handleTerminalSubmitBeforeSend(workerPaneId);
-		void (async () => {
-			console.log("[S5.2] auto loop terminal send start", {
-				turn: nextTurn,
-				maxTurns: autoLoopMaxTurns,
-				paneId: workerPaneId,
-				terminalId: autoLoopTerminalIdAtArmRef.current,
-				workerBindingStatus: autoLoopWorkerBindingStatusAtArmRef.current,
-				textLength: text.length,
-			});
-			const ok = await sendToTerminal(workerPaneId, text, { submit: true });
-			if (!ok) {
-				stopAutoLoop("terminal submit failed");
-				return;
-			}
-			startRelay?.();
-			setCaptureForTerminalPreview(EMPTY_CAPTURE_FOR_TERMINAL_PREVIEW);
-			setCapturePreview(null);
-			setAutoLoopPhase("waiting-worker");
-			setAutoLoopLastAction(`Sent turn ${nextTurn}/${autoLoopMaxTurns} to Worker`);
-			console.log("[S5.2] Auto Loop sent Terminal turn", {
-				turn: nextTurn,
-				maxTurns: autoLoopMaxTurns,
-			});
-		})();
-	}, [
-		appendAutoLoopEvent,
-		autoLoopMaxTurns,
-		autoLoopStopReason,
-		autoLoopTurn,
-		autoRelayMode,
-		captureForTerminalPreview,
-		currentUrl,
-		getLiveUrl,
-		handleTerminalSubmitBeforeSend,
-		latestBrowserAiDirectionText,
-		recordAutoLoopAdvisory,
-		requestAutoLoopBudgetedPolishReview,
-		resolveAutoLoopArtifactReviewController,
-		stopAutoLoop,
-	]);
-
-	useEffect(() => {
-		if (autoRelayMode !== "loop") return;
-		if (autoLoopStopReason) return;
-		if (!workerResponsePreview.visible) return;
-
-		const text = workerResponsePreview.text;
-		const fingerprint = fingerprintText(`worker:${text}`);
-		if (autoLoopWorkerFingerprintRef.current === fingerprint) return;
-
-		const provider = detectProvider(getLiveUrl() || currentUrl);
-		if (!provider) {
-			stopAutoLoop("no Browser AI provider");
-			return;
-		}
-		if (!text.trim()) {
-			recordAutoLoopAdvisory("Worker Response Preview is empty", {
-				lastAction:
-					"Worker response preview is empty; continuing to wait for a usable report",
-			});
-			return;
-		}
-		if (workerResponsePreview.confidence === "low") {
-			recordAutoLoopAdvisory("worker confidence low", {
-				lastAction:
-					"Worker response confidence is low; forwarding available text with advisory context",
-			});
-		}
-		const workerStopReason = hasWorkerFailureOrUnresolved(text);
-		if (workerStopReason) {
-			stopAutoLoop(workerStopReason);
-			return;
-		}
-
-		autoLoopWorkerFingerprintRef.current = fingerprint;
-		setAutoLoopPhase("sending-browser-ai");
-		setAutoLoopLastAction("Sending Worker response to Browser AI");
-		void (async () => {
-			const expectedTabId = workspaceId
-				? useTabsStore.getState().activeTabIds[workspaceId] ?? null
-				: null;
-			const artifactController =
-				resolveAutoLoopArtifactReviewController();
-			let fallbackText = text;
-			if (
-				artifactController?.collectWorkerReportedArtifacts &&
-				artifactController?.sendWorkerReportedArtifactsToBrowserAI
-			) {
-				setAutoLoopLastAction("Collecting Worker-reported artifacts");
-				const artifactCollection =
-					await artifactController.collectWorkerReportedArtifacts({
-						workerReportText: text,
-						provider,
-						expectedTabId,
-						requireActiveTabMatch: Boolean(expectedTabId),
-						loopContext: {
-							mode: "bounded-loop",
-							purpose:
-								"Auto Loop reviews Worker-reported artifacts before deciding STOP or next Worker instruction",
-							allowWorkerInstruction: true,
-							runToCompletion: true,
-						},
-					});
-				const artifactDecision =
-					classifyAutoLoopArtifactCollection(artifactCollection);
-				if (artifactDecision.stopReason) {
-					stopAutoLoop(artifactDecision.stopReason);
-					return;
-				}
-				if (artifactDecision.shouldSendArtifacts) {
-					setAutoLoopLastAction("Attaching Worker artifacts to Browser AI");
-					let artifactReviewBaseline: AssistantCaptureSnapshot | null = null;
-					try {
-						const baselineRaw = await injectIntoPage(
-							buildAssistantSnapshotScript(provider),
-						);
-						artifactReviewBaseline =
-							toAssistantCaptureSnapshot(baselineRaw);
-					} catch {
-						artifactReviewBaseline = null;
-					}
-					const artifactSendResult =
-						await artifactController.sendWorkerReportedArtifactsToBrowserAI({
-							workerReportText: text,
-							provider,
-							expectedTabId,
-							requireActiveTabMatch: Boolean(expectedTabId),
-							loopContext: {
-								mode: "bounded-loop",
-								purpose:
-									"Auto Loop reviews Worker-reported artifacts before deciding STOP or next Worker instruction",
-								allowWorkerInstruction: true,
-								runToCompletion: true,
-							},
-						});
-					const artifactStopReason =
-						getAutoLoopArtifactSendStopReason(artifactSendResult);
-					if (artifactStopReason) {
-						stopAutoLoop(artifactStopReason);
-						return;
-					}
-					const artifactAdvisoryReason =
-						getAutoLoopArtifactSendAdvisoryReason(artifactSendResult);
-					if (artifactAdvisoryReason) {
-						recordAutoLoopAdvisory(artifactAdvisoryReason, {
-							lastAction:
-								"Artifact send advisory recorded; continuing with available Browser AI state",
-						});
-					}
-					const artifactSendStatus = String(
-						artifactSendResult.status || "",
-					).toUpperCase();
-					if (
-						artifactSendStatus === "NOT_ATTACHED" ||
-						((artifactSendResult.attachedFileCount || 0) === 0 &&
-							!artifactSendResult.attachmentUiReflected)
-					) {
-						setAutoLoopLastAction(
-							`Artifact attachment was not reflected; falling back to text Worker report (${artifactAdvisoryReason ?? "no reflected attachment"})`,
-						);
-						fallbackText = [
-							"DoyDeck artifact review fallback: Worker-reported artifacts were detected, but Browser AI attachment was not reflected in the UI. Treat this as text-only review and do not claim the artifact itself was inspected.",
-							"",
-							text,
-						].join("\n");
-						autoLoopArtifactReviewExpectedRef.current = false;
-					} else {
-						setWorkerResponsePreview(EMPTY_WORKER_RESPONSE_PREVIEW);
-						if (autoLoopTurn >= autoLoopMaxTurns) {
-							appendAutoLoopEvent(
-								"final review armed: turn budget reached after Worker response",
-							);
-						}
-						autoLoopArtifactReviewExpectedRef.current = true;
-						setAutoLoopPhase("waiting-browser-ai");
-						setAutoLoopLastAction(
-							summarizeAutoLoopArtifactSendResult(artifactSendResult),
-						);
-						void startAutoCapture({
-							baseline: artifactReviewBaseline,
-							prompt: "auto-loop-artifact-review-watch",
-							triggeredAt: Date.now(),
-						});
-						return;
-					}
-				}
-				if (artifactDecision.shouldFallbackToText) {
-					setAutoLoopLastAction(
-						`No attachable Worker artifacts; sending text report to Browser AI (${artifactDecision.reason})`,
-					);
-					fallbackText = [
-						"DoyDeck artifact review fallback: Worker report contained no attachable real-file artifacts for Browser AI. Treat this as text-only review and do not claim the artifact itself was inspected.",
-						"",
-						text,
-					].join("\n");
-					autoLoopArtifactReviewExpectedRef.current = false;
-				}
-			} else {
-				setAutoLoopLastAction(
-					"Artifact review command unavailable; sending text Worker report to Browser AI",
-				);
-				fallbackText = [
-					"DoyDeck artifact review fallback: artifact attachment command was unavailable. Treat this as text-only review and do not claim the artifact itself was inspected.",
-					"",
-					text,
-				].join("\n");
-				autoLoopArtifactReviewExpectedRef.current = false;
-			}
-
-			const ok = await sendWorkerResponseToBrowserAI(fallbackText, {
-				autoLoop: true,
-				envelopeDetected: workerResponsePreview.reasons.includes("envelope matched"),
-				expectedWorkspaceId: workspaceId,
-				expectedTabId,
-				autoLoopTurn,
-				autoLoopMaxTurns,
-			});
-			if (!ok) {
-				stopAutoLoop("browser injection failed");
-				return;
-			}
-			setWorkerResponsePreview(EMPTY_WORKER_RESPONSE_PREVIEW);
-			if (autoLoopTurn >= autoLoopMaxTurns) {
-				appendAutoLoopEvent(
-					"final review armed: turn budget reached after Worker response",
-				);
-			}
-			setAutoLoopPhase("waiting-browser-ai");
-			setAutoLoopLastAction("Sent Worker response to Browser AI");
-		})();
-	}, [
-		autoLoopMaxTurns,
-		autoLoopStopReason,
-		autoLoopTurn,
-		autoRelayMode,
-		currentUrl,
-		getLiveUrl,
-		injectIntoPage,
-		recordAutoLoopAdvisory,
-		resolveAutoLoopArtifactReviewController,
-		startAutoCapture,
-		stopAutoLoop,
-		workerResponsePreview,
-		workspaceId,
-	]);
 
 	const showSessionDraft = useCallback(
 		(
@@ -4196,22 +2100,16 @@ export function usePromptTransfer({
 					workerType: workerBinding.workerType,
 					workerIdentityOk: workerIdentity.workerIdentityOk,
 					bindingStatus: workerBinding.bindingStatus,
-					bindingPolicy: requireBoundWorkerForAutoLoop
-						? "strict"
-						: "fallback",
-					fallbackUsed:
-						!requireBoundWorkerForAutoLoop &&
-						workerBinding.bindingStatus !== "bound",
+					bindingPolicy: "manual",
+					fallbackUsed: false,
 					reason: workerBinding.reason,
 				},
-				autoLoop: {
+				automation: {
 					mode: autoRelayMode,
-					phase: autoLoopPhase,
-					turn: autoLoopTurn,
-					maxTurns: autoLoopMaxTurns,
-					stopReason: autoLoopStopReason,
-					lastAction: autoLoopLastAction,
-					tabContextStatus: autoLoopDiagnostics.tabContextStatus,
+					status: autoRelayStatus,
+					lastAction: autoRelayStatus === "watching"
+						? "Watching terminal output for manual relay preview"
+						: "",
 				},
 				latestWorkerReport,
 				latestBrowserDecision,
@@ -4219,13 +2117,8 @@ export function usePromptTransfer({
 			});
 		},
 		[
-			autoLoopDiagnostics.tabContextStatus,
-			autoLoopLastAction,
-			autoLoopMaxTurns,
-			autoLoopPhase,
-			autoLoopStopReason,
-			autoLoopTurn,
 			autoRelayMode,
+			autoRelayStatus,
 			captureForTerminalPreview.text,
 			capturePreview,
 			currentActiveTabId,
@@ -4234,7 +2127,6 @@ export function usePromptTransfer({
 			getLiveUrl,
 			latestBrowserAiDirectionText,
 			latestWorkerResponseText,
-			requireBoundWorkerForAutoLoop,
 			session,
 			state,
 			workerBinding,
@@ -4520,15 +2412,6 @@ export function usePromptTransfer({
 		captureForTerminalPreview,
 		autoCaptureStatus,
 		autoRelayStatus,
-		autoLoopMaxTurns,
-		autoLoopTurn,
-		autoLoopStopReason,
-		autoLoopPhase,
-		autoLoopLastAction,
-		autoLoopLastActivityAt,
-		autoLoopDiagnostics,
-		setAutoLoopMaxTurns,
-		stopAutoLoop,
 		workerResponsePreview,
 		handoffPreview,
 		sessionDraftPreview,

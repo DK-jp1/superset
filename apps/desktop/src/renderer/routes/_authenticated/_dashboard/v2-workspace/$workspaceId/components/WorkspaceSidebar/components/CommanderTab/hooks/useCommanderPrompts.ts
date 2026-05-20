@@ -65,7 +65,6 @@ DoyDeckの構成:
 - Commander: Session / Handoff / Browser AI ⇄ Worker連携
 - Terminal Worker: Claude Code / Codexなどの実装担当
 - Auto Relay Preview: Worker Responseを拾ってBrowser AIへ返す
-- Auto Loop Preview: 制限付きでBrowser AI ⇄ Workerを自動往復
 
 役割分担:
 - Doy: 最終判断者、UX感覚、事業目的
@@ -111,11 +110,11 @@ Worker報告に成果物path / スクショpathがある場合、Browser AIレ�
 
 ${DOYDECK_WORKER_RESPONSE_ENVELOPE_TEMPLATE}
 
-Auto Loop時:
+人間操作前提:
 - Workerへ渡す指示が必要なら必ず「Workerへ渡す指示:」で始める
-- DoyDeck Loopは build → polish → final-review。基本完了だけで即STOPせず、turn budgetが残る場合は安全な小改善余地を探す
-- 改善余地がありscope内で安全なら「QUALITY_STATUS: polish-needed」と書き、「Workerへ渡す指示:」で追加指示を出す
-- 残りturnを使わない方がよい場合だけ「QUALITY_STATUS: ready-candidate」「STOP_REASON:」「STOP」または「次のWorker指示は不要」と明記する
+- DoyDeckは自動往復ではなく、人間がBrowser AIの判断とWorker指示を確認しながら進める
+- 改善余地がありscope内で安全なら「Workerへ渡す指示:」で短い追加指示案を出す
+- 追加Worker指示が不要なら「STOP」または「次のWorker指示は不要」と明記する
 - Worker完了報告は必ずDONE_TAGからEND_REPORTまでの形式で囲ませる
 - Worker完了報告には成果物path、スクショpath、build結果、Playwright結果、console/pageerror、未実装、Doy確認事項、次にやるならを必ず含める
 - Worker報告内に成果物pathがある場合は、現物添付レビュー後にSTOPまたは次Worker指示を判断する
@@ -171,14 +170,10 @@ interface WorkSessionLedgerInput {
 		fallbackUsed: boolean;
 		reason: string | null;
 	};
-	autoLoop: {
+	automation: {
 		mode: string;
-		phase: string;
-		turn: number;
-		maxTurns: number;
-		stopReason: string | null;
+		status: string;
 		lastAction: string;
-		tabContextStatus: string;
 	};
 	latestWorkerReport: string;
 	latestBrowserDecision: string;
@@ -288,7 +283,7 @@ export function generateReviewPrompt(state: CommanderState): string {
 
 	if (sections.length === 0) return "";
 
-	return `# Review Prompt\n\n${sections.join("\n\n")}\n\n---\nReview the worker's output against the goal and constraints above. Check for:\n1. Goal completion — did the worker fully achieve the goal?\n2. Constraint violations — were all constraints respected?\n3. Side effects — any unintended changes?\n4. Quality — code quality, security, correctness\n5. Budgeted polish — if turn budget remains, are there safe scoped improvements worth another Worker turn?\n\nReport: PASS / FAIL with specific findings.`;
+	return `# Review Prompt\n\n${sections.join("\n\n")}\n\n---\nReview the worker's output against the goal and constraints above. Check for:\n1. Goal completion — did the worker fully achieve the goal?\n2. Constraint violations — were all constraints respected?\n3. Side effects — any unintended changes?\n4. Quality — code quality, security, correctness\n5. Follow-up polish — are there safe scoped improvements worth a separate manual Worker instruction?\n\nReport: PASS / FAIL with specific findings.`;
 }
 
 export function generateHandoffPrompt({
@@ -395,7 +390,7 @@ export function generateWorkSessionLedgerMarkdown({
 	session,
 	browser,
 	worker,
-	autoLoop,
+	automation,
 	latestWorkerReport,
 	latestBrowserDecision,
 	latestQaResult,
@@ -471,7 +466,7 @@ export function generateWorkSessionLedgerMarkdown({
 			? ""
 			: `Worker identity live check is false (${worker.workerType || "unknown"})`,
 		worker.reason ? `Worker binding reason: ${worker.reason}` : "",
-		autoLoop.stopReason ? `Auto Loop stop reason: ${autoLoop.stopReason}` : "",
+		automation.lastAction ? `Automation action: ${automation.lastAction}` : "",
 	].filter(Boolean);
 	const liveStateSection = recordedOutcome
 		? `## 現在のlive状態
@@ -500,13 +495,10 @@ ${!browser.ready || !worker.workerIdentityOk ? "注: live状態がUnsupported/un
 - terminalId: ${worker.terminalId || "未取得"}
 - reason: ${worker.reason || "なし"}
 
-### Auto Loop
-- mode: ${autoLoop.mode}
-- phase: ${autoLoop.phase}
-- turn: ${autoLoop.turn}/${autoLoop.maxTurns}
-- stop reason: ${autoLoop.stopReason || "なし"}
-- last action: ${autoLoop.lastAction || "なし"}
-- tab context: ${autoLoop.tabContextStatus}
+### Automation State
+- mode: ${automation.mode}
+- status: ${automation.status}
+- last action: ${automation.lastAction || "なし"}
 
 ### live blockers / warnings
 ${liveWarnings.length ? liveWarnings.map((warning) => `- ${warning}`).join("\n") : "- なし"}
@@ -531,13 +523,10 @@ ${liveWarnings.length ? liveWarnings.map((warning) => `- ${warning}`).join("\n")
 - terminalId: ${worker.terminalId || "未取得"}
 - reason: ${worker.reason || "なし"}
 
-## Auto Loop
-- mode: ${autoLoop.mode}
-- phase: ${autoLoop.phase}
-- turn: ${autoLoop.turn}/${autoLoop.maxTurns}
-- stop reason: ${autoLoop.stopReason || "なし"}
-- last action: ${autoLoop.lastAction || "なし"}
-- tab context: ${autoLoop.tabContextStatus}
+## Automation State
+- mode: ${automation.mode}
+- status: ${automation.status}
+- last action: ${automation.lastAction || "なし"}
 `;
 	const targetFiles = session.targetFiles.length
 		? session.targetFiles.map((path) => `- ${path}`).join("\n")
@@ -590,8 +579,8 @@ export function buildSendHandoffLedgerPrompt(ledger: string): string {
 	return `以下は現在のDoyDeck作業タブのHandoff Ledgerです。
 内容を読み取り、現在地・未解決・次アクションを整理してください。
 次にWorkerへ作業指示を出す必要がある場合は、必ず「Workerへ渡す指示:」から始めてください。
-基本完了だけで即STOPせず、turn budgetが残る場合は安全な小改善余地を探してください。
-改善余地がありscope内で安全なら「QUALITY_STATUS: polish-needed」と書き、Worker指示を出してください。
+基本完了でも、安全な小改善余地がある場合は別の手動Worker指示として提案してください。
+改善余地がありscope内で安全なら「QUALITY_STATUS: polish-needed」と書き、Worker指示案を出してください。
 完了または追加作業不要なら「QUALITY_STATUS: ready-candidate」「STOP_REASON:」「次のWorker指示は不要」または「STOP」と明記してください。
 Doy判断が必要な場合だけ「Doy確認事項:」を書いてください。
 Doy判断が不要なら「Doy確認事項なし」と明記してください。
@@ -658,7 +647,7 @@ interface RecordedControllerChainOutcome {
 	extractedCodexInstructionSummary: string;
 	extractedDoyConfirmationItems: string;
 	notes: string;
-	autoLoop: string;
+	automationState: string;
 	completedAt: string;
 }
 
@@ -695,7 +684,7 @@ function formatRecordedOutcomeQaLines(
 			"- Browser AI review: not expected",
 			`- Worker response: ${recordedOutcome.latestWorkerResponseStatus || "未取得"}`,
 			`- Worker-only smoke: ${workerOnlySmokeStatus}`,
-			`- Auto Loop: ${recordedOutcome.autoLoop || "未取得"}`,
+			`- Automation state: ${recordedOutcome.automationState || "未取得"}`,
 		]
 			.filter(Boolean)
 			.join("\n");
@@ -716,7 +705,7 @@ function formatRecordedOutcomeQaLines(
 		`- STOP: ${recordedOutcome.hasStopSignal || "false"}`,
 		`- Codex instruction: ${recordedOutcome.hasCodexInstruction || "false"}`,
 		`- Doy confirmation: ${recordedOutcome.hasDoyConfirmationItems || "false"}`,
-		`- Auto Loop: ${recordedOutcome.autoLoop || "未取得"}`,
+		`- Automation state: ${recordedOutcome.automationState || "未取得"}`,
 	].join("\n");
 }
 
@@ -739,7 +728,7 @@ ${recordedOutcome.smokeType ? `- smokeType: ${recordedOutcome.smokeType}` : ""}
 - nextAction: ${recordedOutcome.nextAction || "STOP / 追加Worker指示不要"}
 - recorded worker type: ${recordedOutcome.workerType || "未取得"}
 - recorded workerIdentityOk: ${recordedOutcome.workerIdentityOk || "未取得"}
-- Auto Loop at record time: ${recordedOutcome.autoLoop || "未取得"}
+- Automation state at record time: ${recordedOutcome.automationState || "未取得"}
 - completedAt / recordedAt: ${recordedOutcome.completedAt || "未取得"}
 ${recordedOutcome.notes ? `- notes: ${recordedOutcome.notes}` : ""}
 `;
@@ -768,7 +757,7 @@ ${recordedOutcome.submissionNextRequiredAction ? `- Browser AI submission next a
 - recorded Browser provider: ${recordedOutcome.browserAiProvider || "未取得"}
 - recorded worker type: ${recordedOutcome.workerType || "未取得"}
 - recorded workerIdentityOk: ${recordedOutcome.workerIdentityOk || "未取得"}
-- Auto Loop at record time: ${recordedOutcome.autoLoop || "未取得"}
+- Automation state at record time: ${recordedOutcome.automationState || "未取得"}
 - completedAt / recordedAt: ${recordedOutcome.completedAt || "未取得"}
 ${recordedOutcome.notes ? `- notes: ${recordedOutcome.notes}` : ""}
 `;
@@ -827,7 +816,7 @@ function extractLatestControllerChainOutcome(
 		),
 		extractedDoyConfirmationItems: readLine("extractedDoyConfirmationItems"),
 		notes: readLine("notes"),
-		autoLoop: readLine("autoLoop"),
+		automationState: readLine("automationState"),
 		completedAt: readLine("completedAt"),
 	};
 }

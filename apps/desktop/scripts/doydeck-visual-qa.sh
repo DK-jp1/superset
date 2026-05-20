@@ -80,7 +80,7 @@ const checks = [
   ["Terminal", ["terminal", "codex", "claude"]],
   ["Commander / Browser AI", ["commander", "browser ai", "chatgpt", "gemini", "claude"]],
   ["Explorer", ["explorer", "copy path", "open in center"]],
-  ["Auto Loop controls", ["auto loop", "auto relay", "manual"]],
+  ["Manual relay controls", ["auto relay", "manual", "preview"]],
   ["Diagnostics", ["diag", "diagnostics"]],
 ];
 for (const [label, needles] of checks) {
@@ -246,11 +246,11 @@ fi
 		run_status "スクショ" "captured"
 	fi
 	printf '\n## 次に自動化できること\n\n'
-	run_status "UI element assertions" "Peekaboo see JSONから、Commander/Explorer/Auto Loopの安定したアクセシビリティラベルを抽出して判定を強化する"
+	run_status "UI element assertions" "Peekaboo see JSONから、Commander/Explorer/手動Relayの安定したアクセシビリティラベルを抽出して判定を強化する"
 	run_status "Click smoke test" "安全なタブ切替やActions menu open/closeだけをクリック検証する"
 	run_status "Regression capture" "スクショを日付別に保存し、見た目の崩れを比較する"
 	printf '\n## 手動確認が必要なこと\n\n'
-	run_status "Visual details" "スクショ上の細かい崩れ、Browser AIログイン状態、実際のAuto Loop送受信は必要に応じて手動確認"
+	run_status "Visual details" "スクショ上の細かい崩れ、Browser AIログイン状態、実際の手動Relay送受信は必要に応じて手動確認"
 	run_status "Provider state" "ChatGPT/Claude/Geminiのログイン状態やネットワーク状態はこのMVPでは判定しない"
 } >"${REPORT}"
 

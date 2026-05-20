@@ -1,7 +1,6 @@
 import { Button } from "@superset/ui/button";
 import {
 	DropdownMenu,
-	DropdownMenuCheckboxItem,
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuLabel,
@@ -29,23 +28,8 @@ import {
 import type { CommanderState } from "./commander-types";
 import { copyToClipboard } from "./hooks/useCommanderPrompts";
 import { sendToTerminal } from "./hooks/usePromptTransfer";
-import type {
-	AutoLoopDiagnostics,
-	AutoLoopPhase,
-	AutoLoopMaxTurns,
-	AutoRelayMode,
-} from "./hooks/usePromptTransfer";
+import type { AutoRelayMode } from "./hooks/usePromptTransfer";
 import { TerminalSendPreview } from "./PromptPreviewPanel";
-
-const AUTO_LOOP_MAX_TURN_OPTIONS: AutoLoopMaxTurns[] = [10, 25, 50, 100];
-const AUTO_LOOP_PHASE_LABELS: Record<AutoLoopPhase, string> = {
-	idle: "idle",
-	"waiting-browser-ai": "waiting for Browser AI",
-	"sending-worker": "sending to Worker",
-	"waiting-worker": "waiting for Worker",
-	"sending-browser-ai": "sending to Browser AI",
-	stopped: "stopped",
-};
 
 export function CommanderHelperBar({
 	state,
@@ -70,17 +54,6 @@ export function CommanderHelperBar({
 	handoffPrompt,
 	autoRelayMode,
 	onAutoRelayModeChange,
-	requireBoundWorkerForAutoLoop,
-	onRequireBoundWorkerForAutoLoopChange,
-	autoLoopMaxTurns,
-	onAutoLoopMaxTurnsChange,
-	autoLoopTurn,
-	autoLoopPhase,
-	autoLoopLastAction,
-	autoLoopLastActivityAt,
-	autoLoopDiagnostics,
-	autoLoopStopReason,
-	onStopAutoLoop,
 	onTerminalSubmitBeforeSend,
 	workerBinding,
 	onBindActiveTerminalToTab,
@@ -110,17 +83,6 @@ export function CommanderHelperBar({
 	handoffPrompt: string;
 	autoRelayMode: AutoRelayMode;
 	onAutoRelayModeChange: (mode: AutoRelayMode) => void;
-	requireBoundWorkerForAutoLoop: boolean;
-	onRequireBoundWorkerForAutoLoopChange: (required: boolean) => void;
-	autoLoopMaxTurns: AutoLoopMaxTurns;
-	onAutoLoopMaxTurnsChange: (maxTurns: AutoLoopMaxTurns) => void;
-	autoLoopTurn: number;
-	autoLoopPhase: AutoLoopPhase;
-	autoLoopLastAction: string;
-	autoLoopLastActivityAt: number | null;
-	autoLoopDiagnostics: AutoLoopDiagnostics;
-	autoLoopStopReason: string | null;
-	onStopAutoLoop: (reason: string) => void;
 	onTerminalSubmitBeforeSend: (paneId: string) => (() => void) | null;
 	workerBinding: DoyDeckWorkerBindingSnapshot;
 	onBindActiveTerminalToTab: () => void;
@@ -134,8 +96,6 @@ export function CommanderHelperBar({
 		label: string;
 	} | null>(null);
 	const [actionsOpen, setActionsOpen] = useState(false);
-	const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-	const [now, setNow] = useState(() => Date.now());
 
 	const closeActions = useCallback(() => {
 		setActionsOpen(false);
@@ -146,28 +106,6 @@ export function CommanderHelperBar({
 	useEffect(() => {
 		if (!activeTerminal && pendingSend) setPendingSend(null);
 	}, [activeTerminal, pendingSend]);
-
-	useEffect(() => {
-		if (autoRelayMode !== "loop") return;
-		const id = window.setInterval(() => setNow(Date.now()), 1000);
-		return () => window.clearInterval(id);
-	}, [autoRelayMode]);
-
-	const lastActivityLabel =
-		autoLoopLastActivityAt && autoRelayMode === "loop"
-			? `${Math.max(0, Math.floor((now - autoLoopLastActivityAt) / 1000))}s ago`
-			: null;
-	const formatAgo = (at: number | null) =>
-		at ? `${Math.max(0, Math.floor((now - at) / 1000))}s ago` : "-";
-	const formatRemaining = (deadlineAt: number | null) =>
-		deadlineAt
-			? `${Math.max(0, Math.ceil((deadlineAt - now) / 1000))}s`
-			: "-";
-	const formatOffset = (offset: number | null) =>
-		typeof offset === "number" ? offset.toString() : "-";
-	const formatSlotKey = (key: string | null) => key || "-";
-	const formatBrowserUrl = (url: string | null) => url || "-";
-	const formatShortId = (id: string | null) => (id ? id.slice(-8) : "-");
 
 	const handleTerminalSend = useCallback(
 		(type: "worker" | "review") => {
@@ -262,49 +200,12 @@ export function CommanderHelperBar({
 						onAutoRelayModeChange(event.target.value as AutoRelayMode)
 					}
 					className="h-5 min-w-[7rem] max-w-full flex-[1_1_8rem] truncate rounded border border-border bg-background px-1 text-[9px]"
-					title="Auto Mode"
+					title="Relay Mode"
 					data-testid="commander-auto-mode-selector"
 				>
 					<option value="off">Manual</option>
 					<option value="preview">Auto Relay Preview</option>
-					<option value="loop">Auto Loop Preview</option>
 				</select>
-				{autoRelayMode === "loop" && (
-					<div className="flex min-w-0 flex-[2_1_12rem] flex-wrap items-center gap-1">
-						<select
-							value={autoLoopMaxTurns}
-							onChange={(event) =>
-								onAutoLoopMaxTurnsChange(
-									Number(event.target.value) as AutoLoopMaxTurns,
-								)
-							}
-							className="h-5 w-14 rounded border border-border bg-background px-1 text-[9px]"
-							title="Max Turns"
-							data-testid="auto-loop-max-turns-selector"
-						>
-							{AUTO_LOOP_MAX_TURN_OPTIONS.map((option) => (
-								<option key={option} value={option}>
-									{option} turns
-								</option>
-							))}
-						</select>
-						<span className="whitespace-nowrap rounded bg-muted px-1 py-0.5 text-[9px] text-muted-foreground">
-							{autoLoopTurn}/{autoLoopMaxTurns}
-						</span>
-						<span className="min-w-0 flex-[1_1_7rem] truncate rounded bg-primary/10 px-1 py-0.5 text-[9px] text-primary">
-							{AUTO_LOOP_PHASE_LABELS[autoLoopPhase]}
-						</span>
-						<Button
-							variant="secondary"
-							size="sm"
-							className="h-5 px-1 text-[9px]"
-							onClick={() => onStopAutoLoop("Stopped by Doy")}
-							data-testid="auto-loop-stop-button"
-						>
-							Stop
-						</Button>
-					</div>
-				)}
 				<div className="min-w-0 flex-1" />
 				<DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
 					<DropdownMenuTrigger asChild>
@@ -381,14 +282,6 @@ export function CommanderHelperBar({
 							<LuTrash2 className="size-3.5" />
 							Unbind worker from this tab
 						</DropdownMenuItem>
-						<DropdownMenuCheckboxItem
-							checked={requireBoundWorkerForAutoLoop}
-							onCheckedChange={onRequireBoundWorkerForAutoLoopChange}
-							onSelect={(event) => event.preventDefault()}
-							data-testid="commander-require-bound-worker"
-						>
-							Require bound Worker for Auto Loop
-						</DropdownMenuCheckboxItem>
 						<DropdownMenuSeparator />
 						<DropdownMenuLabel className="text-[10px] font-normal text-muted-foreground">
 							Setup
@@ -487,314 +380,6 @@ export function CommanderHelperBar({
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
-			{autoRelayMode === "loop" && (
-				<div className="min-w-0 border-t bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground">
-					<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-						<Button
-							variant="ghost"
-							size="sm"
-							className="h-5 shrink-0 px-1 text-[9px]"
-							onClick={() => setDiagnosticsOpen((open) => !open)}
-							data-testid="commander-diag-button"
-						>
-							Diag
-						</Button>
-						<span className="min-w-0 truncate" data-testid="auto-loop-phase">
-							Phase: {AUTO_LOOP_PHASE_LABELS[autoLoopPhase]}
-						</span>
-						{autoLoopLastAction && (
-							<span className="min-w-0 max-w-full truncate">
-								Last: {autoLoopLastAction}
-							</span>
-						)}
-						{lastActivityLabel && (
-							<span className="shrink-0">Activity: {lastActivityLabel}</span>
-						)}
-						{autoLoopStopReason && (
-							<span
-								className="min-w-0 max-w-full truncate text-amber-600 dark:text-amber-400"
-								data-testid="auto-loop-stop-reason"
-							>
-								Stopped: {autoLoopStopReason}
-							</span>
-						)}
-					</div>
-					{diagnosticsOpen && (
-						<div
-							className="mt-1 max-h-36 overflow-auto rounded border bg-background/80 p-1.5 text-[9px] leading-4"
-							data-testid="commander-diagnostics-panel"
-						>
-							<div className="grid grid-cols-1 gap-x-3 gap-y-0.5 min-[460px]:grid-cols-2">
-								<span>
-									Phase: {AUTO_LOOP_PHASE_LABELS[autoLoopPhase]}
-								</span>
-								<span>
-									Turn: {autoLoopTurn}/{autoLoopMaxTurns}
-								</span>
-								<span>
-									Browser watcher:{" "}
-									{autoLoopDiagnostics.browserWatcherActive ? "on" : "off"}
-								</span>
-								<span>
-									Worker watcher:{" "}
-									{autoLoopDiagnostics.workerWatcherActive ? "on" : "off"}
-								</span>
-								<span data-testid="auto-loop-worker-binding-status">
-									Worker binding: {autoLoopDiagnostics.workerBindingStatus}
-								</span>
-								<span data-testid="auto-loop-worker-binding-policy">
-									Worker policy:{" "}
-									{autoLoopDiagnostics.workerBindingPolicy}
-								</span>
-								<span data-testid="auto-loop-require-bound-worker">
-									Required bound Worker:{" "}
-									{autoLoopDiagnostics.requireBoundWorker ? "yes" : "no"}
-								</span>
-								<span data-testid="auto-loop-worker-binding-fallback-used">
-									Fallback used:{" "}
-									{autoLoopDiagnostics.workerBindingFallbackUsed
-										? "yes"
-										: "no"}
-								</span>
-								<span data-testid="auto-loop-worker-type">
-									Worker type: {autoLoopDiagnostics.workerType}
-								</span>
-								<span>
-									Browser activity:{" "}
-									{formatAgo(autoLoopDiagnostics.browserActivityAt)}
-								</span>
-								<span>
-									Worker activity:{" "}
-									{formatAgo(autoLoopDiagnostics.workerActivityAt)}
-								</span>
-								<span>
-									Current offset:{" "}
-									{formatOffset(autoLoopDiagnostics.currentOutputOffset)}
-								</span>
-								<span>
-									Marker offset:{" "}
-									{formatOffset(autoLoopDiagnostics.markerOffset)}
-								</span>
-								<span>
-									Timeout: {autoLoopDiagnostics.activeTimeoutType}
-								</span>
-								<span>
-									No activity:{" "}
-									{formatRemaining(autoLoopDiagnostics.noActivityDeadlineAt)}
-								</span>
-								<span>
-									Hard max:{" "}
-									{formatRemaining(autoLoopDiagnostics.hardMaxDeadlineAt)}
-								</span>
-								<span className="min-[460px]:col-span-2">
-									Stop reason: {autoLoopStopReason || "-"}
-								</span>
-								<span>
-									Armed tab:{" "}
-									{autoLoopDiagnostics.activeTabIdAtArm
-										? autoLoopDiagnostics.activeTabIdAtArm.slice(-8)
-										: "-"}
-								</span>
-								<span>
-									Current tab:{" "}
-									{autoLoopDiagnostics.currentActiveTabId
-										? autoLoopDiagnostics.currentActiveTabId.slice(-8)
-										: "-"}
-								</span>
-								<span data-testid="auto-loop-active-terminal-pane">
-									Active terminal:{" "}
-									{formatShortId(autoLoopDiagnostics.activeTerminalPaneId)}
-								</span>
-								<span data-testid="auto-loop-bound-worker-pane">
-									Bound worker:{" "}
-									{formatShortId(autoLoopDiagnostics.boundWorkerPaneId)}
-								</span>
-								<span data-testid="auto-loop-bound-terminal-id">
-									Bound terminal:{" "}
-									{formatShortId(autoLoopDiagnostics.boundTerminalId)}
-								</span>
-								<span data-testid="auto-loop-worker-pane-at-arm">
-									Worker at arm:{" "}
-									{formatShortId(autoLoopDiagnostics.workerPaneIdAtArm)}
-								</span>
-								<span data-testid="auto-loop-worker-binding-at-arm">
-									Worker binding at arm:{" "}
-									{autoLoopDiagnostics.workerBindingStatusAtArm}
-								</span>
-								<span className="min-[460px]:col-span-2">
-									Tab context: {autoLoopDiagnostics.tabContextStatus}
-								</span>
-								<span data-testid="auto-loop-browser-slot-mode">
-									Slot mode: {autoLoopDiagnostics.browserSlotMode}
-								</span>
-								<span data-testid="auto-loop-browser-slot-pane-id">
-									Slot pane: {autoLoopDiagnostics.browserSlotPaneId || "-"}
-								</span>
-								<span data-testid="auto-loop-browser-slot-registry-status">
-									Slot registry:{" "}
-									{autoLoopDiagnostics.browserSlotRegistryStatus}
-								</span>
-								<span data-testid="auto-loop-browser-slot-registry-webcontents-id">
-									WebContents:{" "}
-									{autoLoopDiagnostics.browserSlotRegistryWebContentsId ?? "-"}
-								</span>
-								<span data-testid="auto-loop-browser-runtime-owner">
-									Runtime owner: {autoLoopDiagnostics.browserRuntimeOwner}
-								</span>
-								<span data-testid="auto-loop-commander-runtime-status">
-									Commander runtime:{" "}
-									{autoLoopDiagnostics.commanderRuntimeStatus}
-								</span>
-								<span data-testid="auto-loop-commander-runtime-webcontents-id">
-									Commander WebContents:{" "}
-									{autoLoopDiagnostics.commanderRuntimeWebContentsId ?? "-"}
-								</span>
-								<span data-testid="auto-loop-commander-runtime-provider">
-									Browser provider:{" "}
-									{autoLoopDiagnostics.commanderRuntimeProvider || "-"}
-								</span>
-								<span data-testid="auto-loop-commander-runtime-width">
-									Browser width:{" "}
-									{typeof autoLoopDiagnostics.commanderRuntimeUsableWidth ===
-									"number"
-										? `${autoLoopDiagnostics.commanderRuntimeUsableWidth}px`
-										: "-"}
-								</span>
-								<span data-testid="auto-loop-commander-runtime-visual-status">
-									Browser visual:{" "}
-									{autoLoopDiagnostics.commanderRuntimeVisualStatus}
-								</span>
-								<span data-testid="auto-loop-commander-runtime-bridge">
-									Bridge:{" "}
-									{autoLoopDiagnostics.commanderRuntimeBridgeAvailable
-										? "available"
-										: "unavailable"}
-								</span>
-								<span data-testid="auto-loop-commander-runtime-slot-count">
-									Commander slots:{" "}
-									{typeof autoLoopDiagnostics.commanderRuntimeSlotCount ===
-										"number" &&
-									typeof autoLoopDiagnostics.commanderRuntimeMaxSlots ===
-										"number"
-										? `${autoLoopDiagnostics.commanderRuntimeSlotCount}/${autoLoopDiagnostics.commanderRuntimeMaxSlots}`
-										: "-"}
-								</span>
-								<span
-									className="break-all min-[460px]:col-span-2"
-									data-testid="auto-loop-browser-slot-registry-slot-key"
-									title={formatSlotKey(
-										autoLoopDiagnostics.browserSlotRegistrySlotKey,
-									)}
-								>
-									Registry slot:{" "}
-									{formatSlotKey(
-										autoLoopDiagnostics.browserSlotRegistrySlotKey,
-									)}
-								</span>
-								<span data-testid="auto-loop-browser-slot-registry-resolved-pane-id">
-									Resolved pane:{" "}
-									{autoLoopDiagnostics.browserSlotRegistryResolvedPaneId || "-"}
-								</span>
-								<span data-testid="auto-loop-browser-slot-workspace-id">
-									Workspace:{" "}
-									{autoLoopDiagnostics.browserSlotWorkspaceId
-										? autoLoopDiagnostics.browserSlotWorkspaceId.slice(-8)
-										: "-"}
-								</span>
-								<span data-testid="auto-loop-browser-slot-active-tab-id">
-									Active tab:{" "}
-									{autoLoopDiagnostics.currentActiveTabId
-										? autoLoopDiagnostics.currentActiveTabId.slice(-8)
-										: "-"}
-								</span>
-								<span
-									className="break-all min-[460px]:col-span-2"
-									data-testid="auto-loop-browser-slot-key"
-									title={formatSlotKey(
-										autoLoopDiagnostics.currentBrowserSlotKey,
-									)}
-								>
-									Browser slot:{" "}
-									{formatSlotKey(autoLoopDiagnostics.currentBrowserSlotKey)}
-								</span>
-								<span
-									className="break-all min-[460px]:col-span-2"
-									data-testid="auto-loop-commander-runtime-slot-key"
-									title={formatSlotKey(
-										autoLoopDiagnostics.commanderRuntimeSlotKey,
-									)}
-								>
-									Commander slot:{" "}
-									{formatSlotKey(
-										autoLoopDiagnostics.commanderRuntimeSlotKey,
-									)}
-								</span>
-								<span
-									className="break-all min-[460px]:col-span-2"
-									data-testid="auto-loop-commander-runtime-url"
-									title={formatBrowserUrl(
-										autoLoopDiagnostics.commanderRuntimeUrl,
-									)}
-								>
-									Browser URL:{" "}
-									{formatBrowserUrl(
-										autoLoopDiagnostics.commanderRuntimeUrl,
-									)}
-								</span>
-								<span
-									className="break-all min-[460px]:col-span-2"
-									data-testid="auto-loop-browser-slot-key-at-arm"
-									title={formatSlotKey(autoLoopDiagnostics.browserSlotKeyAtArm)}
-								>
-									Browser slot at arm:{" "}
-									{formatSlotKey(autoLoopDiagnostics.browserSlotKeyAtArm)}
-								</span>
-								<span
-									className="break-all min-[460px]:col-span-2"
-									data-testid="auto-loop-browser-slot-registry-reason"
-									title={autoLoopDiagnostics.browserSlotRegistryReason ?? ""}
-								>
-									Slot registry reason:{" "}
-									{autoLoopDiagnostics.browserSlotRegistryReason || "-"}
-								</span>
-								<span
-									className="break-all min-[460px]:col-span-2"
-									data-testid="auto-loop-commander-runtime-reason"
-									title={autoLoopDiagnostics.commanderRuntimeReason ?? ""}
-								>
-									Commander runtime reason:{" "}
-									{autoLoopDiagnostics.commanderRuntimeReason || "-"}
-								</span>
-								<span
-									className="break-all min-[460px]:col-span-2"
-									data-testid="auto-loop-worker-binding-reason"
-									title={autoLoopDiagnostics.workerBindingReason ?? ""}
-								>
-									Worker binding reason:{" "}
-									{autoLoopDiagnostics.workerBindingReason || "-"}
-								</span>
-								<span className="text-foreground/60 min-[460px]:col-span-2">
-									Browser AI: Commander per-tab slots, one visible webview
-								</span>
-							</div>
-							{autoLoopDiagnostics.recentEvents.length > 0 && (
-								<div className="mt-1 border-t pt-1">
-									<div className="font-medium text-foreground/80">
-										Recent events
-									</div>
-									<ul className="space-y-0.5">
-										{autoLoopDiagnostics.recentEvents.map((event) => (
-											<li key={event.id}>
-												{formatAgo(event.at)} · {event.label}
-											</li>
-										))}
-									</ul>
-								</div>
-							)}
-						</div>
-					)}
-				</div>
-			)}
 		</div>
 	);
 }

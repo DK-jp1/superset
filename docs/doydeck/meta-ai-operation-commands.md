@@ -16,7 +16,7 @@ Meta AI is the DoyDeck Controller.
 The default is:
 
 - Doyにコピペや画面操作を戻すのは最後の手段。
-- Meta AIがDoyDeckへattachし、画面を読み、タブを作り、Handoffを作り、Browser AIへ送り、Workerをbindし、Auto Loopを監視する。
+- Meta AIがDoyDeckへattachし、画面を読み、タブを作り、Handoffを作り、Browser AIへ送り、Workerをbindし、手動送信前の状態を確認する。
 - Meta AIはComputer Use agentではなく、DoyDeck Controllerとして動く。
 - DoyDeck操作のprimary control pathは、native Actions、Controller Commands、exposed QA functions、attach / CDP。
 - Computer Useはprimary control pathではなく、native signalだけでは判断しづらいUI状態のsecond opinion / visual confirmationとして扱う。
@@ -27,7 +27,7 @@ The default is:
 - 作業側CC / Codexは実装、調査、検証を行う。
 - 今の作業者はCodex。
 - 基本は1タスク1タブ。
-- タブごとにBrowser AI context / Worker binding / Handoff Ledger / Auto Loop stateを分ける。
+- タブごとにBrowser AI context / Worker binding / Handoff Ledger / readiness stateを分ける。
 - Doy確認が必要な境界は越えない。
 
 Meta AI may prepare material for Worker, but the final Worker instruction must
@@ -63,7 +63,7 @@ commands.
 | タブを選択する | 操作対象を固定する | 作業対象タブがある | active tabを該当タブへ切替、Diagnosticsで確認 | 不要 | active tab mismatchなら停止 |
 | Browser AI slotを確認する | 送信先混線を防ぐ | Browser AIを使う前 | provider、URL、slot key、webContentsId、composer readyを確認 | 不要 | unsupported/about:blank/composer not readyならBLOCKED |
 | Handoff Ledgerを作成する | タブの現在地を記録する | タブ作成時、作業開始時 | goal、context、next action、関連ファイルをLedger化 | 不要 | 情報不足なら未記録として明記 |
-| Handoff Ledgerを更新する | 状態を最新化する | Browser AIレビュー後、Worker完了後、Auto Loop停止後 | Worker結果、Browser判断、QA結果、未解決、次アクションを反映 | 不要 | 更新不可ならreportに残す |
+| Handoff Ledgerを更新する | 状態を最新化する | Browser AIレビュー後、Worker完了後、手動判断の区切り | Worker結果、Browser判断、QA結果、未解決、次アクションを反映 | 不要 | 更新不可ならreportに残す |
 | Browser AIへ送る | 要件レビューさせる | Browser AI composer ready | Handoffまたは要件整理をBrowser AIへsubmit injectionで送る | 不要 | fallbackだけなら理由を記録 |
 | Browser AIの返答を確認する | Worker指示かSTOPか判断する | Browser AI replyが出た | 新規reply全文、見出し、STOP/次のWorker指示不要を確認 | Doy質問が出たら必要 | stale replyなら再観測 |
 | Worker bindingを確認する | 誤送信を防ぐ | Workerへ送る前 | bound worker pane、terminalId、workerType、fallback used noを確認 | 不要 | unbound/staleなら停止 |
@@ -73,8 +73,8 @@ commands.
 | Worker結果をBrowser AIへ返す | レビューと次判断を得る | workerReportValidがtrue | Worker ResponseをBrowser AIへ返送 | 不要 | Browser AI return not observedならUNKNOWN/BLOCKED |
 | Browser AIにレビューさせる | 継続/STOPを判断する | Worker結果返送後 | Browser AIに安全条件、成果、次アクションで評価させる | UX/仕様判断が必要なら必要 | no responseなら再観測またはBLOCKED |
 | 次アクションまたはSTOPを判断する | ループ継続可否を決める | Browser AIのレビュー後 | `Workerへ渡す指示:` / `STOP` / `次のWorker指示は不要` を分類 | 仕様判断が分岐するなら必要 | 曖昧ならDoyへ要約質問 |
-| Auto Loopを開始する | Browser AIとWorkerを監視付きでつなぐ | preflight全項目PASS、かつDoyがLoop開始を判断済み | Auto Loop Previewを開始し、Diagnosticsを監視 | Loop開始はDoy判断 | preflight失敗なら開始しない |
-| Auto Loopを停止する | 誤送信/暴走を防ぐ | stop condition発生、Doy判断待ち、完了 | stop reasonを記録し、Handoff更新 | 不要 | 停止不可なら手動介入を要請 |
+| Manual Worker送信を判断する | Browser AIの指示を人間が確認してWorkerへ渡す | preflightが通り、Doyが送信対象を把握している | Worker指示を確認し、必要なら手動送信 | 大きな仕様/UX判断や危険操作なら必要 | target曖昧なら送らない |
+| 自動往復を使わない | 旧自律実行を再導入しない | 常時 | Manual / Auto Relay Preview / Browser AI添付レビューを使う | 旧自律実行復活はDoy判断 | 旧自律実行開始導線を追加しない |
 | Diagnosticsを確認する | 状態を観測する | 各重要操作の前後 | phase、stop reason、slot、binding、recent eventsを読む | 不要 | mismatchならBLOCKED |
 | Doy確認を要求する | 境界を越えない | 承認が必要な操作がある | 目的、操作、理由、リスク、OK後の実行内容を提示 | 必須 | OKが出るまで実行しない |
 
@@ -117,7 +117,7 @@ commands.
 - Browser AI slot
 - Worker binding
 - Handoff Ledger
-- Auto Loop state
+- readiness / manual relay state
 - diagnostics
 - next action
 
@@ -139,7 +139,7 @@ Meta AIは、タブ切替後に必ず現在のBrowser AI slotとWorker binding�
 - 成果物が違う。
 - Browser AIに見せる文脈が違う。
 - Worker bindingを分けたい。
-- Auto Loopの進行状態を混ぜたくない。
+- readinessや手動送信前状態を混ぜたくない。
 - Doyの判断軸が違う。
 - 後で再開する時にHandoffが混ざると危険。
 
@@ -190,7 +190,7 @@ second opinionとして使ってよい。
 - 座標クリックで主要操作を行う。
 - native Actionsがあるのに画面クリックで代替する。
 - Doy確認なしに危険操作へ進む。
-- Computer UseをAuto Loopの主制御経路にする。
+- Computer Useを手動送信やBrowser AI操作の主制御経路にする。
 
 Computer Useを使っただけではBLOCKEDにしない。visual confirmationに留まる場合は
 OKとして扱う。Computer Useがprimary control pathになった場合、またはComputer
@@ -267,9 +267,9 @@ OKなら次に実行すること:
 
 曖昧な相槌や別話題への返答は承認扱いしない。
 
-## 7. Auto Loop前preflight
+## 7. 手動送信前preflight
 
-Auto Loop開始前に、Meta AIは以下を確認する。
+Workerへ手動送信する前に、Meta AIは以下を確認する。
 
 - [ ] active tabが正しい。
 - [ ] 1タスク1タブになっている。
@@ -283,10 +283,9 @@ Auto Loop開始前に、Meta AIは以下を確認する。
 - [ ] fallback used: no。
 - [ ] strict Worker bindingがON。
 - [ ] Handoff Ledgerがある。
-- [ ] max turns設定がある。
 - [ ] Diagnosticsに異常がない。
 - [ ] Doy確認が必要な操作を含んでいない。
-- [ ] stop conditionが明確。
+- [ ] 完了/次アクションの判定基準が明確。
 
 開始してはいけない状態:
 
@@ -300,7 +299,7 @@ Auto Loop開始前に、Meta AIは以下を確認する。
 - Worker target ambiguous。
 - terminal is shell, not Worker。
 - Computer Useで主要操作を進める必要があるがDoy未承認。
-- Computer UseがAuto Loopの主制御経路になりそう。
+- Computer Useが主要操作の主制御経路になりそう。
 - dangerous操作がWorker指示に含まれるがDoy未承認。
 
 ## 8. 実運用シナリオ
@@ -405,7 +404,7 @@ Meta AIは最後にHandoff Ledgerを更新する。
 S7.1 runbook作成では以下をしない。
 
 - DoyDeck本体コード変更。
-- Auto Loop本体改造。
+- 旧自律実行本体改造 / 再導入。
 - Browser AI / Worker fixture実装。
 - public-site / LP / スライド / 画像生成。
 - 検証済みlocal checkpoint commitを除くDoy確認なしのcommit / push。

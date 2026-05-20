@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { findAutoLoopDangerousCommandFinding } from "./commander-auto-loop-safety";
+import { findSafetyAdvisoryCommandFinding } from "./commander-safety-advisories";
 
-describe("commander auto loop dangerous command detection", () => {
+describe("commander safety advisory command detection", () => {
 	test.each([
 		"git pushしないでください",
 		"pushは禁止",
@@ -11,12 +11,12 @@ describe("commander auto loop dangerous command detection", () => {
 		"git pushしていません",
 		"Worker完了報告: pushなし",
 	])("does not block safety policy text: %s", (text) => {
-		expect(findAutoLoopDangerousCommandFinding(text)).toBeNull();
+		expect(findSafetyAdvisoryCommandFinding(text)).toBeNull();
 	});
 
 	test("does not block forbidden items listed under a negative section", () => {
 		const text = [
-			"目的: MyGoalist v0.7をAuto Loopで実装してください。",
+			"目的: MyGoalist v0.7をmanual workflowで実装してください。",
 			"やらないこと:",
 			"- git push",
 			"- deploy",
@@ -28,20 +28,20 @@ describe("commander auto loop dangerous command detection", () => {
 			"- 実装と検証だけ行ってください。",
 		].join("\n");
 
-		expect(findAutoLoopDangerousCommandFinding(text)).toBeNull();
+		expect(findSafetyAdvisoryCommandFinding(text)).toBeNull();
 	});
 
 	test("records actual shell command advisories in Browser AI replies", () => {
-		const pushFinding = findAutoLoopDangerousCommandFinding(
+		const pushFinding = findSafetyAdvisoryCommandFinding(
 			"Workerへ渡す指示:\n```bash\ngit push origin doydeck/safe-dev-isolation\n```",
 		);
-		const deployFinding = findAutoLoopDangerousCommandFinding(
+		const deployFinding = findSafetyAdvisoryCommandFinding(
 			"実行コマンド:\nnpm run deploy",
 		);
-		const destructiveFinding = findAutoLoopDangerousCommandFinding(
+		const destructiveFinding = findSafetyAdvisoryCommandFinding(
 			"実行してください:\nrm -rf /tmp/example",
 		);
-		const sudoFinding = findAutoLoopDangerousCommandFinding(
+		const sudoFinding = findSafetyAdvisoryCommandFinding(
 			"実行してください:\nsudo chmod -R 777 /tmp/example",
 		);
 
@@ -52,7 +52,7 @@ describe("commander auto loop dangerous command detection", () => {
 				matchedText: "git push",
 				reason: "remote git push requires Doy confirmation",
 				nextAction:
-					"Record advisory and continue Auto Loop; rely on Worker harness / AGENTS / git policy for enforcement.",
+					"Record advisory and continue the manual workflow; rely on Worker harness / AGENTS / git policy for enforcement.",
 			}),
 		);
 		expect(deployFinding).toEqual(
@@ -76,9 +76,9 @@ describe("commander auto loop dangerous command detection", () => {
 	});
 
 	test("records advisories for execution intent that reads credentials or local state", () => {
-		const secretFinding = findAutoLoopDangerousCommandFinding("cat .env.local");
+		const secretFinding = findSafetyAdvisoryCommandFinding("cat .env.local");
 		const localStateFinding =
-			findAutoLoopDangerousCommandFinding("sqlite3 local.db .dump");
+			findSafetyAdvisoryCommandFinding("sqlite3 local.db .dump");
 
 		expect(secretFinding).toEqual(
 			expect.objectContaining({

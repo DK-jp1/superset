@@ -241,7 +241,7 @@ write_report() {
 			scan_contains "Explorer visible" "explorer" "copy path" "open in center"
 			scan_contains "Commander visible" "commander" "browser ai" "chatgpt" "claude" "gemini"
 			scan_contains "Actions visible" "actions" "starter prompt"
-			scan_contains "Auto Loop controls visible" "auto loop" "auto relay" "manual"
+			scan_contains "Manual relay controls visible" "auto relay" "manual" "preview"
 			scan_contains "Diagnostics visible/openable" "diag" "diagnostics"
 		else
 			printf -- '- UI scan: UNKNOWN\n'
@@ -253,13 +253,13 @@ write_report() {
 			printf -- '- none\n'
 		fi
 		printf '\n## 手動確認が必要な項目\n\n'
-		printf -- '- Browser AIへの実送信、Auto Loop実行、Worker送信はこのMVPでは行いません。\n'
+		printf -- '- Browser AIへの実送信、Worker送信はこのMVPでは行いません。\n'
 		printf -- '- Peekaboo accessibility scanで拾えない文言は、保存スクショを見て確認してください。\n'
-		printf -- '- DiagnosticsはAuto Loop Previewに切り替えた時だけ出る場合があるため、今回開けない場合はUNKNOWN扱いです。\n'
+		printf -- '- 自律実行Preview / Diagnosticsは人間向け主導線から外したため、このQAでは対象外です。\n'
 		printf '\n## 次に自動化できる操作\n\n'
 		printf -- '- 安定したアクセシビリティIDが取れるUIから、座標クリックではなく要素クリックへ移行する。\n'
 		printf -- '- Commander Actions内のSetup項目をOCR/element treeで検証する。\n'
-		printf -- '- Auto Loop Previewへ切替後、Diag open/closeだけを安全に検証する。\n'
+		printf -- '- Manual / Auto Relay Preview / Browser AI添付導線を要素クリックで検証する。\n'
 	} >"${REPORT}"
 }
 

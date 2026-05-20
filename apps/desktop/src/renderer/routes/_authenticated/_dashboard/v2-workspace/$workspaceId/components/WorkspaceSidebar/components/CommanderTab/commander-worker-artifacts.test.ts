@@ -101,7 +101,7 @@ describe("commander worker reported artifact extraction", () => {
 				"/Users/gest01/Documents/mygoalist/artifacts/mygoalist-v07/light-addy-sheet-open-visible-after-",
 				"  fix.png",
 				"次にやるなら:",
-				"Auto Loop / Artifact Reviewで dark-addy-sheet-open-visible-after-fix.png と light-addy-sheet-",
+				"manual workflow / Artifact Reviewで dark-addy-sheet-open-visible-after-fix.png と light-addy-sheet-",
 				"  open-visible-after-fix.png を現物レビューして最終STOP判定。",
 				"END_REPORT",
 			].join("\n"),

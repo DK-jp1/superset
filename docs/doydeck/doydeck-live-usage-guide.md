@@ -28,8 +28,9 @@ Doy確認ゲート付きで扱う。
 - DoyDeck本体開発は、外側環境 / 通常Superset / 作業側Codex・CCで進める。
 - DoyDeck safe-devは、Controller chain、Meta AI連携、実運用pilotの検証対象として使う。
 - DoyDeck本体修正をDoyDeck内Workerへ投げない。
-- Auto Loopは勝手に開始しない。
-- Meta AIはAuto Loopを再実装しない。
+- 旧自律実行は人間利用の主導線から外す。DoyDeckはManual / Auto Relay Preview /
+  Browser AI添付レビュー / Worker手動送信を中心に使う。
+- Meta AIは旧自律実行を再実装しない。
 - Computer Useはprimary操作ではなくvisual second opinionとして扱う。
 
 ## 2. 今日から使ってよい用途
@@ -104,7 +105,7 @@ Doy確認ゲート付きで扱う。
 - UX / 文言の最終判断
   - WorkerやBrowser AIは案を出せる。
   - 最終採用はDoy確認。
-- Auto Loop本体改造
+- 旧自律実行本体改造
   - S9時点では中規模pilot対象外。
   - 別途設計とDoy確認が必要。
 - Terminal基盤の大きな変更
@@ -205,7 +206,7 @@ DoyDeck内運用での対応:
 大規模:
 
 - まず設計、分解、Doy確認を行う。
-- Auto Loop本体、Terminal基盤、DB/app-state、UI全体設計はここに入れる。
+- 旧自律実行本体、Terminal基盤、DB/app-state、UI全体設計はここに入れる。
 
 複数タスク:
 
@@ -270,7 +271,7 @@ Browser AIへ実ファイル添付する。
 4. Browser AIのfilename/chip表示を確認する。
 5. 必要なら短いreview promptを送る。
 6. Browser AIが添付資料を前提にWorker指示案またはレビューを返す。
-7. bounded loop / Auto Loopでは、添付資料を前提にしたWorker指示とWorker結果レビューを継続する。
+7. manual artifact review / 旧自律実行では、添付資料を前提にしたWorker指示とWorker結果レビューを継続する。
 
 対象:
 
@@ -298,7 +299,7 @@ Worker完了後は、Browser AIにテキスト要約だけを返すのではな�
 2. Workerがスクショを生成する場合は`review-screenshots/*.png`に置く。
 3. Workerが成果物pathを報告に書いた場合は、`collectWorkerReportedArtifacts()`でpath候補を抽出し、存在確認と添付可否を確認する。
 4. Meta AI / Controllerは`collectLoopReviewArtifacts({ expectedTabId, requireActiveTabMatch:true })`で収集する。
-5. bounded loop中はWorker完了後にDoyDeckが`collectWorkerReportedArtifacts()`を先に実行し、attachable artifactがあれば`sendWorkerReportedArtifactsToBrowserAI()`で実添付レビューへ進む。
+5. manual artifact review中はWorker完了後にDoyDeckが`collectWorkerReportedArtifacts()`を先に実行し、attachable artifactがあれば`sendWorkerReportedArtifactsToBrowserAI()`で実添付レビューへ進む。
 6. 選択ファイルやreview-screenshotsも含めたpackageなら`sendLoopArtifactsToBrowserAI()`で対応ファイルをBrowser AIへ実添付し、artifact review promptを送る。
 7. Browser AIは添付ファイル、Worker報告、検証結果を見て、`STOP`または次Worker指示を返す。
 8. vスコープ内の修正ならDoy確認なしで次Worker指示に進める。
@@ -318,13 +319,13 @@ Worker完了後は、Browser AIにテキスト要約だけを返すのではな�
   `AI_REFERENCED_FILE: yes`またはfilename言及で現物参照を確認する。
 - Browser AIが現物を参照できていない場合は、テキストレビューだけで完成扱いにしない。
 - `.env`, token, cookie, secret, `local.db`, `app-state.json`, `node_modules`, `.git`を含むpathは添付候補から除外する。
-- Auto Loop本体は勝手に開始しない。開始済みbounded loopではWorker完了後のartifact review分岐は自動で走る。
+- 旧自律実行本体は勝手に開始しない。開始済みmanual artifact reviewではWorker完了後のartifact review分岐は自動で走る。
 - attachable artifactがないWorker報告はtext-only fallbackとして明示し、現物レビュー完了とは扱わない。
 - PDF/OCR/zip、複数ファイルUXの細部、添付済みファイルの長期registry UIはfuture。
 
 ## 8. Worker launch policy
 
-Worker起動は、DoyDeck本体コード変更やAuto Loop開始とは別のroutine safe setupとして扱う。
+Worker起動は、DoyDeck本体コード変更や旧自律実行開始とは別のroutine safe setupとして扱う。
 ただし、既知の安全な起動方法に限る。
 
 標準:
@@ -392,8 +393,8 @@ ssh -tt -i ~/.ssh/id_ed25519 doy90@100.67.78.1 'claude --dangerously-skip-permis
 - Computer Use
   - primary操作経路ではない。
   - DoyDeck-native / CDP / Playwright / Electron側の確認を優先する。
-- Auto Loop
-  - Auto Loop本体は勝手に開始しない。
+- Manual / Auto Relay Preview
+  - DoyDeckは自動往復ではなく、人間がBrowser AI判断とWorker指示を確認しながら使う。
   - 実運用ではController chain、preflight、Handoff Ledgerを監視対象として扱う。
 
 ## 10. 推奨する最初の実運用タスク
@@ -424,7 +425,7 @@ Priority A: worker response warning細部整理
 - 否定文中の`commit/push`を危険要求として拾いすぎるwarningを整理する。
 - `git diff` / `git status` / `git diff --check`はsafe-checkとして扱う。
 - `git commit` / `git push`はwrite-operation / Doy確認対象として可視化する。
-- DoyDeck本体のAuto Loopは、`git push`、`deploy`、`token`、
+- DoyDeck本体の旧自律実行は、`git push`、`deploy`、`token`、
   `destructive`などの危険語やshell風テキストだけでは停止しない。
   これらはadvisory warningとして残し、実行防止はWorker harness、
   AGENTS.md、git/deploy gate、Doyの最終判断に委ねる。
@@ -459,15 +460,13 @@ Priority F: paneId activate / output capture継続改善
 - Codex / ClaudeのTUI差分をresponse readに反映する。
 - shell / unknown workerをrecognized扱いしないguardを維持する。
 
-Priority G: Auto Loop監視UI / stop reason表示
+Priority G: 旧自律実行撤去後の人間操作UI整理
 
-- Auto Loop本体を作り直さない。
-- 既存Auto Loop / Controller chainの状態、advisory、warning、Outcomeを見やすくする。
-- `hard max wait timeout`、Worker / Browser AI no-activity、attachment delay、
-  `AI_REFERENCED_FILE`未確認、provider / payload warningは原則として停止理由ではなく
-  advisory / diagnosticとして表示する。
-- hard stopは手動Stop、write対象tab不一致、明確な構造的送信不能、またはDoy確認が必要な
-  実操作に限定する。
+- 旧自律実行本体を作り直さない。
+- 既存旧自律実行由来の表示や文言は、Manual / Auto Relay Preview / Artifact Reviewの
+  手動導線へ段階的に整理する。
+- advisory、warning、Outcomeは残してよいが、自動往復を前提にしたstop reason表示は
+  主導線から外す。
 
 ## 12. 使用開始チェックリスト
 
@@ -488,7 +487,7 @@ DoyDeckでtaskを始める前に確認する。
 - Workerを起動する場合、Worker launch policyの標準コマンドを使っている。
 - Workerを使わない場合、Browser-AI-only preflightを使う。
 - preflightはREADYまたはREADY_WITH_NOTES。
-- Auto Loopはoff / idle、または明示管理。
+- 旧自律実行はoff / idle、または明示管理。
 - git statusが想定通り。
 - Doy確認条件がない。
 - Handoff Ledger生成OK。

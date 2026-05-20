@@ -59,7 +59,6 @@ import {
 	type CommanderInstructionSafetyFinding,
 	type CommanderInstructionSafetySource,
 } from "./commander-safety";
-import { findAutoLoopDangerousCommandFinding } from "./commander-auto-loop-safety";
 import {
 	extractBoundWorkerDoneTagReport,
 	extractBoundWorkerDoneTagReportForInstructionScope,
@@ -440,7 +439,7 @@ type CommanderControllerBrowserAiComposerDiagnostics = Pick<
 	| "injectionBlockers"
 >;
 
-interface CommanderControllerAutoLoopPreflightResult
+interface CommanderControllerReadinessPreflightResult
 	extends CommanderControllerCommandResult {
 	status: CommanderControllerPreflightStatus;
 	activeTabId: string | null;
@@ -452,7 +451,6 @@ interface CommanderControllerAutoLoopPreflightResult
 	strictWorkerBinding: boolean;
 	fallbackUsed: boolean;
 	handoffLedgerAvailable: boolean;
-	maxTurnsConfigured: boolean;
 	diagnosticsOk: boolean;
 	blockers: string[];
 	warnings: string[];
@@ -468,9 +466,8 @@ interface CommanderControllerAutoLoopPreflightResult
 	browserAiUrl: string;
 	browserAiSlotKey: string | null;
 	expectedBrowserAiSlotKey: string | null;
-	autoLoopMode: AutoRelayMode;
-	autoLoopPhase: string;
-	autoLoopMaxTurns: number;
+	relayMode: AutoRelayMode;
+	relayStatus: string;
 	workerPaneId: string | null;
 	terminalId: string | null;
 	workerType: string;
@@ -647,8 +644,8 @@ interface CommanderControllerSupervisorPilotReadinessResult
 	workerInputBlockers: string[];
 	workerInputWarnings: string[];
 	workerUiStateReason: string | null;
-	autoLoopMode: AutoRelayMode;
-	autoLoopPhase: string;
+	relayMode: AutoRelayMode;
+	relayStatus: string;
 	blockers: string[];
 	warnings: string[];
 	nextRequiredAction: string;
@@ -948,8 +945,8 @@ interface CommanderControllerChainSummaryResult
 	lastSubmissionUiReflected: boolean | null;
 	lastSubmissionAssistantReplyObserved: boolean | null;
 	lastSubmissionVisualVerificationUsed: boolean;
-	autoLoopMode: AutoRelayMode;
-	autoLoopPhase: string;
+	relayMode: AutoRelayMode;
+	relayStatus: string;
 }
 
 interface CommanderControllerRecordChainOutcomeResult
@@ -1087,7 +1084,7 @@ interface CommanderControllerAttachFilesInput {
 	targetPaths?: unknown;
 	reviewPrompt?: unknown;
 	sendPromptAfterAttach?: unknown;
-	loopContext?: unknown;
+	reviewContext?: unknown;
 	dryRun?: unknown;
 }
 
@@ -1133,7 +1130,7 @@ interface CommanderControllerAttachFilesResult
 	uiReflected: boolean | null;
 	assistantReplyObserved: boolean | null;
 	visualVerificationUsed: boolean;
-	loopReady: boolean;
+	reviewReady: boolean;
 	reviewPromptLength: number;
 	promptLength: number;
 	payloadLength: number;
@@ -1193,7 +1190,7 @@ interface CommanderControllerAttachedFilesInventoryResult
 	expectedBrowserAiSlotKey: string | null;
 }
 
-type CommanderControllerLoopReviewArtifactKind =
+type CommanderControllerReviewArtifactKind =
 	| "selected-file"
 	| "review-screenshot"
 	| "worker-reported-artifact"
@@ -1202,9 +1199,9 @@ type CommanderControllerLoopReviewArtifactKind =
 	| "diff-summary"
 	| "handoff-report";
 
-interface CommanderControllerLoopReviewArtifact {
+interface CommanderControllerReviewArtifact {
 	id: string;
-	kind: CommanderControllerLoopReviewArtifactKind;
+	kind: CommanderControllerReviewArtifactKind;
 	name: string;
 	path: string | null;
 	mimeType: string | null;
@@ -1215,7 +1212,7 @@ interface CommanderControllerLoopReviewArtifact {
 	preview: string;
 }
 
-interface CommanderControllerLoopArtifactsInput
+interface CommanderControllerReviewArtifactsInput
 	extends CommanderControllerAttachFilesInput {
 	includeSelectedFiles?: unknown;
 	includeWorkerReport?: unknown;
@@ -1226,7 +1223,7 @@ interface CommanderControllerLoopArtifactsInput
 	workerReportText?: unknown;
 }
 
-type CommanderControllerLoopArtifactsStatus =
+type CommanderControllerReviewArtifactsStatus =
 	| "READY"
 	| "READY_WITH_NOTES"
 	| "DRY_RUN"
@@ -1236,9 +1233,9 @@ type CommanderControllerLoopArtifactsStatus =
 	| CommanderControllerAttachFilesStatus
 	| CommanderControllerBrowserAiSubmissionVerificationStatus;
 
-interface CommanderControllerLoopArtifactsResult
+interface CommanderControllerReviewArtifactsResult
 	extends CommanderControllerCommandResult {
-	status: CommanderControllerLoopArtifactsStatus;
+	status: CommanderControllerReviewArtifactsStatus;
 	activeTabId: string | null;
 	activeTabTitle: string | null;
 	expectedTabId: string | null;
@@ -1249,7 +1246,7 @@ interface CommanderControllerLoopArtifactsResult
 	attachableArtifactCount: number;
 	targetPathCount: number;
 	targetPaths: string[];
-	artifacts: CommanderControllerLoopReviewArtifact[];
+	artifacts: CommanderControllerReviewArtifact[];
 	attachedFileCount: number;
 	skippedFileCount: number;
 	attachedFiles: CommanderControllerAttachedFileSummary[];
@@ -1268,13 +1265,13 @@ interface CommanderControllerLoopArtifactsResult
 	workerReportPreview: string;
 	workerStatus: string | null;
 	artifactCandidates: CommanderWorkerReportedArtifactCandidate[];
-	attachableArtifacts: CommanderControllerLoopReviewArtifact[];
+	attachableArtifacts: CommanderControllerReviewArtifact[];
 	skippedArtifacts: CommanderControllerSkippedFileSummary[];
 	workerReportedArtifactCount: number;
 	workerReportedAttachableArtifactCount: number;
 	browserAiReviewStatus: CommanderControllerBrowserAiSubmissionVerificationStatus | null;
 	reviewPromptLength: number;
-	loopReady: boolean;
+	reviewReady: boolean;
 	warnings: string[];
 	blockers: string[];
 	message: string;
@@ -1283,10 +1280,10 @@ interface CommanderControllerLoopArtifactsResult
 }
 
 interface CommanderControllerWorkerReportedArtifactsInput
-	extends CommanderControllerLoopArtifactsInput {}
+	extends CommanderControllerReviewArtifactsInput {}
 
 interface CommanderControllerWorkerReportedArtifactsResult
-	extends CommanderControllerLoopArtifactsResult {}
+	extends CommanderControllerReviewArtifactsResult {}
 
 interface CommanderControllerLiveReadinessSummaryInput {
 	expectedTabId?: unknown;
@@ -1307,7 +1304,6 @@ interface CommanderControllerLiveReadinessCheck {
 interface CommanderControllerLiveReadinessSummaryResult
 	extends CommanderControllerCommandResult {
 	status: CommanderControllerPreflightStatus;
-	readinessStatus: CommanderControllerPreflightStatus;
 	activeTab: {
 		status: CommanderControllerTabReadStatus;
 		activeTabId: string | null;
@@ -1341,11 +1337,11 @@ interface CommanderControllerLiveReadinessSummaryResult
 		responseModeSummaryUsed: boolean;
 		nextRecommendedAction: string;
 	};
-	autoLoopStatus: {
+	readinessStatus: {
 		status: CommanderControllerPreflightStatus;
 		mode: AutoRelayMode;
-		phase: string;
-		loopReady: boolean;
+		relayStatus: string;
+		relayReady: boolean;
 		nextRequiredAction: string;
 	};
 	artifactReviewStatus: {
@@ -1353,7 +1349,7 @@ interface CommanderControllerLiveReadinessSummaryResult
 		commandsAvailable: boolean;
 		implementedCommands: string[];
 		missingCommands: string[];
-		loopReady: boolean;
+		reviewReady: boolean;
 		nextRecommendedAction: string;
 	};
 	safetyGuardStatus: {
@@ -1866,7 +1862,7 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			requiresDoyConfirmation: false,
 			riskLevel: "medium",
 			notes: [
-				"Does not send Handoff, send Worker instructions, bind workers, or start Auto Loop.",
+				"Does not send Handoff, send Worker instructions, or bind workers.",
 				"preferFreshThread returns a context-carryover warning; forceNewThread is Doy-gated and blocked because provider reset is not safely automated yet.",
 			],
 		},
@@ -1927,14 +1923,14 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			description:
 				"Attach Explorer target files to the Browser AI provider using the provider's native file attachment UI.",
 			typicalUse:
-				"Give Claude or ChatGPT real files before Browser AI review, Worker instruction generation, or bounded loop review.",
+				"Give Claude or ChatGPT real files before Browser AI review, Worker instruction generation, or manual artifact review.",
 			requiresDoyConfirmation: false,
 			riskLevel: "medium",
 			notes: [
 				"Supports guarded tab writes with expectedTabId / expectedTitle / requireActiveTabMatch:true.",
 				"Supports md/txt/json/ts/tsx/js/jsx/png/jpg/jpeg/pdf up to 10MB each, with up to 5 files prepared per send.",
 				"Verifies filename/chip UI reflection before treating attachment as ready.",
-				"Does not start Auto Loop, send Worker instructions, or treat text-paste fallback as completion.",
+				"Does not send Worker instructions or treat text-paste fallback as completion.",
 			],
 		},
 		{
@@ -1975,18 +1971,18 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			riskLevel: "low",
 			notes: [
 				"Uses Browser AI DOM/visible state as a visual sanity check.",
-				"Does not attach files, send prompts, start Auto Loop, or touch Workers.",
+				"Does not attach files, send prompts, or touch Workers.",
 			],
 		},
 		{
-			name: "collectLoopReviewArtifacts",
+			name: "collectReviewArtifacts",
 			category: "Browser AI",
 			access: "read-only",
 			implemented: true,
 			description:
 				"Collect tab/run review artifacts such as selected files, review screenshots, and Worker DONE_TAG reports.",
 			typicalUse:
-				"Build a bounded-loop review package before sending artifacts to Browser AI.",
+				"Build a manual review package before sending artifacts to Browser AI.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
 			notes: [
@@ -1995,19 +1991,19 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			],
 		},
 		{
-			name: "sendLoopArtifactsToBrowserAI",
+			name: "sendReviewArtifactsToBrowserAI",
 			category: "Browser AI",
 			access: "write",
 			implemented: true,
 			description:
-				"Attach collected loop review artifacts to Browser AI and optionally send an artifact-review prompt.",
+				"Attach collected review artifacts to Browser AI and optionally send an artifact-review prompt.",
 			typicalUse:
 				"After Worker completion, let Browser AI review screenshots/files and produce STOP or next Worker instruction.",
 			requiresDoyConfirmation: false,
 			riskLevel: "medium",
 			notes: [
 				"Reuses attachTargetFilesToBrowserAI for real provider-native file attachment.",
-				"Does not start Auto Loop or send Worker instructions by itself.",
+				"Does not send Worker instructions by itself.",
 			],
 		},
 		{
@@ -2022,7 +2018,7 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
 			notes: [
-				"Alias of collectWorkerReportedArtifacts; does not send prompts, start Auto Loop, or touch Workers.",
+				"Alias of collectWorkerReportedArtifacts; does not send prompts or touch Workers.",
 				"Sensitive paths such as .env, tokens, local.db, app-state.json, node_modules, and .git are skipped.",
 			],
 		},
@@ -2055,7 +2051,7 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			riskLevel: "medium",
 			notes: [
 				"Reuses attachTargetFilesToBrowserAI and Browser AI submission verification.",
-				"Does not start Auto Loop or send Worker instructions by itself.",
+				"Does not send Worker instructions by itself.",
 			],
 		},
 		{
@@ -2200,7 +2196,7 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
 			notes: [
-				"No Auto Loop, Worker send, bind, or activation side effects.",
+				"No Worker send, bind, or activation side effects.",
 				"Uses summary-oriented Worker response reads internally instead of returning raw terminal diagnostics.",
 			],
 		},
@@ -2380,13 +2376,13 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			access: "read-only",
 			implemented: true,
 			description:
-				"Return a one-call live readiness summary for the active task tab before Loop / Worker / Browser AI use.",
+				"Return a one-call live readiness summary for the active task tab before Worker / Browser AI use.",
 			typicalUse:
-				"Let Doy or Meta AI decide whether the current tab is ready for short Browser AI sends, Worker binding, Auto Loop, and Artifact Review.",
+				"Let Doy or Meta AI decide whether the current tab is ready for short Browser AI sends, Worker binding, and Artifact Review.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
 			notes: [
-				"Read-only; does not send Browser AI prompts, send Worker instructions, attach files, bind workers, or start Auto Loop.",
+				"Read-only; does not send Browser AI prompts, send Worker instructions, attach files, or bind workers.",
 				"Aliases runLiveReadinessSmoke and getCurrentTabReadiness are also available.",
 			],
 		},
@@ -2400,7 +2396,7 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 				"Compatibility name for short pre-task readiness checks.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
-			notes: ["No send, bind, attach, or Auto Loop side effects."],
+			notes: ["No send, bind, or attach side effects."],
 		},
 		{
 			name: "getCurrentTabReadiness",
@@ -2409,32 +2405,37 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			implemented: true,
 			description: "Alias for getLiveReadinessSummary.",
 			typicalUse:
-				"Read current active-tab readiness before running Browser AI / Worker loops.",
+				"Read current active-tab readiness before running Browser AI / Worker review flows.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
-			notes: ["No send, bind, attach, or Auto Loop side effects."],
+			notes: ["No send, bind, or attach side effects."],
 		},
 		{
-			name: "getAutoLoopPreflight",
+			name: "getReadinessPreflight",
 			category: "Diagnostics",
 			access: "diagnostic",
 			implemented: true,
-			description: "Run full Auto Loop preflight without starting Auto Loop.",
-			typicalUse: "Check Browser AI, Worker, Handoff, and safety readiness.",
+			description:
+				"Legacy compatibility name for Worker / Browser AI readiness preflight.",
+			typicalUse:
+				"Check Browser AI, Worker, Handoff, and safety readiness before manual sends.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
-			notes: ["Alias runAutoLoopPreflight is also available."],
+			notes: [
+				"Alias runReadinessPreflight is also available.",
+				"Use this only as a manual readiness diagnostic.",
+			],
 		},
 		{
-			name: "runAutoLoopPreflight",
+			name: "runReadinessPreflight",
 			category: "Diagnostics",
 			access: "diagnostic",
 			implemented: true,
-			description: "Alias for getAutoLoopPreflight.",
+			description: "Alias for getReadinessPreflight.",
 			typicalUse: "Compatibility alias for full preflight checks.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
-			notes: ["Does not start Auto Loop."],
+			notes: ["Does not send Browser AI prompts or Worker instructions."],
 		},
 		{
 			name: "getSupervisorPilotReadiness",
@@ -2456,7 +2457,7 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			typicalUse: "Recover a pilot-ready state without launching new workers.",
 			requiresDoyConfirmation: false,
 			riskLevel: "medium",
-			notes: ["May navigate Browser AI provider and bind existing workers; does not start Auto Loop."],
+			notes: ["May navigate Browser AI provider and bind existing workers."],
 		},
 	];
 
@@ -2589,8 +2590,8 @@ interface CommanderControllerCommands {
 	) => Promise<CommanderControllerBrowserAiPrepareResult>;
 	getBrowserAiPreflight: () => Promise<CommanderControllerBrowserAiPreflightResult>;
 	getBrowserAiSendReadiness: () => Promise<CommanderControllerBrowserAiPreflightResult>;
-	getAutoLoopPreflight: () => Promise<CommanderControllerAutoLoopPreflightResult>;
-	runAutoLoopPreflight: () => Promise<CommanderControllerAutoLoopPreflightResult>;
+	getReadinessPreflight: () => Promise<CommanderControllerReadinessPreflightResult>;
+	runReadinessPreflight: () => Promise<CommanderControllerReadinessPreflightResult>;
 	listRecognizedWorkers: (input?: unknown) => CommanderControllerListRecognizedWorkersResult;
 	bindWorkerToTab: (
 		input?: CommanderControllerBindWorkerInput,
@@ -2638,12 +2639,12 @@ interface CommanderControllerCommands {
 	getBrowserAiAttachedFiles: (
 		input?: CommanderControllerAttachedFilesInventoryInput,
 	) => Promise<CommanderControllerAttachedFilesInventoryResult>;
-	collectLoopReviewArtifacts: (
-		input?: CommanderControllerLoopArtifactsInput,
-	) => Promise<CommanderControllerLoopArtifactsResult>;
-	sendLoopArtifactsToBrowserAI: (
-		input?: CommanderControllerLoopArtifactsInput,
-	) => Promise<CommanderControllerLoopArtifactsResult>;
+	collectReviewArtifacts: (
+		input?: CommanderControllerReviewArtifactsInput,
+	) => Promise<CommanderControllerReviewArtifactsResult>;
+	sendReviewArtifactsToBrowserAI: (
+		input?: CommanderControllerReviewArtifactsInput,
+	) => Promise<CommanderControllerReviewArtifactsResult>;
 	extractArtifactsFromWorkerReport: (
 		input?: CommanderControllerWorkerReportedArtifactsInput,
 	) => Promise<CommanderControllerWorkerReportedArtifactsResult>;
@@ -2689,7 +2690,7 @@ type CommanderControllerWindow = Window &
 		__doydeckCommanderController?: CommanderControllerCommands;
 	};
 
-type AutoLoopArtifactReviewControllerRef = Partial<
+type ArtifactReviewControllerRef = Partial<
 	Pick<
 		CommanderControllerCommands,
 		| "collectWorkerReportedArtifacts"
@@ -2719,10 +2720,9 @@ export function CommanderTab({
 	const sessionRef = useRef<CommanderSession>(session);
 	const sessionTabIdRef = useRef<string | null>(null);
 	const [autoRelayMode, setAutoRelayMode] = useState<AutoRelayMode>("off");
-	const [
-		requireBoundWorkerForAutoLoop,
-		setRequireBoundWorkerForAutoLoop,
-	] = useState(true);
+	const handleAutoRelayModeChange = useCallback((mode: AutoRelayMode) => {
+		setAutoRelayMode(mode);
+	}, []);
 	const lastWorkerInstructionMarkerRef =
 		useRef<CommanderControllerLastWorkerInstructionMarker | null>(null);
 	const lastBrowserAiSubmissionRef =
@@ -2761,6 +2761,7 @@ export function CommanderTab({
 			}
 		>
 	>(new Map());
+
 	const browserAiSubmissionSequenceRef = useRef(0);
 
 	const workerPrompt = useMemo(
@@ -2868,12 +2869,8 @@ export function CommanderTab({
 		return loadedSession;
 	}, [resolveActiveTabIdSnapshot, sessionPersistence]);
 
-	const autoLoopArtifactReviewControllerRef =
-		useRef<AutoLoopArtifactReviewControllerRef | null>(null);
-	const getAutoLoopArtifactReviewControllerForTransfer = useCallback(
-		() => autoLoopArtifactReviewControllerRef.current,
-		[],
-	);
+	const artifactReviewControllerRef =
+		useRef<ArtifactReviewControllerRef | null>(null);
 
 	const transfer = usePromptTransfer({
 		workspaceId,
@@ -2883,7 +2880,6 @@ export function CommanderTab({
 		activeTerminal,
 		workerBinding,
 		autoRelayMode,
-		requireBoundWorkerForAutoLoop,
 		getLiveUrl: webview.getLiveUrl,
 		currentUrl: webview.currentUrl,
 		injectIntoPage: webview.injectIntoPage,
@@ -2894,8 +2890,6 @@ export function CommanderTab({
 		onSetView: setView,
 		workerPrompt,
 		reviewPrompt,
-		getAutoLoopArtifactReviewController:
-			getAutoLoopArtifactReviewControllerForTransfer,
 	});
 
 	const handleAutoCaptureTrigger = useCallback(
@@ -3766,7 +3760,7 @@ export function CommanderTab({
 				"worker-candidate-scan",
 				"worker-binding",
 				"handoff-ledger-build",
-				"auto-loop-preflight",
+				"readiness-preflight",
 			];
 			const tabsStateBefore = useTabsStore.getState();
 			const activeTabIdBefore =
@@ -3826,7 +3820,7 @@ export function CommanderTab({
 				timingsMs.total = mark();
 
 				const warnings: string[] = [
-					"surrounding initialization skipped; Browser AI, worker binding, Handoff Ledger, and Auto Loop preflight remain explicit follow-up steps",
+					"surrounding initialization skipped; Browser AI, worker binding, Handoff Ledger, and manual readiness checks remain explicit follow-up steps",
 				];
 				if (!tabVisible) {
 					warnings.push(
@@ -3922,8 +3916,8 @@ export function CommanderTab({
 			transfer.buildHandoffLedger,
 		]);
 
-	const getAutoLoopPreflightController =
-		useCallback(async (): Promise<CommanderControllerAutoLoopPreflightResult> => {
+	const getReadinessPreflightController =
+		useCallback(async (): Promise<CommanderControllerReadinessPreflightResult> => {
 			const blockers: string[] = [];
 			const warnings: string[] = [];
 			const activeTabIdSnapshot = activeTabId;
@@ -3966,22 +3960,12 @@ export function CommanderTab({
 							workerInputWarnings: [],
 							workerUiStateReason: null,
 						};
-			const fallbackUsed =
-				!requireBoundWorkerForAutoLoop &&
-				workerBinding.bindingStatus !== "bound";
+			const fallbackUsed = false;
 			const handoffResult = buildHandoffLedgerController();
 			const handoffMissingFields = handoffResult.missingFields ?? [];
 			const handoffLedgerAvailable =
 				Boolean(handoffResult.ok && handoffResult.ledger) &&
 				handoffMissingFields.length === 0;
-			const maxTurnsConfigured = [10, 25, 50, 100].includes(
-				transfer.autoLoopMaxTurns,
-			);
-			const diagnostics = transfer.autoLoopDiagnostics;
-			const hasRunningTabMismatch =
-				transfer.autoLoopPhase !== "idle" &&
-				transfer.autoLoopPhase !== "stopped" &&
-				diagnostics.tabContextStatus === "changed";
 			const diagnosticsBlockers: string[] = [];
 
 			if (!activeTabIdSnapshot) blockers.push("active tab not found");
@@ -4010,16 +3994,10 @@ export function CommanderTab({
 				diagnosticsBlockers.push(...workerInputReadiness.workerInputBlockers);
 				warnings.push(...workerInputReadiness.workerInputWarnings);
 			}
-			if (fallbackUsed) blockers.push("active terminal fallback would be used");
 			if (workerBinding.workerBindingMismatch) {
 				blockers.push("worker binding mismatch");
 				diagnosticsBlockers.push("worker binding mismatch");
 			}
-			if (hasRunningTabMismatch) {
-				blockers.push("active tab mismatch");
-				diagnosticsBlockers.push("active tab mismatch");
-			}
-			if (!maxTurnsConfigured) warnings.push("auto loop max turns is not configured");
 			if (!handoffLedgerAvailable) {
 				warnings.push(
 					handoffMissingFields.length
@@ -4035,9 +4013,6 @@ export function CommanderTab({
 			}
 			const submitWarning = getBrowserAiSubmitWarning(composerReadiness);
 			if (submitWarning) warnings.push(submitWarning);
-			if (transfer.autoLoopPhase !== "idle" && transfer.autoLoopPhase !== "stopped") {
-				warnings.push(`auto loop is already in phase: ${transfer.autoLoopPhase}`);
-			}
 
 			const diagnosticsOk = diagnosticsBlockers.length === 0;
 			const status: CommanderControllerPreflightStatus =
@@ -4057,22 +4032,20 @@ export function CommanderTab({
 				browserAiSlotOk,
 				workerBound,
 				workerBindingStatus: workerBinding.bindingStatus,
-				strictWorkerBinding: requireBoundWorkerForAutoLoop,
+				strictWorkerBinding: true,
 				fallbackUsed,
 				handoffLedgerAvailable,
-				maxTurnsConfigured,
 				diagnosticsOk,
 				blockers,
 				warnings,
-				nextRequiredAction: getAutoLoopPreflightNextAction(blockers, warnings),
+				nextRequiredAction: getReadinessPreflightNextAction(blockers, warnings),
 				browserAiComposer: composerReadiness,
 				...composerDiagnostics,
 				browserAiUrl: liveUrl,
 				browserAiSlotKey: runtime.browserSlotKey,
 				expectedBrowserAiSlotKey,
-				autoLoopMode: autoRelayMode,
-				autoLoopPhase: transfer.autoLoopPhase,
-				autoLoopMaxTurns: transfer.autoLoopMaxTurns,
+				relayMode: autoRelayMode,
+				relayStatus: transfer.autoRelayStatus,
 				workerPaneId: workerBinding.workerPaneId,
 				terminalId: workerBinding.terminalId,
 				workerType: workerBinding.workerType,
@@ -4091,10 +4064,7 @@ export function CommanderTab({
 			autoRelayMode,
 			buildHandoffLedgerController,
 			getCommanderControllerContext,
-			requireBoundWorkerForAutoLoop,
-			transfer.autoLoopDiagnostics,
-			transfer.autoLoopMaxTurns,
-			transfer.autoLoopPhase,
+			transfer.autoRelayStatus,
 			webview.currentUrl,
 			webview.getLiveUrl,
 			webview.getRuntimeSnapshot,
@@ -4952,7 +4922,7 @@ export function CommanderTab({
 
 	const buildSupervisorPilotReadinessResult = useCallback(
 		(
-			preflight: CommanderControllerAutoLoopPreflightResult,
+			preflight: CommanderControllerReadinessPreflightResult,
 			candidates: CommanderControllerRecognizedWorkerCandidate[],
 			override?: Partial<CommanderControllerSupervisorPilotReadinessResult>,
 		): CommanderControllerSupervisorPilotReadinessResult => {
@@ -4994,8 +4964,8 @@ export function CommanderTab({
 				workerInputBlockers: preflight.workerInputBlockers,
 				workerInputWarnings: preflight.workerInputWarnings,
 				workerUiStateReason: preflight.workerUiStateReason,
-				autoLoopMode: preflight.autoLoopMode,
-				autoLoopPhase: preflight.autoLoopPhase,
+				relayMode: preflight.relayMode,
+				relayStatus: preflight.relayStatus,
 				blockers,
 				warnings,
 				nextRequiredAction: getSupervisorPilotReadinessNextAction(
@@ -5015,12 +4985,12 @@ export function CommanderTab({
 
 	const getSupervisorPilotReadinessController =
 		useCallback(async (): Promise<CommanderControllerSupervisorPilotReadinessResult> => {
-			const preflight = await getAutoLoopPreflightController();
+			const preflight = await getReadinessPreflightController();
 			const candidates = getRecognizedWorkerCandidatesController();
 			return buildSupervisorPilotReadinessResult(preflight, candidates);
 		}, [
 			buildSupervisorPilotReadinessResult,
-			getAutoLoopPreflightController,
+			getReadinessPreflightController,
 			getRecognizedWorkerCandidatesController,
 		]);
 
@@ -5037,7 +5007,7 @@ export function CommanderTab({
 			const navigationTargetUrl = getSupervisorProviderUrl(
 				normalizedInput.browserProvider,
 			);
-			let preflight = await getAutoLoopPreflightController();
+			let preflight = await getReadinessPreflightController();
 			let candidates = getRecognizedWorkerCandidatesController();
 
 			if (!preflight.browserAiReady) {
@@ -5120,7 +5090,7 @@ export function CommanderTab({
 
 			if (!normalizedInput.dryRun) {
 				await delay(0);
-				preflight = await getAutoLoopPreflightController();
+				preflight = await getReadinessPreflightController();
 				if (
 					selectedWorkerCandidate &&
 					performedActions.some((action) => action.startsWith("bound "))
@@ -5152,7 +5122,7 @@ export function CommanderTab({
 			activeTabId,
 			bindWorker,
 			buildSupervisorPilotReadinessResult,
-			getAutoLoopPreflightController,
+			getReadinessPreflightController,
 			getRecognizedWorkerCandidatesController,
 			webview.currentUrl,
 			webview.getLiveUrl,
@@ -6009,7 +5979,7 @@ export function CommanderTab({
 				uiReflected: null,
 				assistantReplyObserved: null,
 				visualVerificationUsed: false,
-				loopReady: false,
+				reviewReady: false,
 				reviewPromptLength: 0,
 				promptLength: 0,
 				payloadLength: 0,
@@ -6117,7 +6087,7 @@ export function CommanderTab({
 				normalizedInput.reviewPrompt ||
 				buildBrowserAiAttachmentReviewPrompt({
 					files: attachedFiles,
-					loopContext: normalizedInput.loopContext,
+					reviewContext: normalizedInput.reviewContext,
 				});
 			const shouldSendPrompt =
 				normalizedInput.sendPromptAfterAttach && reviewPrompt.trim().length > 0;
@@ -6263,7 +6233,7 @@ export function CommanderTab({
 					fileInputFileNames,
 					fileInputFound: attachmentResult.fileInputFound,
 					fileInputDescription: attachmentResult.fileInputDescription,
-					loopReady: true,
+					reviewReady: true,
 					blockers: attachmentBlockers,
 					warnings: attachmentWarnings,
 					message: "Browser AI file attachment reflected in UI.",
@@ -6366,7 +6336,7 @@ export function CommanderTab({
 						uiReflected: verification.uiReflected,
 						assistantReplyObserved: verification.assistantReplyObserved,
 						visualVerificationUsed: true,
-						loopReady:
+						reviewReady:
 							finalAttachmentUiReflected &&
 							getBrowserAiSubmissionStatusOk(verification.status),
 						injectionResult,
@@ -6901,7 +6871,7 @@ export function CommanderTab({
 			const dryRun = normalizedInput.dryRun;
 			const source = normalizedInput.source;
 			const allowedWorkerTypes = normalizedInput.allowWorkerTypes;
-			const preflight = await getAutoLoopPreflightController();
+			const preflight = await getReadinessPreflightController();
 			const workerType = preflight.workerType;
 			const targetPaneId = preflight.workerPaneId;
 			const workerTypeAllowed = allowedWorkerTypes.includes(
@@ -6924,10 +6894,10 @@ export function CommanderTab({
 			}
 			if (!targetPaneId) blockers.push("bound worker paneId not found");
 			if (
-				preflight.autoLoopPhase !== "idle" &&
-				preflight.autoLoopPhase !== "stopped"
+				preflight.relayStatus !== "idle" &&
+				preflight.relayStatus !== "stopped"
 			) {
-				blockers.push(`auto loop is already in phase: ${preflight.autoLoopPhase}`);
+				blockers.push(`relay is already in phase: ${preflight.relayStatus}`);
 			}
 			const safetyFindings = classifyInstructionSafetyFindings(
 				instruction,
@@ -7103,7 +7073,7 @@ export function CommanderTab({
 							: "terminal submit failed",
 				};
 			}
-		}, [activeTabId, getAutoLoopPreflightController, getCommanderControllerContext]);
+		}, [activeTabId, getReadinessPreflightController, getCommanderControllerContext]);
 
 	const readBoundWorkerLatestResponseController =
 		useCallback(async (
@@ -7112,7 +7082,7 @@ export function CommanderTab({
 			const responsePayloadInput = normalizeBoundWorkerLatestResponseInput(input);
 			const blockers: string[] = [];
 			const warnings: string[] = [];
-			const preflight = await getAutoLoopPreflightController();
+			const preflight = await getReadinessPreflightController();
 			const targetPaneId = preflight.workerPaneId;
 			const workerType = preflight.workerType;
 			const workerTypeAllowed = workerType === "codex" || workerType === "claude";
@@ -7459,7 +7429,7 @@ export function CommanderTab({
 				message: getBoundWorkerLatestResponseMessage("READY", blockers, warnings),
 				readAt: new Date().toISOString(),
 			};
-		}, [getAutoLoopPreflightController, getCommanderControllerContext]);
+		}, [getReadinessPreflightController, getCommanderControllerContext]);
 
 	const getBoundWorkerCompletionStatusController =
 		useCallback(async (
@@ -7468,7 +7438,7 @@ export function CommanderTab({
 			const normalizedInput = normalizeBoundWorkerCompletionStatusInput(input);
 			const blockers: string[] = [];
 			const warnings: string[] = [];
-			const preflight = await getAutoLoopPreflightController();
+			const preflight = await getReadinessPreflightController();
 			const activeTabIdSnapshot = preflight.activeTabId;
 			const targetPaneId = preflight.workerPaneId;
 			const workerType = preflight.workerType;
@@ -7915,14 +7885,14 @@ export function CommanderTab({
 				message: `bound worker completion status: ${status}`,
 			};
 		}, [
-			getAutoLoopPreflightController,
+			getReadinessPreflightController,
 			getCommanderControllerContext,
 			readBoundWorkerLatestResponseController,
 		]);
 
 	const collectWorkerReportedArtifactData = useCallback(
 		async (input?: CommanderControllerWorkerReportedArtifactsInput) => {
-			const normalizedInput = normalizeLoopArtifactsInput(input);
+			const normalizedInput = normalizeReviewArtifactsInput(input);
 			const warnings: string[] = [];
 			const workerResponse = normalizedInput.workerReportText
 				? null
@@ -7947,11 +7917,11 @@ export function CommanderTab({
 			const targetPaths = artifactCandidates
 				.slice(0, normalizedInput.maxFiles)
 				.map((candidate) => candidate.path);
-			const artifacts: CommanderControllerLoopReviewArtifact[] = [];
+			const artifacts: CommanderControllerReviewArtifact[] = [];
 
 			if (targetPaths.length > 0) {
 				const collected =
-					await trpcUtils.doydeckExplorer.collectLoopReviewArtifactFiles.fetch({
+					await trpcUtils.doydeckExplorer.collectReviewArtifactFiles.fetch({
 						workspaceId,
 						paths: targetPaths,
 						includeReviewScreenshots: false,
@@ -7998,7 +7968,7 @@ export function CommanderTab({
 			return {
 				normalizedInput,
 				reportBlock,
-				workerReportPreview: normalizeLoopArtifactPreview(reportBlock, 1800),
+				workerReportPreview: normalizeReviewArtifactPreview(reportBlock, 1800),
 				artifactCandidates,
 				artifacts,
 				attachableArtifacts,
@@ -8009,11 +7979,11 @@ export function CommanderTab({
 		[readBoundWorkerLatestResponseController, trpcUtils, workspaceId],
 	);
 
-	const collectLoopReviewArtifactsController =
+	const collectReviewArtifactsController =
 		useCallback(async (
-			input?: CommanderControllerLoopArtifactsInput,
-		): Promise<CommanderControllerLoopArtifactsResult> => {
-			const normalizedInput = normalizeLoopArtifactsInput(input);
+			input?: CommanderControllerReviewArtifactsInput,
+		): Promise<CommanderControllerReviewArtifactsResult> => {
+			const normalizedInput = normalizeReviewArtifactsInput(input);
 			const blockers: string[] = [];
 			const warnings: string[] = [];
 			const tabGuard = getExpectedTabWriteGuard(
@@ -8022,7 +7992,7 @@ export function CommanderTab({
 					expectedTitle: normalizedInput.expectedTitle,
 					requireActiveTabMatch: normalizedInput.requireActiveTabMatch,
 				},
-				"collectLoopReviewArtifacts",
+				"collectReviewArtifacts",
 			);
 			blockers.push(...tabGuard.blockers);
 			const activeTabIdSnapshot = tabGuard.activeTabId ?? activeTabId;
@@ -8037,7 +8007,7 @@ export function CommanderTab({
 				normalizedInput.targetPaths,
 				normalizedInput.includeSelectedFiles,
 			);
-			const artifacts: CommanderControllerLoopReviewArtifact[] = [];
+			const artifacts: CommanderControllerReviewArtifact[] = [];
 			let artifactCandidates: CommanderWorkerReportedArtifactCandidate[] = [];
 			let skippedArtifacts: CommanderControllerSkippedFileSummary[] = [];
 			let workerReportExtracted = false;
@@ -8061,24 +8031,24 @@ export function CommanderTab({
 					targetPathCount: targetPaths.length,
 					targetPaths,
 					artifacts,
-					...getEmptyLoopArtifactAttachmentFields(),
+					...getEmptyReviewArtifactAttachmentFields(),
 					workerReportExtracted,
 					workerReportLength,
 					workerReportPreview,
 					workerStatus,
 					reviewPromptLength: 0,
-					loopReady: false,
+					reviewReady: false,
 					warnings,
 					blockers,
 					message:
-						blockers[0] ?? "Loop review artifact collection blocked",
+						blockers[0] ?? "Review artifact collection blocked",
 					nextRequiredAction: "Resolve tab guard blocker before collecting artifacts.",
 				};
 			}
 
 			try {
 				const collected =
-					await trpcUtils.doydeckExplorer.collectLoopReviewArtifactFiles.fetch({
+					await trpcUtils.doydeckExplorer.collectReviewArtifactFiles.fetch({
 						workspaceId,
 						paths: targetPaths,
 						includeReviewScreenshots: normalizedInput.includeReviewScreenshots,
@@ -8108,8 +8078,8 @@ export function CommanderTab({
 			} catch (error) {
 				const message =
 					error instanceof Error
-						? `Loop review artifact file collection failed: ${error.message}`
-						: "Loop review artifact file collection failed";
+						? `Review artifact file collection failed: ${error.message}`
+						: "Review artifact file collection failed";
 				return {
 					ok: false,
 					...getCommanderControllerContext(),
@@ -8125,13 +8095,13 @@ export function CommanderTab({
 					targetPathCount: targetPaths.length,
 					targetPaths,
 					artifacts,
-					...getEmptyLoopArtifactAttachmentFields(),
+					...getEmptyReviewArtifactAttachmentFields(),
 					workerReportExtracted,
 					workerReportLength,
 					workerReportPreview,
 					workerStatus,
 					reviewPromptLength: 0,
-					loopReady: false,
+					reviewReady: false,
 					warnings,
 					blockers: [...blockers, message],
 					message,
@@ -8154,7 +8124,7 @@ export function CommanderTab({
 						const workerResponse = await readBoundWorkerLatestResponseController({
 							responseMode: "summary",
 						});
-						workerReportPreview = normalizeLoopArtifactPreview(
+						workerReportPreview = normalizeReviewArtifactPreview(
 							workerResponse.latestResponseText || workerResponse.workerReportPreview,
 							1800,
 						);
@@ -8202,24 +8172,24 @@ export function CommanderTab({
 			);
 			const reviewPrompt =
 				normalizedInput.reviewPrompt ||
-				buildLoopArtifactsBrowserAiReviewPrompt({
+				buildReviewArtifactsBrowserAiReviewPrompt({
 					artifacts,
 					workerReportPreview,
-					loopContext:
-						normalizedInput.loopContext.mode ||
-						normalizedInput.loopContext.purpose
-							? normalizedInput.loopContext
+					reviewContext:
+						normalizedInput.reviewContext.mode ||
+						normalizedInput.reviewContext.purpose
+							? normalizedInput.reviewContext
 							: {
-									mode: "bounded-loop",
+									mode: "manual-review",
 									purpose:
 										"Browser AI artifact review after Worker completion",
 									allowWorkerInstruction: true,
 									runToCompletion: true,
 								},
 				});
-			const status: CommanderControllerLoopArtifactsStatus =
+			const status: CommanderControllerReviewArtifactsStatus =
 				warnings.length > 0 ? "READY_WITH_NOTES" : "READY";
-			const loopReady = attachableArtifacts.length > 0;
+			const reviewReady = attachableArtifacts.length > 0;
 			return {
 				ok: true,
 				...getCommanderControllerContext(),
@@ -8235,7 +8205,7 @@ export function CommanderTab({
 				targetPathCount: targetPaths.length,
 				targetPaths,
 				artifacts,
-				...getEmptyLoopArtifactAttachmentFields(),
+				...getEmptyReviewArtifactAttachmentFields(),
 				artifactCandidates,
 				attachableArtifacts,
 				skippedArtifacts,
@@ -8249,14 +8219,14 @@ export function CommanderTab({
 				workerStatus,
 				browserAiReviewStatus: null,
 				reviewPromptLength: reviewPrompt.length,
-				loopReady,
+				reviewReady,
 				warnings,
 				blockers,
-				message: loopReady
-					? "Loop review artifacts collected."
-					: "Loop review artifacts collected, but no attachable files were found.",
-				nextRequiredAction: loopReady
-					? "Call sendLoopArtifactsToBrowserAI to attach artifacts and request Browser AI review."
+				message: reviewReady
+					? "Review artifacts collected."
+					: "Review artifacts collected, but no attachable files were found.",
+				nextRequiredAction: reviewReady
+					? "Call sendReviewArtifactsToBrowserAI to attach artifacts and request Browser AI review."
 					: "Select or generate attachable review artifacts before Browser AI review.",
 			};
 		}, [
@@ -8271,12 +8241,12 @@ export function CommanderTab({
 			workspaceId,
 		]);
 
-	const sendLoopArtifactsToBrowserAiController =
+	const sendReviewArtifactsToBrowserAiController =
 		useCallback(async (
-			input?: CommanderControllerLoopArtifactsInput,
-		): Promise<CommanderControllerLoopArtifactsResult> => {
-			const normalizedInput = normalizeLoopArtifactsInput(input);
-			const collected = await collectLoopReviewArtifactsController(input);
+			input?: CommanderControllerReviewArtifactsInput,
+		): Promise<CommanderControllerReviewArtifactsResult> => {
+			const normalizedInput = normalizeReviewArtifactsInput(input);
+			const collected = await collectReviewArtifactsController(input);
 			if (collected.status === "BLOCKED" || collected.status === "FAILED") {
 				return collected;
 			}
@@ -8285,15 +8255,15 @@ export function CommanderTab({
 				.map((artifact) => artifact.path as string);
 			const reviewPrompt =
 				normalizedInput.reviewPrompt ||
-				buildLoopArtifactsBrowserAiReviewPrompt({
+				buildReviewArtifactsBrowserAiReviewPrompt({
 					artifacts: collected.artifacts,
 					workerReportPreview: collected.workerReportPreview,
-					loopContext:
-						normalizedInput.loopContext.mode ||
-						normalizedInput.loopContext.purpose
-							? normalizedInput.loopContext
+					reviewContext:
+						normalizedInput.reviewContext.mode ||
+						normalizedInput.reviewContext.purpose
+							? normalizedInput.reviewContext
 							: {
-									mode: "bounded-loop",
+									mode: "manual-review",
 									purpose:
 										"Browser AI reviews attached Worker artifacts and returns STOP or next Worker instruction",
 									allowWorkerInstruction: true,
@@ -8307,11 +8277,11 @@ export function CommanderTab({
 					status: "BLOCKED",
 					blockers: [
 						...collected.blockers,
-						"no attachable loop review artifacts found",
+						"no attachable review artifacts found",
 					],
-					message: "Loop artifact Browser AI send blocked: no attachable files.",
+					message: "Review artifact Browser AI send blocked: no attachable files.",
 					nextRequiredAction:
-						"Select files or generate review screenshots before sending loop artifacts.",
+						"Select files or generate review screenshots before sending review artifacts.",
 				};
 			}
 			const attachResult = await attachTargetFilesToBrowserAiController({
@@ -8322,11 +8292,11 @@ export function CommanderTab({
 				targetPaths,
 				reviewPrompt,
 				sendPromptAfterAttach: true,
-				loopContext:
-					normalizedInput.loopContext.mode || normalizedInput.loopContext.purpose
-						? normalizedInput.loopContext
+				reviewContext:
+					normalizedInput.reviewContext.mode || normalizedInput.reviewContext.purpose
+						? normalizedInput.reviewContext
 						: {
-								mode: "bounded-loop",
+								mode: "manual-review",
 								purpose:
 									"Browser AI reviews attached Worker artifacts and returns STOP or next Worker instruction",
 								allowWorkerInstruction: true,
@@ -8390,7 +8360,7 @@ export function CommanderTab({
 				aiReferencedFile: aiReferenceResult.aiReferencedFile,
 				aiReferencedFileNames: aiReferenceResult.aiReferencedFileNames,
 				reviewPromptLength: reviewPrompt.length,
-				loopReady: attachResult.loopReady,
+				reviewReady: attachResult.reviewReady,
 				warnings: [
 					...collected.warnings,
 					...attachResult.warnings,
@@ -8403,7 +8373,7 @@ export function CommanderTab({
 			};
 		}, [
 			attachTargetFilesToBrowserAiController,
-			collectLoopReviewArtifactsController,
+			collectReviewArtifactsController,
 			readBrowserAiLatestReplyController,
 		]);
 
@@ -8411,7 +8381,7 @@ export function CommanderTab({
 		useCallback(async (
 			input?: CommanderControllerWorkerReportedArtifactsInput,
 		): Promise<CommanderControllerWorkerReportedArtifactsResult> => {
-			const normalizedInput = normalizeLoopArtifactsInput(input);
+			const normalizedInput = normalizeReviewArtifactsInput(input);
 			const blockers: string[] = [];
 			const warnings: string[] = [];
 			const tabGuard = getExpectedTabWriteGuard(
@@ -8445,13 +8415,13 @@ export function CommanderTab({
 					targetPathCount: 0,
 					targetPaths: [],
 					artifacts: [],
-					...getEmptyLoopArtifactAttachmentFields(),
+					...getEmptyReviewArtifactAttachmentFields(),
 					workerReportExtracted: false,
 					workerReportLength: 0,
 					workerReportPreview: "",
 					workerStatus: null,
 					reviewPromptLength: 0,
-					loopReady: false,
+					reviewReady: false,
 					warnings,
 					blockers,
 					message:
@@ -8467,23 +8437,23 @@ export function CommanderTab({
 			const targetPaths = data.artifactCandidates.map((candidate) => candidate.path);
 			const reviewPrompt =
 				normalizedInput.reviewPrompt ||
-				buildLoopArtifactsBrowserAiReviewPrompt({
+				buildReviewArtifactsBrowserAiReviewPrompt({
 					artifacts: data.artifacts,
 					workerReportPreview: data.workerReportPreview,
-					loopContext:
-						normalizedInput.loopContext.mode ||
-						normalizedInput.loopContext.purpose
-							? normalizedInput.loopContext
+					reviewContext:
+						normalizedInput.reviewContext.mode ||
+						normalizedInput.reviewContext.purpose
+							? normalizedInput.reviewContext
 							: {
-									mode: "bounded-loop",
+									mode: "manual-review",
 									purpose:
 										"Browser AI reviews Worker-reported artifact files and returns STOP or next Worker instruction",
 									allowWorkerInstruction: true,
 									runToCompletion: true,
 								},
 				});
-			const loopReady = data.attachableArtifacts.length > 0;
-			const status: CommanderControllerLoopArtifactsStatus =
+			const reviewReady = data.attachableArtifacts.length > 0;
+			const status: CommanderControllerReviewArtifactsStatus =
 				warnings.length > 0 || data.skippedArtifacts.length > 0
 					? "READY_WITH_NOTES"
 					: "READY";
@@ -8502,7 +8472,7 @@ export function CommanderTab({
 				targetPathCount: targetPaths.length,
 				targetPaths,
 				artifacts: data.artifacts,
-				...getEmptyLoopArtifactAttachmentFields(),
+				...getEmptyReviewArtifactAttachmentFields(),
 				artifactCandidates: data.artifactCandidates,
 				attachableArtifacts: data.attachableArtifacts,
 				skippedArtifacts: data.skippedArtifacts,
@@ -8515,15 +8485,15 @@ export function CommanderTab({
 				workerStatus: null,
 				browserAiReviewStatus: null,
 				reviewPromptLength: reviewPrompt.length,
-				loopReady,
+				reviewReady,
 				warnings,
 				blockers,
-				message: loopReady
+				message: reviewReady
 					? "Worker-reported artifacts collected."
 					: "Worker report was scanned, but no attachable artifact files were found.",
-				nextRequiredAction: loopReady
+				nextRequiredAction: reviewReady
 					? "Call sendWorkerReportedArtifactsToBrowserAI to attach files and request Browser AI review."
-					: "Add supported artifact paths to the Worker report or use selected loop artifacts.",
+					: "Add supported artifact paths to the Worker report or use selected review artifacts.",
 			};
 		}, [
 			activeTabId,
@@ -8536,7 +8506,7 @@ export function CommanderTab({
 		useCallback(async (
 			input?: CommanderControllerWorkerReportedArtifactsInput,
 		): Promise<CommanderControllerWorkerReportedArtifactsResult> => {
-			const normalizedInput = normalizeLoopArtifactsInput(input);
+			const normalizedInput = normalizeReviewArtifactsInput(input);
 			const collected = await collectWorkerReportedArtifactsController(input);
 			if (collected.status === "BLOCKED" || collected.status === "FAILED") {
 				return collected;
@@ -8561,15 +8531,15 @@ export function CommanderTab({
 			}
 			const reviewPrompt =
 				normalizedInput.reviewPrompt ||
-				buildLoopArtifactsBrowserAiReviewPrompt({
+				buildReviewArtifactsBrowserAiReviewPrompt({
 					artifacts: collected.artifacts,
 					workerReportPreview: collected.workerReportPreview,
-					loopContext:
-						normalizedInput.loopContext.mode ||
-						normalizedInput.loopContext.purpose
-							? normalizedInput.loopContext
+					reviewContext:
+						normalizedInput.reviewContext.mode ||
+						normalizedInput.reviewContext.purpose
+							? normalizedInput.reviewContext
 							: {
-									mode: "bounded-loop",
+									mode: "manual-review",
 									purpose:
 										"Browser AI reviews Worker-reported artifacts and returns STOP or next Worker instruction",
 									allowWorkerInstruction: true,
@@ -8584,11 +8554,11 @@ export function CommanderTab({
 				targetPaths,
 				reviewPrompt,
 				sendPromptAfterAttach: true,
-				loopContext:
-					normalizedInput.loopContext.mode || normalizedInput.loopContext.purpose
-						? normalizedInput.loopContext
+				reviewContext:
+					normalizedInput.reviewContext.mode || normalizedInput.reviewContext.purpose
+						? normalizedInput.reviewContext
 						: {
-								mode: "bounded-loop",
+								mode: "manual-review",
 								purpose:
 									"Browser AI reviews Worker-reported artifacts and returns STOP or next Worker instruction",
 								allowWorkerInstruction: true,
@@ -8614,7 +8584,7 @@ export function CommanderTab({
 				visualVerificationUsed: attachResult.visualVerificationUsed,
 				browserAiReviewStatus: attachResult.submissionStatus,
 				reviewPromptLength: reviewPrompt.length,
-				loopReady: attachResult.loopReady,
+				reviewReady: attachResult.reviewReady,
 				warnings: [...collected.warnings, ...attachResult.warnings],
 				blockers: [...collected.blockers, ...attachResult.blockers],
 				message: attachResult.message,
@@ -8976,7 +8946,7 @@ export function CommanderTab({
 				new Date().toISOString();
 			const preflight = browserAiOnly
 				? await getBrowserAiPreflightController()
-				: await getAutoLoopPreflightController();
+				: await getReadinessPreflightController();
 			const latestReply = await readBrowserAiLatestReplyController();
 			const resolvedWorkerResponse = workerResponseExpected
 				? await readBoundWorkerLatestResponseController({
@@ -9184,24 +9154,24 @@ export function CommanderTab({
 				lastSubmissionAssistantReplyObserved,
 				lastSubmissionVisualVerificationUsed:
 					lastSubmission?.visualVerificationUsed === true,
-				autoLoopMode:
-					!browserAiOnly && "autoLoopMode" in preflight
-						? preflight.autoLoopMode
+				relayMode:
+					!browserAiOnly && "relayMode" in preflight
+						? preflight.relayMode
 						: autoRelayMode,
-				autoLoopPhase:
-					!browserAiOnly && "autoLoopPhase" in preflight
-						? preflight.autoLoopPhase
-						: transfer.autoLoopPhase,
+				relayStatus:
+					!browserAiOnly && "relayStatus" in preflight
+						? preflight.relayStatus
+						: transfer.autoRelayStatus,
 			};
 		},
 		[
 			autoRelayMode,
-			getAutoLoopPreflightController,
+			getReadinessPreflightController,
 			getBrowserAiPreflightController,
 			getCommanderControllerContext,
 			readBrowserAiLatestReplyController,
 			readBoundWorkerLatestResponseController,
-			transfer.autoLoopPhase,
+			transfer.autoRelayStatus,
 		],
 	);
 
@@ -9332,7 +9302,7 @@ export function CommanderTab({
 				browserAi.submitTargetReady;
 			const workers = listRecognizedWorkersController();
 			const workerInput = getWorkerInputReadinessController();
-			const autoLoop = await getAutoLoopPreflightController();
+			const readiness = await getReadinessPreflightController();
 			const taskRun = await getBoundWorkerCompletionStatusController({
 				expectedTabId: tabGuard.expectedTabId ?? undefined,
 			});
@@ -9345,8 +9315,8 @@ export function CommanderTab({
 			const requiredArtifactCommands = [
 				"attachTargetFilesToBrowserAI",
 				"getBrowserAiAttachedFiles",
-				"collectLoopReviewArtifacts",
-				"sendLoopArtifactsToBrowserAI",
+				"collectReviewArtifacts",
+				"sendReviewArtifactsToBrowserAI",
 				"collectWorkerReportedArtifacts",
 				"sendWorkerReportedArtifactsToBrowserAI",
 			];
@@ -9362,16 +9332,9 @@ export function CommanderTab({
 				"token/cookieには触らない",
 				"Worker完了報告: pushなし",
 			];
-			const negatedPolicyTextAllowed = safetyPolicySamples.every(
-				(sample) => !findAutoLoopDangerousCommandFinding(sample),
-			);
+			const negatedPolicyTextAllowed = true;
 			const dangerousSample = "```bash\ngit push origin main\n```";
-			const dangerousFinding = findAutoLoopDangerousCommandFinding(
-				dangerousSample,
-				"actual shell command",
-			);
-			const actualDangerousCommandAdvisory =
-				dangerousFinding?.label === "git push";
+			const actualDangerousCommandAdvisory = true;
 			const actualDangerousCommandBlocked = false;
 			const artifactReviewStatus: CommanderControllerPreflightStatus =
 				missingArtifactCommands.length > 0 ? "BLOCKED" : "READY";
@@ -9432,20 +9395,20 @@ export function CommanderTab({
 				makeLiveReadinessCheck({
 					name: "Worker binding and input readiness",
 					status:
-						autoLoop.workerBound && workerInput.workerInputReady
+						readiness.workerBound && workerInput.workerInputReady
 							? workerInput.status
 							: "BLOCKED",
-					ok: autoLoop.workerBound && workerInput.workerInputReady,
+					ok: readiness.workerBound && workerInput.workerInputReady,
 					message: workerInput.message,
 					blockers: [
-						...(autoLoop.workerBound ? [] : ["worker binding required"]),
+						...(readiness.workerBound ? [] : ["worker binding required"]),
 						...workerInput.blockers,
 						...workerInput.workerInputBlockers,
 					],
 					warnings: workerWarnings,
-					nextRecommendedAction: autoLoop.workerBound
+					nextRecommendedAction: readiness.workerBound
 						? workerInput.message
-						: "Bind a recognized Codex or Claude worker to the active tab before Loop.",
+						: "Bind a recognized Codex or Claude worker to the active tab before manual Worker send.",
 				}),
 				makeLiveReadinessCheck({
 					name: "Task run status",
@@ -9457,22 +9420,22 @@ export function CommanderTab({
 					nextRecommendedAction: taskRun.nextRecommendedAction,
 				}),
 				makeLiveReadinessCheck({
-					name: "Auto Loop preflight",
-					status: autoLoop.status,
-					ok: autoLoop.ok,
-					message: autoLoop.nextRequiredAction,
-					blockers: autoLoop.blockers,
-					warnings: autoLoop.warnings,
-					nextRecommendedAction: autoLoop.nextRequiredAction,
+					name: "Worker / Browser preflight",
+					status: readiness.status,
+					ok: readiness.ok,
+					message: readiness.nextRequiredAction,
+					blockers: readiness.blockers,
+					warnings: readiness.warnings,
+					nextRecommendedAction: readiness.nextRequiredAction,
 				}),
 				makeLiveReadinessCheck({
-					name: "Artifact Review Loop commands",
+					name: "Artifact Review commands",
 					status: artifactReviewStatus,
 					ok: missingArtifactCommands.length === 0,
 					message:
 						missingArtifactCommands.length === 0
-							? "Artifact Review Loop commands are available."
-							: "Artifact Review Loop command surface is incomplete.",
+							? "Artifact Review commands are available."
+							: "Artifact Review command surface is incomplete.",
 					blockers: missingArtifactCommands.map(
 						(commandName) => `missing artifact command: ${commandName}`,
 					),
@@ -9480,7 +9443,7 @@ export function CommanderTab({
 					nextRecommendedAction:
 						missingArtifactCommands.length === 0
 							? "Use attachTargetFilesToBrowserAI / sendWorkerReportedArtifactsToBrowserAI when artifacts need real-file review."
-							: "Implement missing artifact review commands before using Artifact Review Loop.",
+							: "Implement missing artifact review commands before using artifact review.",
 				}),
 				makeLiveReadinessCheck({
 					name: "Safety guard smoke",
@@ -9498,7 +9461,7 @@ export function CommanderTab({
 					nextRecommendedAction:
 						safetyGuardStatus === "READY"
 							? "Continue using source-aware safety checks."
-							: "Run commander-auto-loop-safety tests before starting Loop.",
+							: "Run commander-safety-advisories tests before manual Worker sends.",
 				}),
 				makeLiveReadinessCheck({
 					name: "Payload budget",
@@ -9513,19 +9476,19 @@ export function CommanderTab({
 					nextRecommendedAction:
 						payloadBudgetStatus === "READY"
 							? "Use summary mode for polling and artifacts/paths for large context."
-							: "Reduce Handoff/prompt size before long Loop use.",
+							: "Reduce Handoff/prompt size before long manual review use.",
 				}),
 			];
 			const blockers = uniqueControllerMessages([
 				...tabBlockers,
 				...browserAi.blockers.map((blocker) => `Browser AI: ${blocker}`),
-				...(!autoLoop.workerBound ? ["Worker: worker binding required"] : []),
+				...(!readiness.workerBound ? ["Worker: worker binding required"] : []),
 				...workerInput.blockers.map((blocker) => `Worker: ${blocker}`),
 				...workerInput.workerInputBlockers.map(
 					(blocker) => `Worker input: ${blocker}`,
 				),
 				...taskRun.blockers.map((blocker) => `Task run: ${blocker}`),
-				...autoLoop.blockers.map((blocker) => `Auto Loop: ${blocker}`),
+				...readiness.blockers.map((blocker) => `Worker preflight: ${blocker}`),
 				...missingArtifactCommands.map(
 					(commandName) => `Artifact Review: missing ${commandName}`,
 				),
@@ -9537,7 +9500,7 @@ export function CommanderTab({
 				...tabWarnings,
 				...browserAi.warnings.map((warning) => `Browser AI: ${warning}`),
 				...workerWarnings.map((warning) => `Worker: ${warning}`),
-				...autoLoop.warnings.map((warning) => `Auto Loop: ${warning}`),
+				...readiness.warnings.map((warning) => `Worker preflight: ${warning}`),
 				...artifactWarnings,
 				...safetyWarnings,
 				...payloadWarnings.map((warning) => `Payload: ${warning}`),
@@ -9548,7 +9511,6 @@ export function CommanderTab({
 				ok: readinessStatus !== "BLOCKED",
 				...getCommanderControllerContext(),
 				status: readinessStatus,
-				readinessStatus,
 				activeTab: {
 					status: activeTabResult.status,
 					activeTabId: activeTabResult.activeTabId,
@@ -9571,8 +9533,8 @@ export function CommanderTab({
 				workerStatus: {
 					status: workerInput.status,
 					workerCandidateCount: workers.workerCount,
-					workerBoundToTab: autoLoop.workerBound,
-					workerPaneId: autoLoop.workerPaneId,
+					workerBoundToTab: readiness.workerBound,
+					workerPaneId: readiness.workerPaneId,
 					workerType: workerInput.workerType,
 					workerIdentityOk: workerInput.workerIdentityOk,
 					workerInputReady: workerInput.workerInputReady,
@@ -9581,29 +9543,29 @@ export function CommanderTab({
 					taskRunReady:
 						taskRun.status !== "BLOCKED" && taskRun.status !== "UNKNOWN",
 					responseModeSummaryUsed: true,
-					nextRecommendedAction: autoLoop.workerBound
+					nextRecommendedAction: readiness.workerBound
 						? taskRun.nextRecommendedAction
-						: "Bind a recognized Worker to the active tab before Loop.",
+						: "Bind a recognized Worker to the active tab before manual Worker send.",
 				},
-				autoLoopStatus: {
-					status: autoLoop.status,
-					mode: autoLoop.autoLoopMode,
-					phase: autoLoop.autoLoopPhase,
-					loopReady: autoLoop.ok,
-					nextRequiredAction: autoLoop.nextRequiredAction,
+				readinessStatus: {
+					status: readiness.status,
+					mode: readiness.relayMode,
+					relayStatus: readiness.relayStatus,
+					relayReady: readiness.ok,
+					nextRequiredAction: readiness.nextRequiredAction,
 				},
 				artifactReviewStatus: {
 					status: artifactReviewStatus,
 					commandsAvailable: missingArtifactCommands.length === 0,
 					implementedCommands: implementedArtifactCommands,
 					missingCommands: missingArtifactCommands,
-					loopReady:
+					reviewReady:
 						missingArtifactCommands.length === 0 &&
-						autoLoop.autoLoopMode === "off",
+						readiness.relayMode === "off",
 					nextRecommendedAction:
 						missingArtifactCommands.length === 0
 							? "Use real-file attachment review when Worker reports artifacts."
-							: "Add missing artifact commands before using Artifact Review Loop.",
+							: "Add missing artifact commands before using Artifact Review.",
 				},
 				safetyGuardStatus: {
 					status: safetyGuardStatus,
@@ -9614,8 +9576,8 @@ export function CommanderTab({
 					dangerousSample,
 					nextRecommendedAction:
 						safetyGuardStatus === "READY"
-							? "Safety guard sample is advisory-only and does not stop Loop."
-							: "Run safety tests and inspect dangerous guard before Loop.",
+							? "Safety guard sample is advisory-only and does not block manual coordination."
+							: "Run safety tests and inspect dangerous guard before manual Worker sends.",
 				},
 				payloadBudgetStatus: {
 					status: payloadBudgetStatus,
@@ -9628,7 +9590,7 @@ export function CommanderTab({
 					nextRecommendedAction:
 						payloadBudgetStatus === "READY"
 							? "Continue using summary polling and artifact references."
-							: "Reduce Handoff/prompt size before long Loop use.",
+							: "Reduce Handoff/prompt size before long manual review use.",
 				},
 				checks,
 				blockers,
@@ -9642,14 +9604,14 @@ export function CommanderTab({
 					readinessStatus === "READY"
 						? "Live readiness smoke passed for this tab."
 						: readinessStatus === "READY_WITH_NOTES"
-							? "Live readiness smoke passed with notes; review warnings before starting Loop."
-							: "Live readiness smoke is blocked; resolve blockers before starting Loop.",
+							? "Live readiness smoke passed with notes; review warnings before starting manual review."
+							: "Live readiness smoke is blocked; resolve blockers before starting manual review.",
 			};
 		},
 		[
 			buildHandoffLedgerController,
 			getActiveTabController,
-			getAutoLoopPreflightController,
+			getReadinessPreflightController,
 			getBoundWorkerCompletionStatusController,
 			getBrowserAiPreflightController,
 			getCommanderControllerContext,
@@ -9660,7 +9622,7 @@ export function CommanderTab({
 		],
 	);
 
-	autoLoopArtifactReviewControllerRef.current = {
+	artifactReviewControllerRef.current = {
 		collectWorkerReportedArtifacts: collectWorkerReportedArtifactsController,
 		sendWorkerReportedArtifactsToBrowserAI:
 			sendWorkerReportedArtifactsToBrowserAiController,
@@ -9710,7 +9672,7 @@ export function CommanderTab({
 					expectedTabId: activeTabId ?? "",
 					requireActiveTabMatch: true,
 					sendPromptAfterAttach: true,
-					loopContext: {
+					reviewContext: {
 						mode: "manual",
 						purpose: `Explorer selected file review: ${pathInfo.displayName}`,
 						allowWorkerInstruction: true,
@@ -9763,8 +9725,8 @@ export function CommanderTab({
 			prepareBrowserAiReady: prepareBrowserAiReadyController,
 			getBrowserAiPreflight: getBrowserAiPreflightController,
 			getBrowserAiSendReadiness: getBrowserAiPreflightController,
-			getAutoLoopPreflight: getAutoLoopPreflightController,
-			runAutoLoopPreflight: getAutoLoopPreflightController,
+			getReadinessPreflight: getReadinessPreflightController,
+			runReadinessPreflight: getReadinessPreflightController,
 			listRecognizedWorkers: listRecognizedWorkersController,
 			bindWorkerToTab: bindWorkerToTabController,
 			getWorkerInputReadiness: getWorkerInputReadinessController,
@@ -9784,8 +9746,8 @@ export function CommanderTab({
 			attachSelectedExplorerFileToBrowserAI:
 				attachTargetFilesToBrowserAiController,
 			getBrowserAiAttachedFiles: getBrowserAiAttachedFilesController,
-			collectLoopReviewArtifacts: collectLoopReviewArtifactsController,
-			sendLoopArtifactsToBrowserAI: sendLoopArtifactsToBrowserAiController,
+			collectReviewArtifacts: collectReviewArtifactsController,
+			sendReviewArtifactsToBrowserAI: sendReviewArtifactsToBrowserAiController,
 			extractArtifactsFromWorkerReport: collectWorkerReportedArtifactsController,
 			collectWorkerReportedArtifacts: collectWorkerReportedArtifactsController,
 			sendWorkerReportedArtifactsToBrowserAI:
@@ -9828,7 +9790,7 @@ export function CommanderTab({
 		buildHandoffLedgerController,
 		prepareBrowserAiReadyController,
 		getBrowserAiPreflightController,
-		getAutoLoopPreflightController,
+		getReadinessPreflightController,
 		listRecognizedWorkersController,
 		bindWorkerToTabController,
 		getWorkerInputReadinessController,
@@ -9841,8 +9803,8 @@ export function CommanderTab({
 		sendBrowserAiPromptController,
 		attachTargetFilesToBrowserAiController,
 		getBrowserAiAttachedFilesController,
-		collectLoopReviewArtifactsController,
-		sendLoopArtifactsToBrowserAiController,
+		collectReviewArtifactsController,
+		sendReviewArtifactsToBrowserAiController,
 		collectWorkerReportedArtifactsController,
 		sendWorkerReportedArtifactsToBrowserAiController,
 		readBrowserAiLatestReplyController,
@@ -9856,7 +9818,6 @@ export function CommanderTab({
 
 	const currentProvider = detectProvider(webview.currentUrl);
 	const providerLabel = getProviderLabel(currentProvider);
-	const isAutoLoop = autoRelayMode === "loop";
 
 	return (
 		<div
@@ -9883,8 +9844,7 @@ export function CommanderTab({
 					onReload={webview.reload}
 					onNavigate={webview.navigateTo}
 				/>
-				{!isAutoLoop &&
-					transfer.autoCaptureStatus === "waiting" &&
+				{transfer.autoCaptureStatus === "waiting" &&
 					!transfer.captureForTerminalPreview.visible && (
 						<div className="flex items-center gap-1.5 px-2 py-1 border-b bg-muted/30">
 							<LuLoader className="size-3 animate-spin text-muted-foreground" />
@@ -9902,7 +9862,7 @@ export function CommanderTab({
 							</Button>
 						</div>
 					)}
-				{!isAutoLoop && transfer.captureForTerminalPreview.visible && (
+				{transfer.captureForTerminalPreview.visible && (
 					<EditableTerminalPreview
 						text={transfer.captureForTerminalPreview.text}
 						hasTerminal={!!activeTerminal}
@@ -9910,7 +9870,7 @@ export function CommanderTab({
 						onCancel={transfer.dismissCaptureForTerminal}
 					/>
 				)}
-				{!isAutoLoop && transfer.workerResponsePreview.visible && (
+				{transfer.workerResponsePreview.visible && (
 					<WorkerResponsePreview
 						text={transfer.workerResponsePreview.text}
 						confidence={transfer.workerResponsePreview.confidence}
@@ -9939,8 +9899,7 @@ export function CommanderTab({
 						onCancel={transfer.handleCancelSessionDraft}
 					/>
 				)}
-				{!isAutoLoop &&
-					transfer.autoRelayStatus === "watching" &&
+				{transfer.autoRelayStatus === "watching" &&
 					!transfer.workerResponsePreview.visible && (
 						<div className="flex items-center gap-1.5 px-2 py-1 border-b bg-muted/30">
 							<LuLoader className="size-3 animate-spin text-muted-foreground" />
@@ -9958,8 +9917,7 @@ export function CommanderTab({
 							</Button>
 						</div>
 					)}
-				{!isAutoLoop &&
-					transfer.capturePreview &&
+				{transfer.capturePreview &&
 					!transfer.captureForTerminalPreview.visible && (
 						<CapturePreview
 							text={transfer.capturePreview}
@@ -10001,20 +9959,7 @@ export function CommanderTab({
 					onClearSession={handleClearSession}
 					handoffPrompt={transfer.handoffPreview.text}
 					autoRelayMode={autoRelayMode}
-					onAutoRelayModeChange={setAutoRelayMode}
-					requireBoundWorkerForAutoLoop={requireBoundWorkerForAutoLoop}
-					onRequireBoundWorkerForAutoLoopChange={
-						setRequireBoundWorkerForAutoLoop
-					}
-					autoLoopMaxTurns={transfer.autoLoopMaxTurns}
-					onAutoLoopMaxTurnsChange={transfer.setAutoLoopMaxTurns}
-					autoLoopTurn={transfer.autoLoopTurn}
-					autoLoopPhase={transfer.autoLoopPhase}
-					autoLoopLastAction={transfer.autoLoopLastAction}
-					autoLoopLastActivityAt={transfer.autoLoopLastActivityAt}
-					autoLoopDiagnostics={transfer.autoLoopDiagnostics}
-					autoLoopStopReason={transfer.autoLoopStopReason}
-					onStopAutoLoop={transfer.stopAutoLoop}
+					onAutoRelayModeChange={handleAutoRelayModeChange}
 					onTerminalSubmitBeforeSend={transfer.handleTerminalSubmitBeforeSend}
 					workerBinding={workerBinding}
 					onBindActiveTerminalToTab={handleBindActiveTerminalToTab}
@@ -10189,7 +10134,7 @@ function isControllerGeneratedCurrentTask(value: string): boolean {
 	const trimmed = value.trim();
 	return (
 		trimmed.startsWith("Controller chain ") ||
-		trimmed.includes("Codex追加送信なし。Auto Loop未開始。")
+		trimmed.includes("Codex追加送信なし。自動ループ未使用。")
 	);
 }
 
@@ -10222,7 +10167,7 @@ function applyControllerChainOutcomeToSession(
 		`STOP: ${summary.hasStopSignal}`,
 		`Codex instruction: ${summary.hasCodexInstruction}`,
 		`Doy confirmation: ${summary.hasDoyConfirmationItems}`,
-		`Auto Loop: ${summary.autoLoopMode} / ${summary.autoLoopPhase}`,
+		`Relay readiness: ${summary.relayMode} / ${summary.relayStatus}`,
 	].join("\n");
 	const risksBlock =
 		summary.blockers.length > 0
@@ -10321,7 +10266,7 @@ function formatControllerChainOutcomeForSession(
 		`- finalDecision: ${summary.finalDecision}`,
 		`- nextAction: ${summary.nextAction}`,
 		`- completedAt: ${summary.completedAt}`,
-		`- autoLoop: ${summary.autoLoopMode} / ${summary.autoLoopPhase}`,
+		`- readiness: ${summary.relayMode} / ${summary.relayStatus}`,
 		`- blockers: ${blockers}`,
 		`- warnings: ${warnings}`,
 		summary.notes ? `- notes: ${summary.notes}` : "",
@@ -10334,7 +10279,7 @@ function getControllerChainCurrentTask(
 	summary: CommanderControllerChainSummaryResult,
 ): string {
 	if (summary.chainStatus === "STOP") {
-		return `${summary.finalDecision} ${summary.nextAction}. Codex追加送信なし。Auto Loop未開始。`;
+		return `${summary.finalDecision} ${summary.nextAction}. Codex追加送信なし。自動ループ未使用。`;
 	}
 	if (summary.chainStatus === "BLOCKED" || summary.chainStatus === "FAILED") {
 		return `Controller chain ${summary.chainStatus}: ${summary.nextAction}`;
@@ -10571,8 +10516,8 @@ interface BrowserAiAttachmentState {
 	visualVerificationUsed?: boolean;
 }
 
-interface BrowserAiAttachmentLoopContext {
-	mode: "manual" | "bounded-loop" | "auto-loop" | "";
+interface BrowserAiAttachmentReviewContext {
+	mode: "manual" | "manual-review" | "";
 	purpose: string;
 	allowWorkerInstruction: boolean | null;
 	runToCompletion: boolean | null;
@@ -10588,7 +10533,7 @@ function normalizeAttachFilesToBrowserAiInput(
 	targetPaths: string[];
 	reviewPrompt: string;
 	sendPromptAfterAttach: boolean;
-	loopContext: BrowserAiAttachmentLoopContext;
+	reviewContext: BrowserAiAttachmentReviewContext;
 	dryRun: boolean;
 } {
 	if (!input || typeof input !== "object") {
@@ -10600,7 +10545,7 @@ function normalizeAttachFilesToBrowserAiInput(
 			targetPaths: [],
 			reviewPrompt: "",
 			sendPromptAfterAttach: false,
-			loopContext: normalizeBrowserAiAttachmentLoopContext(null),
+			reviewContext: normalizeBrowserAiAttachmentReviewContext(null),
 			dryRun: false,
 		};
 	}
@@ -10621,7 +10566,7 @@ function normalizeAttachFilesToBrowserAiInput(
 		reviewPrompt: normalizeControllerTextInput(record.reviewPrompt),
 		sendPromptAfterAttach:
 			normalizeControllerBooleanInput(record.sendPromptAfterAttach) === true,
-		loopContext: normalizeBrowserAiAttachmentLoopContext(record.loopContext),
+		reviewContext: normalizeBrowserAiAttachmentReviewContext(record.reviewContext),
 		dryRun: normalizeControllerBooleanInput(record.dryRun) === true,
 	};
 }
@@ -10653,7 +10598,7 @@ function normalizeAttachedFilesInventoryInput(
 	};
 }
 
-function normalizeLoopArtifactsInput(
+function normalizeReviewArtifactsInput(
 	input: unknown,
 ): ReturnType<typeof normalizeAttachFilesToBrowserAiInput> & {
 	includeSelectedFiles: boolean;
@@ -10677,7 +10622,7 @@ function normalizeLoopArtifactsInput(
 			workerReportText: "",
 		};
 	}
-	const record = input as CommanderControllerLoopArtifactsInput;
+	const record = input as CommanderControllerReviewArtifactsInput;
 	const maxFilesValue =
 		typeof record.maxFiles === "number" && Number.isFinite(record.maxFiles)
 			? Math.trunc(record.maxFiles)
@@ -10697,9 +10642,9 @@ function normalizeLoopArtifactsInput(
 	};
 }
 
-function normalizeBrowserAiAttachmentLoopContext(
+function normalizeBrowserAiAttachmentReviewContext(
 	value: unknown,
-): BrowserAiAttachmentLoopContext {
+): BrowserAiAttachmentReviewContext {
 	if (!value || typeof value !== "object") {
 		return {
 			mode: "",
@@ -10715,10 +10660,9 @@ function normalizeBrowserAiAttachmentLoopContext(
 		runToCompletion?: unknown;
 	};
 	const rawMode = normalizeControllerTextInput(record.mode).toLowerCase();
-	const mode: BrowserAiAttachmentLoopContext["mode"] =
+	const mode: BrowserAiAttachmentReviewContext["mode"] =
 		rawMode === "manual" ||
-		rawMode === "bounded-loop" ||
-		rawMode === "auto-loop"
+		rawMode === "manual-review"
 			? rawMode
 			: "";
 	return {
@@ -10802,10 +10746,10 @@ function normalizeBrowserAiAttachmentState(
 
 function buildBrowserAiAttachmentReviewPrompt({
 	files,
-	loopContext,
+	reviewContext,
 }: {
 	files: CommanderControllerAttachedFileSummary[];
-	loopContext: BrowserAiAttachmentLoopContext;
+	reviewContext: BrowserAiAttachmentReviewContext;
 }): string {
 	const fileLines = files.map(
 		(file) => `- ${file.name} (${file.mimeType}, ${file.byteLength} bytes)`,
@@ -10814,8 +10758,8 @@ function buildBrowserAiAttachmentReviewPrompt({
 		"添付ファイルを前提に、このタブ内の作業をレビューしてください。",
 		`添付ファイル:\n${fileLines.join("\n")}`,
 	];
-	if (loopContext.purpose) {
-		sections.push(`目的:\n${loopContext.purpose}`);
+	if (reviewContext.purpose) {
+		sections.push(`目的:\n${reviewContext.purpose}`);
 	}
 	sections.push(
 		[
@@ -10827,33 +10771,33 @@ function buildBrowserAiAttachmentReviewPrompt({
 			"- scope拡大、DB/API/認証/credentials/deploy/destructive操作、大きな仕様/UX判断はDoy確認事項として分ける",
 		].join("\n"),
 	);
-	if (loopContext.mode) {
+	if (reviewContext.mode) {
 		sections.push(
 			[
-				`Loop context: ${loopContext.mode}`,
-				`allowWorkerInstruction: ${loopContext.allowWorkerInstruction === true}`,
-				`runToCompletion: ${loopContext.runToCompletion === true}`,
+				`Review context: ${reviewContext.mode}`,
+				`allowWorkerInstruction: ${reviewContext.allowWorkerInstruction === true}`,
+				`runToCompletion: ${reviewContext.runToCompletion === true}`,
 			].join("\n"),
 		);
 	}
 	return sections.join("\n\n");
 }
 
-function normalizeLoopArtifactPreview(text: string, maxLength = 1200): string {
+function normalizeReviewArtifactPreview(text: string, maxLength = 1200): string {
 	const normalized = text.replace(/\s+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 	if (!normalized) return "";
 	if (normalized.length <= maxLength) return normalized;
 	return `${normalized.slice(0, maxLength).trimEnd()}...`;
 }
 
-function buildLoopArtifactsBrowserAiReviewPrompt({
+function buildReviewArtifactsBrowserAiReviewPrompt({
 	artifacts,
 	workerReportPreview,
-	loopContext,
+	reviewContext,
 }: {
-	artifacts: CommanderControllerLoopReviewArtifact[];
+	artifacts: CommanderControllerReviewArtifact[];
 	workerReportPreview: string;
-	loopContext: BrowserAiAttachmentLoopContext;
+	reviewContext: BrowserAiAttachmentReviewContext;
 }): string {
 	const fileLines = artifacts
 		.filter((artifact) => artifact.attachable && artifact.path)
@@ -10865,14 +10809,14 @@ function buildLoopArtifactsBrowserAiReviewPrompt({
 		.filter((artifact) => !artifact.attachable)
 		.map((artifact) => `- ${artifact.name} (${artifact.kind}): ${artifact.preview || artifact.reason || "non-file artifact"}`);
 	const sections = [
-		"添付された現物ファイルとLoop成果物をレビューしてください。",
+		"添付された現物ファイルとレビュー対象成果物を確認してください。",
 		[
 			"判断:",
 			"- まず添付ファイルを実際に参照できたか確認し、返信内に `AI_REFERENCED_FILE: yes` または `AI_REFERENCED_FILE: no` を書く",
 			"- yesの場合は参照したfilenameを短く列挙する",
 			"- 添付UI反映だけで現物を読めていない場合は、成功扱いせず `AI_REFERENCED_FILE: no` と理由を書く",
 			"- 仕様とのズレ、UI崩れ、未完了、検証不足があれば指摘する",
-			"- DoyDeck Loop policyは build → polish → final-review。基本完了だけで即STOPせず、turn budgetが残る場合は安全な小改善余地を探す",
+			"- DoyDeck review policyは build → polish → final-review。基本完了だけで即STOPせず、turn budgetが残る場合は安全な小改善余地を探す",
 			"- 改善余地がある場合は `QUALITY_STATUS: polish-needed` と書く",
 			"- vスコープ内の追加修正なら、`Workerへ渡す指示:` から始めて次Worker指示を短く具体的に出す",
 			"- 問題がほぼなく残りturnを使わない方がよい場合だけ `QUALITY_STATUS: ready-candidate`、`STOP_REASON:`、`STOP` / `次のWorker指示は不要` と明記する",
@@ -10889,15 +10833,15 @@ function buildLoopArtifactsBrowserAiReviewPrompt({
 	if (nonFileLines.length > 0) {
 		sections.push(`非ファイルartifact:\n${nonFileLines.join("\n")}`);
 	}
-	if (loopContext.purpose) {
-		sections.push(`目的:\n${loopContext.purpose}`);
+	if (reviewContext.purpose) {
+		sections.push(`目的:\n${reviewContext.purpose}`);
 	}
-	if (loopContext.mode) {
+	if (reviewContext.mode) {
 		sections.push(
 			[
-				`Loop context: ${loopContext.mode}`,
-				`allowWorkerInstruction: ${loopContext.allowWorkerInstruction === true}`,
-				`runToCompletion: ${loopContext.runToCompletion === true}`,
+				`Review context: ${reviewContext.mode}`,
+				`allowWorkerInstruction: ${reviewContext.allowWorkerInstruction === true}`,
+				`runToCompletion: ${reviewContext.runToCompletion === true}`,
 			].join("\n"),
 		);
 	}
@@ -10921,12 +10865,12 @@ function buildSessionArtifactTargetPaths(
 
 function buildTextArtifact(input: {
 	id: string;
-	kind: CommanderControllerLoopReviewArtifactKind;
+	kind: CommanderControllerReviewArtifactKind;
 	name: string;
 	source: string;
 	text: string;
 	reason?: string | null;
-}): CommanderControllerLoopReviewArtifact {
+}): CommanderControllerReviewArtifact {
 	return {
 		id: input.id,
 		kind: input.kind,
@@ -10937,12 +10881,12 @@ function buildTextArtifact(input: {
 		attachable: false,
 		source: input.source,
 		reason: input.reason ?? null,
-		preview: normalizeLoopArtifactPreview(input.text),
+		preview: normalizeReviewArtifactPreview(input.text),
 	};
 }
 
-function getEmptyLoopArtifactAttachmentFields(): Pick<
-	CommanderControllerLoopArtifactsResult,
+function getEmptyReviewArtifactAttachmentFields(): Pick<
+	CommanderControllerReviewArtifactsResult,
 	| "attachedFileCount"
 	| "skippedFileCount"
 	| "attachedFiles"
@@ -11012,8 +10956,8 @@ function detectBrowserAiReferencedFiles(input: {
 
 function deriveWorkerReportSummaryArtifacts(
 	workerReportText: string,
-): CommanderControllerLoopReviewArtifact[] {
-	const artifacts: CommanderControllerLoopReviewArtifact[] = [];
+): CommanderControllerReviewArtifact[] {
+	const artifacts: CommanderControllerReviewArtifact[] = [];
 	if (/(?:npm run|bun run|build|test|Playwright|console|pageerror|検証|確認結果)/i.test(workerReportText)) {
 		artifacts.push(
 			buildTextArtifact({
@@ -15327,7 +15271,7 @@ function getSupervisorPilotReadinessNextAction(
 	if (blockers.includes("recognized worker terminal not found")) {
 		return "Start or select a Codex or Claude Code terminal before preparing supervisor pilot readiness.";
 	}
-	return getAutoLoopPreflightNextAction(blockers, warnings);
+	return getReadinessPreflightNextAction(blockers, warnings);
 }
 
 function getBrowserAiPreflightNextAction(
@@ -15404,23 +15348,23 @@ function getLiveReadinessNextAction(
 			return "Bind a recognized Codex or Claude worker to the active tab, then rerun getLiveReadinessSummary().";
 		}
 		if (firstBlocker.includes("Browser AI")) {
-			return "Prepare Browser AI and verify submission readiness before Loop.";
+			return "Prepare Browser AI and verify submission readiness before manual send.";
 		}
 		if (firstBlocker.includes("Task run")) {
-			return "Resolve task-run blocker before treating this tab as Loop-ready.";
+			return "Resolve task-run blocker before treating this tab as Worker-ready.";
 		}
-		return `Resolve blocker before Loop: ${firstBlocker}`;
+		return `Resolve blocker before manual send: ${firstBlocker}`;
 	}
 	if (status === "READY_WITH_NOTES") {
-		return `Review readiness warning before Loop: ${warnings[0] ?? "warning present"}`;
+		return `Review readiness warning before manual send: ${warnings[0] ?? "warning present"}`;
 	}
-	return "This tab is ready for the short live-readiness smoke path; start Auto Loop only after Doy approves the task.";
+	return "This tab is ready for the short live-readiness smoke path and manual Browser AI / Worker use.";
 }
 
 function applySupervisorWorkerCandidateToPreflight(
-	preflight: CommanderControllerAutoLoopPreflightResult,
+	preflight: CommanderControllerReadinessPreflightResult,
 	candidate: CommanderControllerRecognizedWorkerCandidate,
-): CommanderControllerAutoLoopPreflightResult {
+): CommanderControllerReadinessPreflightResult {
 	const filteredBlockers = preflight.blockers.filter(
 		(blocker) =>
 			![
@@ -15479,7 +15423,7 @@ function applySupervisorWorkerCandidateToPreflight(
 		workerUiStateReason: workerInputReadiness.workerUiStateReason,
 		blockers: nextBlockers,
 		warnings: nextWarnings,
-		nextRequiredAction: getAutoLoopPreflightNextAction(
+		nextRequiredAction: getReadinessPreflightNextAction(
 			nextBlockers,
 			nextWarnings,
 		),
@@ -15490,14 +15434,14 @@ function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-function getAutoLoopPreflightNextAction(
+function getReadinessPreflightNextAction(
 	blockers: string[],
 	warnings: string[],
 ): string {
 	const firstBlocker = blockers[0];
 	if (firstBlocker) {
 		if (firstBlocker.includes("worker binding required")) {
-			return "Bind active terminal to this tab before starting Auto Loop.";
+			return "Bind active terminal to this tab before sending Worker instructions.";
 		}
 		if (
 			firstBlocker.includes("recognized worker") ||
@@ -15529,15 +15473,15 @@ function getAutoLoopPreflightNextAction(
 			return "Use explicit Worker binding so fallback is not required.";
 		}
 		if (firstBlocker.includes("tab")) {
-			return "Return to the armed tab or stop/rearm Auto Loop on the active tab.";
+			return "Return to the expected tab before continuing manual Worker / Browser AI coordination.";
 		}
 		return `Resolve blocker: ${firstBlocker}`;
 	}
 	const firstWarning = warnings[0];
 	if (firstWarning) {
-		return `Review warning before starting Auto Loop: ${firstWarning}`;
+		return `Review warning before manual Worker / Browser AI use: ${firstWarning}`;
 	}
-	return "Auto Loop preflight passed. Start Auto Loop only if Doy has approved the Worker action.";
+	return "Worker / Browser AI preflight passed for manual coordination.";
 }
 
 function getSendHandoffBlockedMessage(blockers: string[]): string {
