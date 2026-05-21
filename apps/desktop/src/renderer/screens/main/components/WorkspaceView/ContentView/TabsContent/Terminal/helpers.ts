@@ -5,7 +5,7 @@ import { ImageAddon } from "@xterm/addon-image";
 import { LigaturesAddon } from "@xterm/addon-ligatures";
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { WebglAddon } from "@xterm/addon-webgl";
+import type { WebglAddon as WebglAddonType } from "@xterm/addon-webgl";
 import type { ITheme } from "@xterm/xterm";
 import { Terminal as XTerm } from "@xterm/xterm";
 import type { DetectedLink } from "renderer/lib/terminal/links";
@@ -58,6 +58,22 @@ export function getDefaultTerminalBg(): string {
 
 // Once WebGL fails, skip it for all subsequent terminals (VS Code pattern).
 let suggestedRendererType: "webgl" | "dom" | undefined;
+const TERMINAL_WEBGL_OPT_IN_KEY = "doydeck.terminal.webglRenderer";
+
+function shouldEnableWebglRenderer(): boolean {
+	try {
+		return (
+			localStorage.getItem(TERMINAL_WEBGL_OPT_IN_KEY) === "enabled" ||
+			localStorage.getItem("DOYDECK_TERMINAL_WEBGL") === "1"
+		);
+	} catch {
+		return false;
+	}
+}
+
+function shouldSkipWebglRenderer(): boolean {
+	return suggestedRendererType === "dom";
+}
 
 export interface CreateTerminalOptions {
 	/**
@@ -104,7 +120,7 @@ export function createTerminalInWrapper(options: CreateTerminalOptions = {}): {
 	const imageAddon = new ImageAddon();
 
 	let disposed = false;
-	let webglAddon: WebglAddon | null = null;
+	let webglAddon: WebglAddonType | null = null;
 
 	// Open into a detached wrapper div — not the live container.
 	const wrapper = document.createElement("div");
@@ -124,23 +140,31 @@ export function createTerminalInWrapper(options: CreateTerminalOptions = {}): {
 		// Ligatures not supported by current font
 	}
 
-	// Defer WebGL to rAF to avoid racing xterm's post-open viewport sync.
-	const rafId = requestAnimationFrame(() => {
-		if (disposed || suggestedRendererType === "dom") return;
+	// Defer optional WebGL to rAF to avoid racing xterm's post-open viewport sync.
+	let rafId: number | null = null;
+	if (shouldEnableWebglRenderer()) {
+		rafId = requestAnimationFrame(() => {
+			void (async () => {
+				if (disposed || shouldSkipWebglRenderer()) return;
 
-		try {
-			webglAddon = new WebglAddon();
-			webglAddon.onContextLoss(() => {
-				webglAddon?.dispose();
-				webglAddon = null;
-				xterm.refresh(0, xterm.rows - 1);
-			});
-			xterm.loadAddon(webglAddon);
-		} catch {
-			suggestedRendererType = "dom";
-			webglAddon = null;
-		}
-	});
+				try {
+					const { WebglAddon } = await import("@xterm/addon-webgl");
+					if (disposed || shouldSkipWebglRenderer()) return;
+
+					webglAddon = new WebglAddon();
+					webglAddon.onContextLoss(() => {
+						webglAddon?.dispose();
+						webglAddon = null;
+						xterm.refresh(0, xterm.rows - 1);
+					});
+					xterm.loadAddon(webglAddon);
+				} catch {
+					suggestedRendererType = "dom";
+					webglAddon = null;
+				}
+			})();
+		});
+	}
 
 	const cleanupQuerySuppression = suppressQueryResponses(xterm);
 
@@ -205,7 +229,7 @@ export function createTerminalInWrapper(options: CreateTerminalOptions = {}): {
 		linkManager,
 		cleanup: () => {
 			disposed = true;
-			cancelAnimationFrame(rafId);
+			if (rafId !== null) cancelAnimationFrame(rafId);
 			cleanupQuerySuppression();
 			linkManager.dispose();
 			try {

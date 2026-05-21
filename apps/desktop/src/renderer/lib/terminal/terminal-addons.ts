@@ -4,7 +4,7 @@ import { LigaturesAddon } from "@xterm/addon-ligatures";
 import { ProgressAddon } from "@xterm/addon-progress";
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { WebglAddon } from "@xterm/addon-webgl";
+import type { WebglAddon as WebglAddonType } from "@xterm/addon-webgl";
 import type { Terminal as XTerm } from "@xterm/xterm";
 
 export interface LoadAddonsResult {
@@ -15,6 +15,22 @@ export interface LoadAddonsResult {
 
 // Once WebGL fails, skip it for all subsequent runtimes (VS Code pattern).
 let suggestedRendererType: "webgl" | "dom" | undefined;
+const TERMINAL_WEBGL_OPT_IN_KEY = "doydeck.terminal.webglRenderer";
+
+function shouldEnableWebglRenderer(): boolean {
+	try {
+		return (
+			localStorage.getItem(TERMINAL_WEBGL_OPT_IN_KEY) === "enabled" ||
+			localStorage.getItem("DOYDECK_TERMINAL_WEBGL") === "1"
+		);
+	} catch {
+		return false;
+	}
+}
+
+function shouldSkipWebglRenderer(): boolean {
+	return suggestedRendererType === "dom";
+}
 
 /**
  * Load optional addons onto an already-opened terminal. Returns a cleanup
@@ -23,7 +39,7 @@ let suggestedRendererType: "webgl" | "dom" | undefined;
  */
 export function loadAddons(terminal: XTerm): LoadAddonsResult {
 	let disposed = false;
-	let webglAddon: WebglAddon | null = null;
+	let webglAddon: WebglAddonType | null = null;
 
 	terminal.loadAddon(new ClipboardAddon());
 
@@ -43,29 +59,37 @@ export function loadAddons(terminal: XTerm): LoadAddonsResult {
 		terminal.loadAddon(new LigaturesAddon());
 	} catch {}
 
-	const rafId = requestAnimationFrame(() => {
-		if (disposed || suggestedRendererType === "dom") return;
+	let rafId: number | null = null;
+	if (shouldEnableWebglRenderer()) {
+		rafId = requestAnimationFrame(() => {
+			void (async () => {
+				if (disposed || shouldSkipWebglRenderer()) return;
 
-		try {
-			webglAddon = new WebglAddon();
-			webglAddon.onContextLoss(() => {
-				webglAddon?.dispose();
-				webglAddon = null;
-				terminal.refresh(0, terminal.rows - 1);
-			});
-			terminal.loadAddon(webglAddon);
-		} catch {
-			suggestedRendererType = "dom";
-			webglAddon = null;
-		}
-	});
+				try {
+					const { WebglAddon } = await import("@xterm/addon-webgl");
+					if (disposed || shouldSkipWebglRenderer()) return;
+
+					webglAddon = new WebglAddon();
+					webglAddon.onContextLoss(() => {
+						webglAddon?.dispose();
+						webglAddon = null;
+						terminal.refresh(0, terminal.rows - 1);
+					});
+					terminal.loadAddon(webglAddon);
+				} catch {
+					suggestedRendererType = "dom";
+					webglAddon = null;
+				}
+			})();
+		});
+	}
 
 	return {
 		searchAddon,
 		progressAddon,
 		dispose: () => {
 			disposed = true;
-			cancelAnimationFrame(rafId);
+			if (rafId !== null) cancelAnimationFrame(rafId);
 			try {
 				webglAddon?.dispose();
 			} catch {}
