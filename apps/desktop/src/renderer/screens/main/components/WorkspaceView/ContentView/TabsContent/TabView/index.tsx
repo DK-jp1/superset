@@ -7,9 +7,9 @@ import {
 	type MosaicBranch,
 	type MosaicNode,
 } from "react-mosaic-component";
+import { DoyDeckPreviewPane } from "renderer/components/DoyDeckExplorer";
 import { dragDropManager } from "renderer/lib/dnd";
 import { electronTrpc } from "renderer/lib/electron-trpc";
-import { DoyDeckPreviewPane } from "renderer/components/DoyDeckExplorer";
 import { requestPaneClose } from "renderer/stores/editor-state/editorCoordinator";
 import { useTabsStore } from "renderer/stores/tabs/store";
 import type { Pane, Tab } from "renderer/stores/tabs/types";
@@ -324,13 +324,8 @@ export function TabView({ tab }: TabViewProps) {
 					tabId={tab.id}
 					workspaceId={tab.workspaceId}
 					splitPaneAuto={splitPaneAuto}
-					splitPaneHorizontal={splitPaneHorizontal}
-					splitPaneVertical={splitPaneVertical}
 					removePane={removePane}
 					setFocusedPane={setFocusedPane}
-					availableTabs={workspaceTabs}
-					onMoveToTab={(targetTabId) => movePaneToTab(paneId, targetTabId)}
-					onMoveToNewTab={() => movePaneToNewTab(paneId)}
 				/>
 			);
 		},

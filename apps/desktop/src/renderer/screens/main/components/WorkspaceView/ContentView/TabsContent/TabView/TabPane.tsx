@@ -7,7 +7,6 @@ import {
 	unregisterPaneRef,
 } from "renderer/stores/tabs/pane-refs";
 import { useTabsStore } from "renderer/stores/tabs/store";
-import type { SplitPaneOptions, Tab } from "renderer/stores/tabs/types";
 import { Terminal } from "../Terminal";
 import { BasePaneWindow, PaneTitle, PaneToolbarActions } from "./components";
 
@@ -22,23 +21,8 @@ interface TabPaneProps {
 		dimensions: { width: number; height: number },
 		path?: MosaicBranch[],
 	) => void;
-	splitPaneHorizontal: (
-		tabId: string,
-		sourcePaneId: string,
-		path?: MosaicBranch[],
-		options?: SplitPaneOptions,
-	) => void;
-	splitPaneVertical: (
-		tabId: string,
-		sourcePaneId: string,
-		path?: MosaicBranch[],
-		options?: SplitPaneOptions,
-	) => void;
 	removePane: (paneId: string) => void;
 	setFocusedPane: (tabId: string, paneId: string) => void;
-	availableTabs: Tab[];
-	onMoveToTab: (targetTabId: string) => void;
-	onMoveToNewTab: () => void;
 }
 
 export function TabPane({
@@ -47,19 +31,13 @@ export function TabPane({
 	tabId,
 	workspaceId,
 	splitPaneAuto,
-	splitPaneHorizontal,
-	splitPaneVertical,
 	removePane,
 	setFocusedPane,
-	availableTabs,
-	onMoveToTab,
-	onMoveToNewTab,
 }: TabPaneProps) {
 	const paneName = useTabsStore((s) => s.panes[paneId]?.name);
 	const paneStatus = useTabsStore((s) => s.panes[paneId]?.status);
 	const workspaceRun = useTabsStore((s) => s.panes[paneId]?.workspaceRun);
 	const setPaneName = useTabsStore((s) => s.setPaneName);
-	const setPaneStatus = useTabsStore((s) => s.setPaneStatus);
 
 	const terminalContainerRef = useRef<HTMLDivElement>(null);
 
