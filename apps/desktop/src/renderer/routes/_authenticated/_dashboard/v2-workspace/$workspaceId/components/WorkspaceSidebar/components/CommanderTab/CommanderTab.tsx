@@ -1,64 +1,58 @@
-import { Button } from "@superset/ui/button";
 import { toast } from "@superset/ui/sonner";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LuLoader, LuX } from "react-icons/lu";
 import { electronTrpc } from "renderer/lib/electron-trpc";
+import {
+	getOutputLogOffset,
+	getOutputLogSince,
+	getTerminalOutputSnapshot,
+} from "renderer/screens/main/components/WorkspaceView/ContentView/TabsContent/Terminal/v1-terminal-cache";
 import { registerDoyDeckCommanderActionBridge } from "renderer/stores/doydeck-commander-actions";
 import {
-	evaluateDoyDeckWorkerIdentity,
 	type DoyDeckWorkerBindingSnapshot,
 	type DoyDeckWorkerIdentityStatus,
 	type DoyDeckWorkerType,
+	evaluateDoyDeckWorkerIdentity,
 	inferDoyDeckWorkerTypeFromEvidence,
 	makeDoyDeckWorkerBindingKey,
 	resolveDoyDeckWorkerBindingSnapshot,
 	useDoyDeckWorkerBindingsStore,
 } from "renderer/stores/doydeck-worker-bindings";
 import { useTabsStore } from "renderer/stores/tabs/store";
+import type { Pane, Tab } from "renderer/stores/tabs/types";
 import {
 	extractPaneIdsFromLayout,
 	getTabDisplayName,
 } from "renderer/stores/tabs/utils";
 import {
-	getOutputLogOffset,
-	getOutputLogSince,
-	getTerminalOutputSnapshot,
-} from "renderer/screens/main/components/WorkspaceView/ContentView/TabsContent/Terminal/v1-terminal-cache";
+	type BrowserProvider,
+	buildBrowserAiAttachedFilesStateScript,
+	buildBrowserAiAttachmentStateScript,
+	buildBrowserAiFileAttachmentScript,
+	buildComposerReadinessScript,
+	buildInjectionWithSubmitScript,
+	buildLatestReplyStateScript,
+	buildSubmissionReflectionStateScript,
+	detectProvider,
+	getProviderLabel,
+} from "./browser-adapters";
+import { CommanderBrowser } from "./CommanderBrowser";
+import { CommanderHelperBar } from "./CommanderHelperBar";
+import { buildCommanderBrowserSlotKey } from "./commander-browser-runtime";
+import {
+	type CommanderInstructionSafetyFinding,
+	type CommanderInstructionSafetySource,
+	classifyInstructionSafetyFindings,
+	findInstructionSafetyBlockers,
+} from "./commander-safety";
 import type {
 	CommanderSession,
 	CommanderState,
 	CommanderView,
 } from "./commander-types";
 import {
-	useActiveTerminal,
-	useActiveTerminalInfo,
-	getTerminalIdFromPane,
-	getTerminalSelection,
-} from "./useActiveTerminal";
-import { useCommanderWebview } from "./useCommanderWebview";
-import {
-	buildComposerReadinessScript,
-	buildBrowserAiAttachedFilesStateScript,
-	buildBrowserAiAttachmentStateScript,
-	buildBrowserAiFileAttachmentScript,
-	buildInjectionWithSubmitScript,
-	buildLatestReplyStateScript,
-	buildSubmissionReflectionStateScript,
-	detectProvider,
-	getProviderLabel,
-	type BrowserProvider,
-} from "./browser-adapters";
-import {
-	registerCommanderBridge,
-	unregisterCommanderBridge,
-	sendSelectionToBrowserAI,
-} from "./commander-bridge";
-import {
-	classifyInstructionSafetyFindings,
-	findInstructionSafetyBlockers,
-	type CommanderInstructionSafetyFinding,
-	type CommanderInstructionSafetySource,
-} from "./commander-safety";
+	type CommanderWorkerReportedArtifactCandidate,
+	extractWorkerReportedArtifactPathCandidates,
+} from "./commander-worker-artifacts";
 import {
 	extractBoundWorkerDoneTagReport,
 	extractBoundWorkerDoneTagReportForInstructionScope,
@@ -67,42 +61,33 @@ import {
 	extractBoundWorkerDoneTagReports,
 	hasBoundWorkerDoneTagReportPromptEcho,
 	isBoundWorkerIdleOnlyCompletionMessage,
-	isBoundWorkerDoneTagReportPromptEcho,
 	validateWorkerReportForBrowserAiReview,
 } from "./commander-worker-report";
-import {
-	extractWorkerReportedArtifactPathCandidates,
-	type CommanderWorkerReportedArtifactCandidate,
-	type CommanderWorkerReportedArtifactSkippedCandidate,
-} from "./commander-worker-artifacts";
-import {
-	buildSendHandoffLedgerPrompt,
-	generateWorkerPrompt,
-	generateReviewPrompt,
-	type HandoffGitSummary,
-} from "./hooks/useCommanderPrompts";
 import {
 	commanderStateFromSession,
 	createEmptyCommanderSession,
 } from "./hooks/session-extraction";
-import { useCommanderSessionPersistence } from "./hooks/useCommanderSessionPersistence";
-import type { AssistantCaptureSnapshot } from "./hooks/usePromptTransfer";
-import type { AutoRelayMode } from "./hooks/usePromptTransfer";
 import {
-	sendToTerminal,
-	usePromptTransfer,
-} from "./hooks/usePromptTransfer";
-import { CommanderBrowser } from "./CommanderBrowser";
-import { CommanderHelperBar } from "./CommanderHelperBar";
-import type { Pane, Tab } from "renderer/stores/tabs/types";
+	buildSendHandoffLedgerPrompt,
+	generateReviewPrompt,
+	generateWorkerPrompt,
+	type HandoffGitSummary,
+} from "./hooks/useCommanderPrompts";
+import { useCommanderSessionPersistence } from "./hooks/useCommanderSessionPersistence";
+import { sendToTerminal, usePromptTransfer } from "./hooks/usePromptTransfer";
 import {
 	CapturePreview,
 	EditableTerminalPreview,
 	HandoffPreview,
 	SessionDraftPreviewPanel,
-	WorkerResponsePreview,
 } from "./PromptPreviewPanel";
-import { buildCommanderBrowserSlotKey } from "./commander-browser-runtime";
+import {
+	getTerminalIdFromPane,
+	getTerminalSelection,
+	useActiveTerminal,
+	useActiveTerminalInfo,
+} from "./useActiveTerminal";
+import { useCommanderWebview } from "./useCommanderWebview";
 
 type CommanderSessionTextField = Exclude<
 	keyof CommanderSession,
@@ -246,10 +231,7 @@ interface CommanderControllerGetActiveTabResult
 	message: string;
 }
 
-type CommanderControllerTabFindMatchMode =
-	| "exact"
-	| "contains"
-	| "startsWith";
+type CommanderControllerTabFindMatchMode = "exact" | "contains" | "startsWith";
 
 interface CommanderControllerFindTabByTitleInput {
 	query?: unknown;
@@ -312,16 +294,9 @@ interface CommanderControllerRenameTaskTabResult
 	message: string;
 }
 
-type CommanderControllerChainStatus =
-	| "PASS"
-	| "STOP"
-	| "BLOCKED"
-	| "FAILED";
+type CommanderControllerChainStatus = "PASS" | "STOP" | "BLOCKED" | "FAILED";
 
-type CommanderControllerChainRecordStatus =
-	| "RECORDED"
-	| "BLOCKED"
-	| "FAILED";
+type CommanderControllerChainRecordStatus = "RECORDED" | "BLOCKED" | "FAILED";
 
 type CommanderControllerChainMode =
 	| "browser-worker-review"
@@ -466,7 +441,7 @@ interface CommanderControllerReadinessPreflightResult
 	browserAiUrl: string;
 	browserAiSlotKey: string | null;
 	expectedBrowserAiSlotKey: string | null;
-	relayMode: AutoRelayMode;
+	relayMode: string;
 	relayStatus: string;
 	workerPaneId: string | null;
 	terminalId: string | null;
@@ -644,7 +619,7 @@ interface CommanderControllerSupervisorPilotReadinessResult
 	workerInputBlockers: string[];
 	workerInputWarnings: string[];
 	workerUiStateReason: string | null;
-	relayMode: AutoRelayMode;
+	relayMode: string;
 	relayStatus: string;
 	blockers: string[];
 	warnings: string[];
@@ -945,7 +920,7 @@ interface CommanderControllerChainSummaryResult
 	lastSubmissionUiReflected: boolean | null;
 	lastSubmissionAssistantReplyObserved: boolean | null;
 	lastSubmissionVisualVerificationUsed: boolean;
-	relayMode: AutoRelayMode;
+	relayMode: string;
 	relayStatus: string;
 }
 
@@ -1339,7 +1314,7 @@ interface CommanderControllerLiveReadinessSummaryResult
 	};
 	readinessStatus: {
 		status: CommanderControllerPreflightStatus;
-		mode: AutoRelayMode;
+		mode: string;
 		relayStatus: string;
 		relayReady: boolean;
 		nextRequiredAction: string;
@@ -1350,15 +1325,6 @@ interface CommanderControllerLiveReadinessSummaryResult
 		implementedCommands: string[];
 		missingCommands: string[];
 		reviewReady: boolean;
-		nextRecommendedAction: string;
-	};
-	safetyGuardStatus: {
-		status: CommanderControllerPreflightStatus;
-		negatedPolicyTextAllowed: boolean;
-		actualDangerousCommandAdvisory: boolean;
-		actualDangerousCommandBlocked: boolean;
-		samplesChecked: string[];
-		dangerousSample: string;
 		nextRecommendedAction: string;
 	};
 	payloadBudgetStatus: {
@@ -1707,10 +1673,7 @@ type CommanderControllerCommandInventoryAccess =
 	| "diagnostic"
 	| "dangerous";
 
-type CommanderControllerCommandInventoryRiskLevel =
-	| "low"
-	| "medium"
-	| "high";
+type CommanderControllerCommandInventoryRiskLevel = "low" | "medium" | "high";
 
 interface CommanderControllerCommandInventoryCommand {
 	name: string;
@@ -1780,11 +1743,14 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			category: "Tab / Workspace",
 			access: "read-only",
 			implemented: true,
-			description: "Return current workspace tabs and lightweight pane summaries.",
+			description:
+				"Return current workspace tabs and lightweight pane summaries.",
 			typicalUse: "Choose an existing task tab without UI exploration.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
-			notes: ["No tab creation, activation, readiness scan, or send side effects."],
+			notes: [
+				"No tab creation, activation, readiness scan, or send side effects.",
+			],
 		},
 		{
 			name: "getActiveTab",
@@ -1806,7 +1772,9 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			typicalUse: "Locate a task tab before calling activateTab.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
-			notes: ["Read-only lookup; does not create, activate, rename, or close tabs."],
+			notes: [
+				"Read-only lookup; does not create, activate, rename, or close tabs.",
+			],
 		},
 		{
 			name: "createTaskTab",
@@ -1817,7 +1785,9 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			typicalUse: "Start a new task context without UI button exploration.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
-			notes: ["Skips Browser AI, worker, Handoff, and preflight initialization."],
+			notes: [
+				"Skips Browser AI, worker, Handoff, and preflight initialization.",
+			],
 		},
 		{
 			name: "createWorkspaceTaskTab",
@@ -1857,8 +1827,10 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			category: "Browser AI",
 			access: "write",
 			implemented: true,
-			description: "Prepare the Browser AI slot for a requested provider without requiring worker binding.",
-			typicalUse: "Navigate from about:blank or unsupported provider to ChatGPT, Claude, or Gemini and verify composer injection readiness.",
+			description:
+				"Prepare the Browser AI slot for a requested provider without requiring worker binding.",
+			typicalUse:
+				"Navigate from about:blank or unsupported provider to ChatGPT, Claude, or Gemini and verify composer injection readiness.",
 			requiresDoyConfirmation: false,
 			riskLevel: "medium",
 			notes: [
@@ -1871,7 +1843,8 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			category: "Browser AI",
 			access: "diagnostic",
 			implemented: true,
-			description: "Return Browser-AI-only readiness without requiring worker binding.",
+			description:
+				"Return Browser-AI-only readiness without requiring worker binding.",
 			typicalUse: "Check whether Handoff or Browser AI review can be sent.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
@@ -1906,8 +1879,10 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			category: "Browser AI",
 			access: "write",
 			implemented: true,
-			description: "Send a short explicit prompt to Browser AI without building a full Handoff.",
-			typicalUse: "Ask a quick tab-scoped question or sanity check while avoiding Handoff prompt bloat.",
+			description:
+				"Send a short explicit prompt to Browser AI without building a full Handoff.",
+			typicalUse:
+				"Ask a quick tab-scoped question or sanity check while avoiding Handoff prompt bloat.",
 			requiresDoyConfirmation: false,
 			riskLevel: "medium",
 			notes: [
@@ -2060,7 +2035,8 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			access: "read-only",
 			implemented: true,
 			description: "Read and classify the latest Browser AI assistant reply.",
-			typicalUse: "Extract Worker instruction, STOP, and Doy confirmation state.",
+			typicalUse:
+				"Extract Worker instruction, STOP, and Doy confirmation state.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
 			notes: ["Alias getBrowserAiLatestReply is also available."],
@@ -2082,7 +2058,8 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			access: "read-only",
 			implemented: true,
 			description: "Return the last Browser AI submission state.",
-			typicalUse: "Inspect the previous Handoff or worker-response send result.",
+			typicalUse:
+				"Inspect the previous Handoff or worker-response send result.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
 			notes: [
@@ -2106,7 +2083,8 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			category: "Browser AI",
 			access: "write",
 			implemented: true,
-			description: "Send the bound worker response back to Browser AI for review.",
+			description:
+				"Send the bound worker response back to Browser AI for review.",
 			typicalUse: "Complete Browser AI -> Worker -> Browser AI review chains.",
 			requiresDoyConfirmation: false,
 			riskLevel: "medium",
@@ -2153,7 +2131,8 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			access: "read-only",
 			implemented: true,
 			description: "Inspect whether a selected worker pane can receive input.",
-			typicalUse: "Check Codex or Claude input state before sending instructions.",
+			typicalUse:
+				"Check Codex or Claude input state before sending instructions.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
 			notes: [
@@ -2166,7 +2145,8 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			category: "Worker",
 			access: "read-only",
 			implemented: true,
-			description: "Return terminal screen, viewport, and output text by pane id.",
+			description:
+				"Return terminal screen, viewport, and output text by pane id.",
 			typicalUse: "Debug worker UI state without visual UI exploration.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
@@ -2177,8 +2157,10 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			category: "Worker",
 			access: "read-only",
 			implemented: true,
-			description: "Return structured task/worker completion status for the bound worker pane.",
-			typicalUse: "Let Meta AI or scripts watch Worker completion without ad hoc terminal polling.",
+			description:
+				"Return structured task/worker completion status for the bound worker pane.",
+			typicalUse:
+				"Let Meta AI or scripts watch Worker completion without ad hoc terminal polling.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
 			notes: [
@@ -2205,11 +2187,14 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			category: "Worker",
 			access: "write",
 			implemented: true,
-			description: "Activate an existing terminal pane by pane id or bound worker.",
+			description:
+				"Activate an existing terminal pane by pane id or bound worker.",
 			typicalUse: "Recover non-mounted worker pane output capture.",
 			requiresDoyConfirmation: false,
 			riskLevel: "medium",
-			notes: ["Does not launch workers; aliases activateWorkerPane and focusBoundWorkerPane are also available."],
+			notes: [
+				"Does not launch workers; aliases activateWorkerPane and focusBoundWorkerPane are also available.",
+			],
 		},
 		{
 			name: "activateWorkerPane",
@@ -2239,10 +2224,13 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			access: "write",
 			implemented: true,
 			description: "Send an instruction to the bound Codex or Claude worker.",
-			typicalUse: "Dispatch reviewed Worker tasks with preflight and safety guards.",
+			typicalUse:
+				"Dispatch reviewed Worker tasks with preflight and safety guards.",
 			requiresDoyConfirmation: false,
 			riskLevel: "medium",
-			notes: ["requirePreflight defaults should be used; dangerous content is blocked or gated."],
+			notes: [
+				"requirePreflight defaults should be used; dangerous content is blocked or gated.",
+			],
 		},
 		{
 			name: "readBoundWorkerLatestResponse",
@@ -2250,7 +2238,8 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			access: "read-only",
 			implemented: true,
 			description: "Read and classify the latest bound worker response.",
-			typicalUse: "Detect ACK, completion, error, file-change, and git-operation signals.",
+			typicalUse:
+				"Detect ACK, completion, error, file-change, and git-operation signals.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
 			notes: [
@@ -2278,7 +2267,8 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			access: "read-only",
 			implemented: true,
 			description: "Return current Commander session fields.",
-			typicalUse: "Inspect current task, plan, and notes before building Handoff.",
+			typicalUse:
+				"Inspect current task, plan, and notes before building Handoff.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
 			notes: ["No session mutation."],
@@ -2325,8 +2315,10 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			category: "Outcome / Handoff",
 			access: "read-only",
 			implemented: true,
-			description: "Summarize current Browser AI, Worker, and outcome chain state.",
-			typicalUse: "Classify PASS, STOP, BLOCKED, or pending state before recording.",
+			description:
+				"Summarize current Browser AI, Worker, and outcome chain state.",
+			typicalUse:
+				"Classify PASS, STOP, BLOCKED, or pending state before recording.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
 			notes: ["Supports browser-ai-only and worker-only chain modes."],
@@ -2336,8 +2328,10 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			category: "Outcome / Handoff",
 			access: "write",
 			implemented: true,
-			description: "Record a Controller chain outcome into the Commander session.",
-			typicalUse: "Persist pilot smoke or handoff results in the Handoff Ledger.",
+			description:
+				"Record a Controller chain outcome into the Commander session.",
+			typicalUse:
+				"Persist pilot smoke or handoff results in the Handoff Ledger.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
 			notes: [
@@ -2365,10 +2359,13 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			access: "read-only",
 			implemented: true,
 			description: "Return the current Controller command surface inventory.",
-			typicalUse: "Let Meta AI, Codex, or Browser AI discover available commands before UI exploration.",
+			typicalUse:
+				"Let Meta AI, Codex, or Browser AI discover available commands before UI exploration.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
-			notes: ["This accessor is static/read-only and does not execute listed commands."],
+			notes: [
+				"This accessor is static/read-only and does not execute listed commands.",
+			],
 		},
 		{
 			name: "getLiveReadinessSummary",
@@ -2392,8 +2389,7 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			access: "read-only",
 			implemented: true,
 			description: "Alias for getLiveReadinessSummary.",
-			typicalUse:
-				"Compatibility name for short pre-task readiness checks.",
+			typicalUse: "Compatibility name for short pre-task readiness checks.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
 			notes: ["No send, bind, or attach side effects."],
@@ -2442,7 +2438,8 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			category: "Diagnostics",
 			access: "diagnostic",
 			implemented: true,
-			description: "Return Supervisor pilot readiness for Browser AI and Worker state.",
+			description:
+				"Return Supervisor pilot readiness for Browser AI and Worker state.",
 			typicalUse: "Inspect current pilot readiness before prepare or send.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
@@ -2453,7 +2450,8 @@ const COMMANDER_CONTROLLER_COMMAND_INVENTORY: CommanderControllerCommandInventor
 			category: "Diagnostics",
 			access: "write",
 			implemented: true,
-			description: "Prepare Browser AI readiness and optionally bind an existing worker.",
+			description:
+				"Prepare Browser AI readiness and optionally bind an existing worker.",
 			typicalUse: "Recover a pilot-ready state without launching new workers.",
 			requiresDoyConfirmation: false,
 			riskLevel: "medium",
@@ -2467,7 +2465,8 @@ const COMMANDER_CONTROLLER_MISSING_COMMANDS: CommanderControllerCommandInventory
 			name: "sendTargetDocsReviewToBrowserAI",
 			category: "Browser AI",
 			priority: "P1",
-			reason: "Target-doc Browser AI reviews still need prompt boilerplate today.",
+			reason:
+				"Target-doc Browser AI reviews still need prompt boilerplate today.",
 			requiresDoyConfirmation: false,
 			riskLevel: "medium",
 			notes: ["Should keep prompt length and scope controls explicit."],
@@ -2476,7 +2475,8 @@ const COMMANDER_CONTROLLER_MISSING_COMMANDS: CommanderControllerCommandInventory
 			name: "getVisibleStateSnapshot",
 			category: "Diagnostics",
 			priority: "P2",
-			reason: "Visual sanity checks still need a read-only visible snapshot helper.",
+			reason:
+				"Visual sanity checks still need a read-only visible snapshot helper.",
 			requiresDoyConfirmation: false,
 			riskLevel: "medium",
 			notes: ["Should avoid making Computer Use the primary operation path."],
@@ -2485,10 +2485,13 @@ const COMMANDER_CONTROLLER_MISSING_COMMANDS: CommanderControllerCommandInventory
 			name: "getDecisionRecord",
 			category: "Decision Ledger",
 			priority: "P1",
-			reason: "Decision Records are documented but not exposed through Controller accessors.",
+			reason:
+				"Decision Records are documented but not exposed through Controller accessors.",
 			requiresDoyConfirmation: false,
 			riskLevel: "low",
-			notes: ["Should return short DR-ID references rather than long prompt payloads."],
+			notes: [
+				"Should return short DR-ID references rather than long prompt payloads.",
+			],
 		},
 		{
 			name: "listDecisionRecords",
@@ -2506,7 +2509,9 @@ const COMMANDER_CONTROLLER_MISSING_COMMANDS: CommanderControllerCommandInventory
 			reason: "Closing a tab can kill terminal/session state.",
 			requiresDoyConfirmation: true,
 			riskLevel: "high",
-			notes: ["Needs dry-run, dirty-state guard, and explicit Doy confirmation before implementation."],
+			notes: [
+				"Needs dry-run, dirty-state guard, and explicit Doy confirmation before implementation.",
+			],
 		},
 		{
 			name: "clearWorkerInput",
@@ -2515,13 +2520,16 @@ const COMMANDER_CONTROLLER_MISSING_COMMANDS: CommanderControllerCommandInventory
 			reason: "Clearing input can destroy unsent worker instructions.",
 			requiresDoyConfirmation: true,
 			riskLevel: "high",
-			notes: ["Input clear/delete is intentionally outside normal Controller automation."],
+			notes: [
+				"Input clear/delete is intentionally outside normal Controller operations.",
+			],
 		},
 		{
 			name: "launchWorker",
 			category: "Dangerous / intentionally missing",
 			priority: "P3",
-			reason: "Launching new Codex or Claude workers is Doy confirmation scope.",
+			reason:
+				"Launching new Codex or Claude workers is Doy confirmation scope.",
 			requiresDoyConfirmation: true,
 			riskLevel: "high",
 			notes: ["Current safe path binds existing recognized workers only."],
@@ -2539,10 +2547,12 @@ const COMMANDER_CONTROLLER_MISSING_COMMANDS: CommanderControllerCommandInventory
 			name: "deployChanges",
 			category: "Dangerous / intentionally missing",
 			priority: "P3",
-			reason: "Deploy/public release is outside safe Controller automation.",
+			reason: "Deploy/public release is outside safe Controller operations.",
 			requiresDoyConfirmation: true,
 			riskLevel: "high",
-			notes: ["Requires explicit operational approval and environment handling."],
+			notes: [
+				"Requires explicit operational approval and environment handling.",
+			],
 		},
 	];
 
@@ -2592,7 +2602,9 @@ interface CommanderControllerCommands {
 	getBrowserAiSendReadiness: () => Promise<CommanderControllerBrowserAiPreflightResult>;
 	getReadinessPreflight: () => Promise<CommanderControllerReadinessPreflightResult>;
 	runReadinessPreflight: () => Promise<CommanderControllerReadinessPreflightResult>;
-	listRecognizedWorkers: (input?: unknown) => CommanderControllerListRecognizedWorkersResult;
+	listRecognizedWorkers: (
+		input?: unknown,
+	) => CommanderControllerListRecognizedWorkersResult;
 	bindWorkerToTab: (
 		input?: CommanderControllerBindWorkerInput,
 	) => Promise<CommanderControllerBindWorkerResult>;
@@ -2690,15 +2702,6 @@ type CommanderControllerWindow = Window &
 		__doydeckCommanderController?: CommanderControllerCommands;
 	};
 
-type ArtifactReviewControllerRef = Partial<
-	Pick<
-		CommanderControllerCommands,
-		| "collectWorkerReportedArtifacts"
-		| "sendWorkerReportedArtifactsToBrowserAI"
-		| "recordControllerChainOutcome"
-	>
->;
-
 export function CommanderTab({
 	workspaceId,
 	fetchGitSummary,
@@ -2707,7 +2710,7 @@ export function CommanderTab({
 	fetchGitSummary?: () => Promise<HandoffGitSummary>;
 }) {
 	const trpcUtils = electronTrpc.useUtils();
-	const [view, setView] = useState<CommanderView>("browser");
+	const [, setView] = useState<CommanderView>("browser");
 	const [state, setState] = useState<CommanderState>({
 		goal: "",
 		context: "",
@@ -2719,10 +2722,6 @@ export function CommanderTab({
 	);
 	const sessionRef = useRef<CommanderSession>(session);
 	const sessionTabIdRef = useRef<string | null>(null);
-	const [autoRelayMode, setAutoRelayMode] = useState<AutoRelayMode>("off");
-	const handleAutoRelayModeChange = useCallback((mode: AutoRelayMode) => {
-		setAutoRelayMode(mode);
-	}, []);
 	const lastWorkerInstructionMarkerRef =
 		useRef<CommanderControllerLastWorkerInstructionMarker | null>(null);
 	const lastBrowserAiSubmissionRef =
@@ -2764,19 +2763,13 @@ export function CommanderTab({
 
 	const browserAiSubmissionSequenceRef = useRef(0);
 
-	const workerPrompt = useMemo(
-		() => generateWorkerPrompt(state),
-		[state.goal, state.context, state.constraints, state.currentProblem],
-	);
-	const reviewPrompt = useMemo(
-		() => generateReviewPrompt(state),
-		[state.goal, state.constraints],
-	);
+	const workerPrompt = useMemo(() => generateWorkerPrompt(state), [state]);
+	const reviewPrompt = useMemo(() => generateReviewPrompt(state), [state]);
 
 	const activeTerminal = useActiveTerminal();
 	const activeTerminalInfo = useActiveTerminalInfo();
-	const activeTabId = useTabsStore(
-		(s) => (workspaceId ? s.activeTabIds[workspaceId] ?? null : null),
+	const activeTabId = useTabsStore((s) =>
+		workspaceId ? (s.activeTabIds[workspaceId] ?? null) : null,
 	);
 	const tabs = useTabsStore((s) => s.tabs);
 	const panes = useTabsStore((s) => s.panes);
@@ -2785,10 +2778,9 @@ export function CommanderTab({
 			? makeDoyDeckWorkerBindingKey(workspaceId, activeTabId)
 			: null;
 	const storedWorkerBinding = useDoyDeckWorkerBindingsStore((s) =>
-		workerBindingKey ? s.bindings[workerBindingKey] ?? null : null,
+		workerBindingKey ? (s.bindings[workerBindingKey] ?? null) : null,
 	);
 	const bindWorker = useDoyDeckWorkerBindingsStore((s) => s.bindWorker);
-	const unbindWorker = useDoyDeckWorkerBindingsStore((s) => s.unbindWorker);
 	const workerBinding = useMemo(
 		() =>
 			resolveDoyDeckWorkerBindingSnapshot({
@@ -2803,7 +2795,8 @@ export function CommanderTab({
 	const webview = useCommanderWebview({ workspaceId, activeTabId });
 	const sessionPersistence = useCommanderSessionPersistence(workspaceId);
 	const resolveActiveTabIdSnapshot = useCallback(
-		() => useTabsStore.getState().activeTabIds[workspaceId] ?? activeTabId ?? null,
+		() =>
+			useTabsStore.getState().activeTabIds[workspaceId] ?? activeTabId ?? null,
 		[activeTabId, workspaceId],
 	);
 
@@ -2817,11 +2810,7 @@ export function CommanderTab({
 		sessionRef.current = loadedSession;
 		sessionTabIdRef.current = resolvedActiveTabId;
 		setState(commanderStateFromSession(loadedSession));
-	}, [
-		resolveActiveTabIdSnapshot,
-		sessionPersistence.loadSession,
-		workspaceId,
-	]);
+	}, [resolveActiveTabIdSnapshot, sessionPersistence.loadSession, workspaceId]);
 
 	useEffect(() => {
 		sessionRef.current = session;
@@ -2836,41 +2825,21 @@ export function CommanderTab({
 		[resolveActiveTabIdSnapshot, sessionPersistence],
 	);
 
-	const handleClearSession = useCallback(() => {
-		if (
-			!window.confirm(
-				"保存済みCommander Sessionを削除しますか？\nGit / Files、Auto Relay、Browser / Terminal状態には触れません。",
-			)
-		) {
-			return;
-		}
-		const resolvedActiveTabId = resolveActiveTabIdSnapshot();
-		sessionPersistence.clearSession(resolvedActiveTabId);
-		const emptySession = createEmptyCommanderSession();
-		sessionRef.current = emptySession;
-		sessionTabIdRef.current = resolvedActiveTabId;
-		setSession(emptySession);
-		setState(commanderStateFromSession(emptySession));
-		toast.success("Commander Sessionを削除しました");
-	}, [resolveActiveTabIdSnapshot, sessionPersistence]);
-
-	const ensureCommanderSessionForActiveTab = useCallback((): CommanderSession => {
-		const resolvedActiveTabId = resolveActiveTabIdSnapshot();
-		if (sessionTabIdRef.current === resolvedActiveTabId) {
-			return sessionRef.current;
-		}
-		const loadedSession =
-			sessionPersistence.loadSession(resolvedActiveTabId) ??
-			createEmptyCommanderSession();
-		sessionRef.current = loadedSession;
-		sessionTabIdRef.current = resolvedActiveTabId;
-		setSession(loadedSession);
-		setState(commanderStateFromSession(loadedSession));
-		return loadedSession;
-	}, [resolveActiveTabIdSnapshot, sessionPersistence]);
-
-	const artifactReviewControllerRef =
-		useRef<ArtifactReviewControllerRef | null>(null);
+	const ensureCommanderSessionForActiveTab =
+		useCallback((): CommanderSession => {
+			const resolvedActiveTabId = resolveActiveTabIdSnapshot();
+			if (sessionTabIdRef.current === resolvedActiveTabId) {
+				return sessionRef.current;
+			}
+			const loadedSession =
+				sessionPersistence.loadSession(resolvedActiveTabId) ??
+				createEmptyCommanderSession();
+			sessionRef.current = loadedSession;
+			sessionTabIdRef.current = resolvedActiveTabId;
+			setSession(loadedSession);
+			setState(commanderStateFromSession(loadedSession));
+			return loadedSession;
+		}, [resolveActiveTabIdSnapshot, sessionPersistence]);
 
 	const transfer = usePromptTransfer({
 		workspaceId,
@@ -2879,7 +2848,6 @@ export function CommanderTab({
 		session,
 		activeTerminal,
 		workerBinding,
-		autoRelayMode,
 		getLiveUrl: webview.getLiveUrl,
 		currentUrl: webview.currentUrl,
 		injectIntoPage: webview.injectIntoPage,
@@ -2892,72 +2860,6 @@ export function CommanderTab({
 		reviewPrompt,
 	});
 
-	const handleAutoCaptureTrigger = useCallback(
-		(options?: {
-			baseline: AssistantCaptureSnapshot | null;
-			prompt: string;
-			triggeredAt: number;
-		}) => {
-			console.log("[S3.11] onAutoCaptureTrigger called");
-			transfer.startAutoCapture(options);
-		},
-		[transfer.startAutoCapture],
-	);
-
-	const handleSendSelectionToAI = useCallback(() => {
-		console.log(
-			"[S3.11] handleSendSelectionToAI called, activeTerminal =",
-			activeTerminal,
-		);
-		if (!activeTerminal) return;
-		const text = getTerminalSelection(activeTerminal);
-		if (!text) {
-			toast.error("ターミナルでテキストを選択してください");
-			return;
-		}
-		console.log(
-			"[S3.11] calling sendSelectionToBrowserAI, text length =",
-			text.length,
-		);
-		sendSelectionToBrowserAI(text, {
-			expectedWorkspaceId: workspaceId,
-			expectedTabId: activeTabId,
-		});
-	}, [activeTabId, activeTerminal, workspaceId]);
-
-	const handleBindActiveTerminalToTab = useCallback(() => {
-		if (!workspaceId || !activeTabId || !activeTerminalInfo) {
-			toast.error("Bindingできるactive terminalがありません");
-			return;
-		}
-		const terminalOutput = getOutputLogSince(activeTerminalInfo.paneId, 0);
-		const terminalSnapshot = getTerminalOutputSnapshot(activeTerminalInfo.paneId);
-		const workerType = inferDoyDeckWorkerTypeFromEvidence({
-			outputText: terminalOutput,
-			screenText: terminalSnapshot?.screenText,
-			viewportText: terminalSnapshot?.viewportText,
-			selectionText: getTerminalSelection(activeTerminalInfo.paneId),
-		});
-		bindWorker({
-			workspaceId,
-			tabId: activeTabId,
-			workerPaneId: activeTerminalInfo.paneId,
-			terminalId: activeTerminalInfo.terminalId,
-			workerType,
-			bindingMode: "bound",
-			boundAt: Date.now(),
-		});
-		toast.success(
-			`このtabにWorker terminalをbindingしました (${workerType})`,
-		);
-	}, [workspaceId, activeTabId, activeTerminalInfo, bindWorker]);
-
-	const handleUnbindWorkerFromTab = useCallback(() => {
-		if (!workspaceId || !activeTabId) return;
-		unbindWorker(workspaceId, activeTabId);
-		toast.success("このtabのWorker bindingを解除しました");
-	}, [workspaceId, activeTabId, unbindWorker]);
-
 	const getCommanderControllerContext = useCallback(
 		(): Pick<CommanderControllerCommandResult, "workspaceId" | "tabId"> => ({
 			workspaceId,
@@ -2968,10 +2870,12 @@ export function CommanderTab({
 
 	const getControllerCommandInventoryController = useCallback(
 		(_input?: unknown): CommanderControllerCommandInventoryResult => {
-			const commands = COMMANDER_CONTROLLER_COMMAND_INVENTORY.map((command) => ({
-				...command,
-				notes: [...command.notes],
-			}));
+			const commands = COMMANDER_CONTROLLER_COMMAND_INVENTORY.map(
+				(command) => ({
+					...command,
+					notes: [...command.notes],
+				}),
+			);
 			const missingCommands = COMMANDER_CONTROLLER_MISSING_COMMANDS.map(
 				(command) => ({
 					...command,
@@ -3005,7 +2909,8 @@ export function CommanderTab({
 	);
 
 	const getActiveTabIdController = useCallback(
-		() => useTabsStore.getState().activeTabIds[workspaceId] ?? activeTabId ?? null,
+		() =>
+			useTabsStore.getState().activeTabIds[workspaceId] ?? activeTabId ?? null,
 		[activeTabId, workspaceId],
 	);
 
@@ -3120,7 +3025,8 @@ export function CommanderTab({
 						? true
 						: null);
 			const assistantReplyObserved =
-				input.assistantReplyObserved ?? (input.status === "REPLIED" ? true : null);
+				input.assistantReplyObserved ??
+				(input.status === "REPLIED" ? true : null);
 			const submission: CommanderControllerBrowserAiSubmissionState = {
 				...input,
 				submissionId: `browser-ai-submission-${Date.now().toString(36)}-${browserAiSubmissionSequenceRef.current.toString(36)}`,
@@ -3138,7 +3044,10 @@ export function CommanderTab({
 					input.nextRequiredAction.trim()
 						? input.nextRequiredAction
 						: submissionStatus
-							? getBrowserAiSubmissionNextRequiredAction(submissionStatus, input.type)
+							? getBrowserAiSubmissionNextRequiredAction(
+									submissionStatus,
+									input.type,
+								)
 							: "Resolve Browser AI submission blocker before continuing.",
 				detectedUserMessageAfterSubmit: uiReflected,
 				detectedAssistantReplyAfterSubmit: assistantReplyObserved,
@@ -3184,7 +3093,8 @@ export function CommanderTab({
 					assistantReplyObserved: null,
 					visualVerificationUsed: false,
 					submissionVerificationReason: null,
-					nextRequiredAction: "Submit to Browser AI before reading submission state.",
+					nextRequiredAction:
+						"Submit to Browser AI before reading submission state.",
 					message: "No Browser AI submission has been recorded",
 					warnings: [],
 					blockers: [],
@@ -3272,10 +3182,14 @@ export function CommanderTab({
 				warnings.push(
 					`last Browser AI submission was ${submission.type} at ${submission.sentAt ?? submission.recordedAt}; no assistant reply detected after last submission`,
 				);
-				warnings.push("provider/thread may have changed or Browser AI may still be responding");
+				warnings.push(
+					"provider/thread may have changed or Browser AI may still be responding",
+				);
 			}
 			const nextSubmissionStatus =
-				detectedAssistantReplyAfterSubmit === true ? "REPLIED" : submission.status;
+				detectedAssistantReplyAfterSubmit === true
+					? "REPLIED"
+					: submission.status;
 			const nextAssistantReplyObserved =
 				detectedAssistantReplyAfterSubmit ?? submission.assistantReplyObserved;
 
@@ -3287,7 +3201,10 @@ export function CommanderTab({
 				assistantReplyObserved: nextAssistantReplyObserved,
 				nextRequiredAction:
 					nextSubmissionStatus === "REPLIED"
-						? getBrowserAiSubmissionNextRequiredAction("REPLIED", submission.type)
+						? getBrowserAiSubmissionNextRequiredAction(
+								"REPLIED",
+								submission.type,
+							)
 						: submission.nextRequiredAction,
 				detectedAssistantReplyAfterSubmit,
 				latestAssistantReplyStatus: status,
@@ -3318,7 +3235,11 @@ export function CommanderTab({
 				blockers: [],
 				warnings: [],
 			};
-		}, [ensureCommanderSessionForActiveTab, getCommanderControllerContext]);
+		}, [
+			activeTabId,
+			ensureCommanderSessionForActiveTab,
+			getCommanderControllerContext,
+		]);
 
 	const setCommanderSessionController = useCallback(
 		(
@@ -3339,10 +3260,7 @@ export function CommanderTab({
 					warnings: [],
 				};
 			}
-			const writeGuard = getExpectedTabWriteGuard(
-				input,
-				"setCommanderSession",
-			);
+			const writeGuard = getExpectedTabWriteGuard(input, "setCommanderSession");
 			if (writeGuard.blockers.length > 0) {
 				return {
 					ok: false,
@@ -3361,8 +3279,11 @@ export function CommanderTab({
 				};
 			}
 			const baseSession = ensureCommanderSessionForActiveTab();
-			const { session: nextSession, changedFields, skippedFields } =
-				mergeCommanderSessionControllerInput(baseSession, input);
+			const {
+				session: nextSession,
+				changedFields,
+				skippedFields,
+			} = mergeCommanderSessionControllerInput(baseSession, input);
 			if (changedFields.length === 0) {
 				return {
 					ok: false,
@@ -3715,7 +3636,8 @@ export function CommanderTab({
 			const tabSummary = buildControllerTabSummary({
 				tab: nextTab,
 				panes: nextTabsState.panes,
-				activeTabId: nextTabsState.activeTabIds[workspaceId] ?? activeTabIdSnapshot,
+				activeTabId:
+					nextTabsState.activeTabIds[workspaceId] ?? activeTabIdSnapshot,
 				focusedPaneId: nextTabsState.focusedPaneIds[nextTab.id] ?? null,
 			});
 
@@ -3743,8 +3665,8 @@ export function CommanderTab({
 	);
 
 	const createTaskTabController = useCallback(
-			async (
-				input: CommanderControllerCreateTaskTabInput = {},
+		async (
+			input: CommanderControllerCreateTaskTabInput = {},
 		): Promise<CommanderControllerCreateTaskTabResult> => {
 			const startedAt = performance.now();
 			const mark = () => Number((performance.now() - startedAt).toFixed(1));
@@ -3766,7 +3688,8 @@ export function CommanderTab({
 			const activeTabIdBefore =
 				tabsStateBefore.activeTabIds[workspaceId] ?? activeTabId ?? null;
 			const tabCountBefore = tabsStateBefore.tabs.length;
-			const rawTitle = typeof input?.title === "string" ? input.title.trim() : "";
+			const rawTitle =
+				typeof input?.title === "string" ? input.title.trim() : "";
 			const resolvedTitle = rawTitle || "New Task";
 			const dryRun = input?.dryRun === true;
 			if (dryRun) {
@@ -3859,7 +3782,8 @@ export function CommanderTab({
 					requestedTitle: rawTitle || null,
 					resolvedTitle,
 					activeTabIdBefore,
-					activeTabIdAfter: useTabsStore.getState().activeTabIds[workspaceId] ?? null,
+					activeTabIdAfter:
+						useTabsStore.getState().activeTabIds[workspaceId] ?? null,
 					paneId: null,
 					tabFound: false,
 					tabVisible: false,
@@ -3893,8 +3817,7 @@ export function CommanderTab({
 					...getCommanderControllerContext(),
 					ledger,
 					...handoffBudget,
-					missingFields:
-						getCommanderSessionMissingFields(sessionSnapshot),
+					missingFields: getCommanderSessionMissingFields(sessionSnapshot),
 					session: sessionSnapshot,
 				};
 			} catch (error) {
@@ -3902,11 +3825,9 @@ export function CommanderTab({
 				return {
 					ok: false,
 					...getCommanderControllerContext(),
-					reason:
-						error instanceof Error ? error.message : "unknown error",
+					reason: error instanceof Error ? error.message : "unknown error",
 					...handoffBudget,
-					missingFields:
-						getCommanderSessionMissingFields(sessionSnapshot),
+					missingFields: getCommanderSessionMissingFields(sessionSnapshot),
 					session: sessionSnapshot,
 				};
 			}
@@ -3922,7 +3843,8 @@ export function CommanderTab({
 			const warnings: string[] = [];
 			const activeTabIdSnapshot = activeTabId;
 			const runtime = webview.getRuntimeSnapshot();
-			const liveUrl = webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
+			const liveUrl =
+				webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
 			const provider = detectProvider(liveUrl);
 			const expectedBrowserAiSlotKey = buildCommanderBrowserSlotKey({
 				workspaceId,
@@ -4006,7 +3928,9 @@ export function CommanderTab({
 				);
 			}
 			if (runtime.visualStatus === "NEEDS_FIX") {
-				warnings.push(`browser ai visual status needs fix: ${runtime.visualReason}`);
+				warnings.push(
+					`browser ai visual status needs fix: ${runtime.visualReason}`,
+				);
 			}
 			if (runtime.status === "available" && runtime.webContentsId === null) {
 				warnings.push("browser ai webContentsId is unavailable");
@@ -4044,8 +3968,8 @@ export function CommanderTab({
 				browserAiUrl: liveUrl,
 				browserAiSlotKey: runtime.browserSlotKey,
 				expectedBrowserAiSlotKey,
-				relayMode: autoRelayMode,
-				relayStatus: transfer.autoRelayStatus,
+				relayMode: "manual",
+				relayStatus: "idle",
 				workerPaneId: workerBinding.workerPaneId,
 				terminalId: workerBinding.terminalId,
 				workerType: workerBinding.workerType,
@@ -4061,10 +3985,8 @@ export function CommanderTab({
 			};
 		}, [
 			activeTabId,
-			autoRelayMode,
 			buildHandoffLedgerController,
 			getCommanderControllerContext,
-			transfer.autoRelayStatus,
 			webview.currentUrl,
 			webview.getLiveUrl,
 			webview.getRuntimeSnapshot,
@@ -4079,7 +4001,8 @@ export function CommanderTab({
 			const warnings: string[] = [];
 			const activeTabIdSnapshot = activeTabId;
 			const runtime = webview.getRuntimeSnapshot();
-			const liveUrl = webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
+			const liveUrl =
+				webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
 			const provider = detectProvider(liveUrl);
 			const expectedBrowserAiSlotKey = buildCommanderBrowserSlotKey({
 				workspaceId,
@@ -4121,7 +4044,11 @@ export function CommanderTab({
 			}
 			if (!browserAiSlotOk) blockers.push("browser ai slot mismatch");
 
-			if (provider && runtime.status === "available" && runtime.bridgeAvailable) {
+			if (
+				provider &&
+				runtime.status === "available" &&
+				runtime.bridgeAvailable
+			) {
 				try {
 					const latestState = normalizeBrowserAiLatestReplyState(
 						await webview.injectIntoPage(buildLatestReplyStateScript(provider)),
@@ -4147,7 +4074,9 @@ export function CommanderTab({
 			}
 
 			if (runtime.visualStatus === "NEEDS_FIX") {
-				warnings.push(`browser ai visual status needs fix: ${runtime.visualReason}`);
+				warnings.push(
+					`browser ai visual status needs fix: ${runtime.visualReason}`,
+				);
 			}
 			if (runtime.status === "available" && runtime.webContentsId === null) {
 				warnings.push("browser ai webContentsId is unavailable");
@@ -4217,16 +4146,14 @@ export function CommanderTab({
 				webview.currentUrl ||
 				webview.getRuntimeSnapshot().currentUrl;
 			let provider = detectProvider(liveUrl);
-			const requestedBrowserProvider = browserAiPrepareProviderToBrowserProvider(
-				normalizedInput.provider,
-			);
+			const requestedBrowserProvider =
+				browserAiPrepareProviderToBrowserProvider(normalizedInput.provider);
 			const navigationTargetUrl = getBrowserAiPrepareProviderUrl(
 				normalizedInput.provider,
 			);
 			const providerMatchesRequest = provider === requestedBrowserProvider;
 			const needsNavigation =
-				!providerMatchesRequest ||
-				(!preflight.browserAiReady && !provider);
+				!providerMatchesRequest || (!preflight.browserAiReady && !provider);
 
 			if (preflight.browserAiReady && providerMatchesRequest) {
 				skippedActions.push(
@@ -4244,7 +4171,9 @@ export function CommanderTab({
 					skippedActions.push("navigateIfNeeded is false");
 				} else {
 					webview.navigateTo(navigationTargetUrl);
-					performedActions.push(`navigated Browser AI to ${navigationTargetUrl}`);
+					performedActions.push(
+						`navigated Browser AI to ${navigationTargetUrl}`,
+					);
 					if (normalizedInput.waitForReady) {
 						const readinessAfterNavigation =
 							await waitForBrowserAiProviderReadiness({
@@ -4405,14 +4334,14 @@ export function CommanderTab({
 		[activeTabId, panes, tabs, workspaceId],
 	);
 
-	const listRecognizedWorkersController =
-		useCallback((_input?: unknown): CommanderControllerListRecognizedWorkersResult => {
+	const listRecognizedWorkersController = useCallback(
+		(_input?: unknown): CommanderControllerListRecognizedWorkersResult => {
 			const tabsState = useTabsStore.getState();
 			const activeTabIdSnapshot =
 				tabsState.activeTabIds[workspaceId] ?? activeTabId ?? null;
 			const tabById = new Map(tabsState.tabs.map((tab) => [tab.id, tab]));
 			const activeFocusedPaneId = activeTabIdSnapshot
-				? tabsState.focusedPaneIds[activeTabIdSnapshot] ?? null
+				? (tabsState.focusedPaneIds[activeTabIdSnapshot] ?? null)
 				: null;
 			const workers: CommanderControllerRecognizedWorkerListItem[] = [];
 			const ignoredCandidates: CommanderControllerIgnoredWorkerCandidate[] = [];
@@ -4517,7 +4446,9 @@ export function CommanderTab({
 				message:
 					"Recognized workers read from local terminal panes only; bind, activate, send, and readiness preflight were not run.",
 			};
-		}, [activeTabId, workerBinding, workspaceId]);
+		},
+		[activeTabId, workerBinding, workspaceId],
+	);
 
 	const getWorkerInputReadinessController = useCallback(
 		(
@@ -4530,7 +4461,7 @@ export function CommanderTab({
 			const activeTabIdSnapshot =
 				tabsState.activeTabIds[workspaceId] ?? activeTabId ?? null;
 			const activeFocusedPaneId = activeTabIdSnapshot
-				? tabsState.focusedPaneIds[activeTabIdSnapshot] ?? null
+				? (tabsState.focusedPaneIds[activeTabIdSnapshot] ?? null)
 				: null;
 			const recognizedCandidates = getRecognizedWorkerCandidatesController();
 			const fallbackCandidate =
@@ -4547,16 +4478,16 @@ export function CommanderTab({
 				normalizedInput.paneId ??
 				(workerBinding.bindingStatus === "bound"
 					? workerBinding.workerPaneId
-					: fallbackCandidate?.paneId ?? null);
+					: (fallbackCandidate?.paneId ?? null));
 			const pane = requestedPaneId ? tabsState.panes[requestedPaneId] : null;
 			const tab = pane
-				? tabsState.tabs.find((candidate) => candidate.id === pane.tabId) ??
-					null
+				? (tabsState.tabs.find((candidate) => candidate.id === pane.tabId) ??
+					null)
 				: null;
 			const recognizedCandidate = requestedPaneId
-				? recognizedCandidates.find(
+				? (recognizedCandidates.find(
 						(candidate) => candidate.paneId === requestedPaneId,
-					) ?? null
+					) ?? null)
 				: null;
 			const evidence =
 				pane?.type === "terminal"
@@ -4600,7 +4531,9 @@ export function CommanderTab({
 			if (!workspaceId) blockers.push("workspace not found");
 			if (!activeTabIdSnapshot) blockers.push("active tab not found");
 			if (!requestedPaneId) {
-				blockers.push("worker paneId not provided and active tab has no bound worker");
+				blockers.push(
+					"worker paneId not provided and active tab has no bound worker",
+				);
 			}
 			if (requestedPaneId && !pane) blockers.push("terminal pane not found");
 			if (pane && pane.type !== "terminal") {
@@ -4610,7 +4543,9 @@ export function CommanderTab({
 				blockers.push("terminal pane belongs to another workspace");
 			}
 			if (normalizedInput.requireRecognizedWorker && !recognizedWorker) {
-				blockers.push("terminal pane is not a recognized Codex or Claude worker");
+				blockers.push(
+					"terminal pane is not a recognized Codex or Claude worker",
+				);
 			}
 			if (recognizedWorker) {
 				blockers.push(...workerInputReadiness.workerInputBlockers);
@@ -4685,13 +4620,13 @@ export function CommanderTab({
 			const activeTabIdSnapshot =
 				tabsState.activeTabIds[workspaceId] ?? activeTabId ?? null;
 			const activeFocusedPaneId = activeTabIdSnapshot
-				? tabsState.focusedPaneIds[activeTabIdSnapshot] ?? null
+				? (tabsState.focusedPaneIds[activeTabIdSnapshot] ?? null)
 				: null;
 			const requestedPaneId = normalizedInput.paneId ?? activeFocusedPaneId;
 			const pane = requestedPaneId ? tabsState.panes[requestedPaneId] : null;
 			const tab = pane
-				? tabsState.tabs.find((candidate) => candidate.id === pane.tabId) ??
-					null
+				? (tabsState.tabs.find((candidate) => candidate.id === pane.tabId) ??
+					null)
 				: null;
 			const isTerminal = pane?.type === "terminal";
 			const terminalId = isTerminal ? getTerminalIdFromPane(pane) : null;
@@ -4712,7 +4647,8 @@ export function CommanderTab({
 			if (!activeTabIdSnapshot) warnings.push("active tab not found");
 			if (!requestedPaneId) blockers.push("terminal paneId not provided");
 			if (requestedPaneId && !pane) blockers.push("terminal pane not found");
-			if (pane && !isTerminal) blockers.push(`pane is not terminal: ${pane.type}`);
+			if (pane && !isTerminal)
+				blockers.push(`pane is not terminal: ${pane.type}`);
 			if (tab && workspaceId && tab.workspaceId !== workspaceId) {
 				blockers.push("terminal pane belongs to another workspace");
 			}
@@ -4771,20 +4707,22 @@ export function CommanderTab({
 			const requestedPaneId = normalizedInput.paneId;
 			const pane = requestedPaneId ? tabsState.panes[requestedPaneId] : null;
 			const tab = pane
-				? tabsState.tabs.find((candidate) => candidate.id === pane.tabId) ??
-					null
+				? (tabsState.tabs.find((candidate) => candidate.id === pane.tabId) ??
+					null)
 				: null;
-			const evidence = pane?.type === "terminal"
-				? getTerminalWorkerEvidenceForPane(pane)
-				: {
-						terminalId: null,
-						workerType: "unknown" as DoyDeckWorkerType,
-						workerIdentity: evaluateDoyDeckWorkerIdentity("unknown"),
-						evidenceSummary: "unknown: terminal pane not found",
-					};
-			const recognizedCandidate = getRecognizedWorkerCandidatesController().find(
-				(candidate) => candidate.paneId === requestedPaneId,
-			);
+			const evidence =
+				pane?.type === "terminal"
+					? getTerminalWorkerEvidenceForPane(pane)
+					: {
+							terminalId: null,
+							workerType: "unknown" as DoyDeckWorkerType,
+							workerIdentity: evaluateDoyDeckWorkerIdentity("unknown"),
+							evidenceSummary: "unknown: terminal pane not found",
+						};
+			const recognizedCandidate =
+				getRecognizedWorkerCandidatesController().find(
+					(candidate) => candidate.paneId === requestedPaneId,
+				);
 			const workerType = recognizedCandidate?.workerType ?? evidence.workerType;
 			const workerIdentityOk =
 				recognizedCandidate?.workerIdentityOk ??
@@ -4807,7 +4745,9 @@ export function CommanderTab({
 				blockers.push("terminal pane belongs to another workspace");
 			}
 			if (pane && !workerIdentityOk) {
-				blockers.push("terminal pane is not a recognized Codex or Claude worker");
+				blockers.push(
+					"terminal pane is not a recognized Codex or Claude worker",
+				);
 			}
 			if (workerType !== "codex" && workerType !== "claude") {
 				blockers.push(`unsupported worker type: ${workerType}`);
@@ -4846,7 +4786,11 @@ export function CommanderTab({
 
 			const activeTabIdForBinding = activeTabIdSnapshot;
 			const requestedPaneIdForBinding = requestedPaneId;
-			if (!workspaceId || !activeTabIdForBinding || !requestedPaneIdForBinding) {
+			if (
+				!workspaceId ||
+				!activeTabIdForBinding ||
+				!requestedPaneIdForBinding
+			) {
 				return {
 					ok: false,
 					...getCommanderControllerContext(),
@@ -4879,9 +4823,10 @@ export function CommanderTab({
 				boundAt: Date.now(),
 			});
 			await delay(0);
-			const nextBinding = useDoyDeckWorkerBindingsStore.getState().bindings[
-				makeDoyDeckWorkerBindingKey(workspaceId, activeTabIdForBinding)
-			];
+			const nextBinding =
+				useDoyDeckWorkerBindingsStore.getState().bindings[
+					makeDoyDeckWorkerBindingKey(workspaceId, activeTabIdForBinding)
+				];
 			newBinding = resolveDoyDeckWorkerBindingSnapshot({
 				workspaceId,
 				tabId: activeTabIdForBinding,
@@ -5020,14 +4965,17 @@ export function CommanderTab({
 					);
 				} else {
 					webview.navigateTo(navigationTargetUrl);
-					performedActions.push(`navigated Browser AI to ${navigationTargetUrl}`);
-					const readinessAfterNavigation = await waitForSupervisorBrowserReadiness({
-						getRuntimeSnapshot: webview.getRuntimeSnapshot,
-						getLiveUrl: webview.getLiveUrl,
-						currentUrl: webview.currentUrl,
-						injectIntoPage: webview.injectIntoPage,
-						expectedProvider: normalizedInput.browserProvider,
-					});
+					performedActions.push(
+						`navigated Browser AI to ${navigationTargetUrl}`,
+					);
+					const readinessAfterNavigation =
+						await waitForSupervisorBrowserReadiness({
+							getRuntimeSnapshot: webview.getRuntimeSnapshot,
+							getLiveUrl: webview.getLiveUrl,
+							currentUrl: webview.currentUrl,
+							injectIntoPage: webview.injectIntoPage,
+							expectedProvider: normalizedInput.browserProvider,
+						});
 					if (!readinessAfterNavigation.ready) {
 						skippedActions.push(readinessAfterNavigation.reason);
 					}
@@ -5103,7 +5051,10 @@ export function CommanderTab({
 				candidates = getRecognizedWorkerCandidatesController();
 			}
 
-			const readiness = buildSupervisorPilotReadinessResult(preflight, candidates);
+			const readiness = buildSupervisorPilotReadinessResult(
+				preflight,
+				candidates,
+			);
 			return {
 				...readiness,
 				dryRun: normalizedInput.dryRun,
@@ -5146,11 +5097,11 @@ export function CommanderTab({
 				normalizedInput.paneId ?? workerBinding.workerPaneId ?? null;
 			const pane = requestedPaneId ? tabsState.panes[requestedPaneId] : null;
 			const targetTab = pane
-				? tabsState.tabs.find((tab) => tab.id === pane.tabId) ?? null
+				? (tabsState.tabs.find((tab) => tab.id === pane.tabId) ?? null)
 				: null;
 			const targetTabId = targetTab?.id ?? null;
 			const focusedPaneBefore = targetTabId
-				? tabsState.focusedPaneIds[targetTabId] ?? null
+				? (tabsState.focusedPaneIds[targetTabId] ?? null)
 				: null;
 
 			if (!workspaceId) blockers.push("workspace not found");
@@ -5168,27 +5119,41 @@ export function CommanderTab({
 				activeTabIdBefore !== targetTabId &&
 				!normalizedInput.activateTab
 			) {
-				blockers.push("activateTab is required before focusing a pane in another tab");
+				blockers.push(
+					"activateTab is required before focusing a pane in another tab",
+				);
 			}
 
-			const evidence = pane?.type === "terminal"
-				? getTerminalWorkerEvidenceForPane(pane)
-				: {
-						terminalId: null,
-						workerType: "unknown" as DoyDeckWorkerType,
-						workerIdentity: evaluateDoyDeckWorkerIdentity("unknown"),
-						evidenceSummary: "unknown: terminal pane not found",
-					};
-			const recognizedCandidate = getRecognizedWorkerCandidatesController().find(
-				(candidate) => candidate.paneId === requestedPaneId,
-			);
+			const evidence =
+				pane?.type === "terminal"
+					? getTerminalWorkerEvidenceForPane(pane)
+					: {
+							terminalId: null,
+							workerType: "unknown" as DoyDeckWorkerType,
+							workerIdentity: evaluateDoyDeckWorkerIdentity("unknown"),
+							evidenceSummary: "unknown: terminal pane not found",
+						};
+			const recognizedCandidate =
+				getRecognizedWorkerCandidatesController().find(
+					(candidate) => candidate.paneId === requestedPaneId,
+				);
 			const recognizedWorker =
 				Boolean(recognizedCandidate?.workerIdentityOk) ||
 				evidence.workerIdentity.workerIdentityOk;
-			if (normalizedInput.requireRecognizedWorker && pane && !recognizedWorker) {
-				blockers.push("terminal pane is not a recognized Codex or Claude worker");
+			if (
+				normalizedInput.requireRecognizedWorker &&
+				pane &&
+				!recognizedWorker
+			) {
+				blockers.push(
+					"terminal pane is not a recognized Codex or Claude worker",
+				);
 			}
-			if (pane && !recognizedCandidate && evidence.workerIdentity.workerIdentityOk) {
+			if (
+				pane &&
+				!recognizedCandidate &&
+				evidence.workerIdentity.workerIdentityOk
+			) {
 				warnings.push("recognized worker inferred from terminal evidence");
 			}
 
@@ -5248,10 +5213,11 @@ export function CommanderTab({
 			}
 			await delay(0);
 			const nextTabsState = useTabsStore.getState();
-			const activeTabIdAfter =
-				workspaceId ? nextTabsState.activeTabIds[workspaceId] ?? null : null;
+			const activeTabIdAfter = workspaceId
+				? (nextTabsState.activeTabIds[workspaceId] ?? null)
+				: null;
 			const focusedPaneAfter = targetTabId
-				? nextTabsState.focusedPaneIds[targetTabId] ?? null
+				? (nextTabsState.focusedPaneIds[targetTabId] ?? null)
 				: null;
 			const activeTabChanged = activeTabIdBefore !== activeTabIdAfter;
 			return {
@@ -5295,16 +5261,15 @@ export function CommanderTab({
 		],
 	);
 
-	const sendHandoffToBrowserAiController =
-		useCallback(async (
-			input?: unknown,
-		): Promise<CommanderControllerSendHandoffResult> => {
+	const sendHandoffToBrowserAiController = useCallback(
+		async (input?: unknown): Promise<CommanderControllerSendHandoffResult> => {
 			const blockers: string[] = [];
 			const warnings: string[] = [];
 			const sendInput = normalizeSendHandoffControllerInput(input);
 			const activeTabIdSnapshot = activeTabId;
 			const runtime = webview.getRuntimeSnapshot();
-			const liveUrl = webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
+			const liveUrl =
+				webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
 			const provider = detectProvider(liveUrl);
 			const expectedBrowserAiSlotKey = buildCommanderBrowserSlotKey({
 				workspaceId,
@@ -5356,7 +5321,9 @@ export function CommanderTab({
 			const submitWarning = getBrowserAiSubmitWarning(composerReadiness);
 			if (submitWarning) warnings.push(submitWarning);
 			if (runtime.visualStatus === "NEEDS_FIX") {
-				warnings.push(`browser ai visual status needs fix: ${runtime.visualReason}`);
+				warnings.push(
+					`browser ai visual status needs fix: ${runtime.visualReason}`,
+				);
 			}
 
 			const prompt = ledger.trim()
@@ -5386,13 +5353,19 @@ export function CommanderTab({
 				}),
 			);
 			let latestReplyBeforeSubmit: BrowserAiLatestReplyState | null = null;
-			if (provider && runtime.status === "available" && runtime.bridgeAvailable) {
+			if (
+				provider &&
+				runtime.status === "available" &&
+				runtime.bridgeAvailable
+			) {
 				try {
 					latestReplyBeforeSubmit = normalizeBrowserAiLatestReplyState(
 						await webview.injectIntoPage(buildLatestReplyStateScript(provider)),
 					);
 				} catch {
-					warnings.push("browser ai latest reply baseline unavailable before submit");
+					warnings.push(
+						"browser ai latest reply baseline unavailable before submit",
+					);
 				}
 			}
 			const baseResult = {
@@ -5577,7 +5550,8 @@ export function CommanderTab({
 					message,
 				};
 			}
-		}, [
+		},
+		[
 			activeTabId,
 			buildHandoffLedgerController,
 			getCommanderControllerContext,
@@ -5587,10 +5561,11 @@ export function CommanderTab({
 			webview.getRuntimeSnapshot,
 			webview.injectIntoPage,
 			workspaceId,
-		]);
+		],
+	);
 
-	const sendBrowserAiPromptController =
-		useCallback(async (
+	const sendBrowserAiPromptController = useCallback(
+		async (
 			input?: CommanderControllerSendBrowserAiPromptInput,
 		): Promise<CommanderControllerSendBrowserAiPromptResult> => {
 			const blockers: string[] = [];
@@ -5608,9 +5583,11 @@ export function CommanderTab({
 			warnings.push(...writeGuard.warnings);
 			const activeTabIdSnapshot = writeGuard.activeTabId ?? activeTabId;
 			const runtime = webview.getRuntimeSnapshot();
-			const liveUrl = webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
+			const liveUrl =
+				webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
 			const provider = detectProvider(liveUrl);
-			const activeProviderLabel = runtime.providerLabel || getProviderLabel(provider);
+			const activeProviderLabel =
+				runtime.providerLabel || getProviderLabel(provider);
 			const requestedProvider = sendInput.provider || null;
 			const expectedBrowserAiSlotKey = buildCommanderBrowserSlotKey({
 				workspaceId,
@@ -5658,7 +5635,9 @@ export function CommanderTab({
 			const submitWarning = getBrowserAiSubmitWarning(composerReadiness);
 			if (submitWarning) warnings.push(submitWarning);
 			if (runtime.visualStatus === "NEEDS_FIX") {
-				warnings.push(`browser ai visual status needs fix: ${runtime.visualReason}`);
+				warnings.push(
+					`browser ai visual status needs fix: ${runtime.visualReason}`,
+				);
 			}
 			warnings.push(
 				...getPayloadBudgetWarnings({
@@ -5670,13 +5649,19 @@ export function CommanderTab({
 			);
 
 			let latestReplyBeforeSubmit: BrowserAiLatestReplyState | null = null;
-			if (provider && runtime.status === "available" && runtime.bridgeAvailable) {
+			if (
+				provider &&
+				runtime.status === "available" &&
+				runtime.bridgeAvailable
+			) {
 				try {
 					latestReplyBeforeSubmit = normalizeBrowserAiLatestReplyState(
 						await webview.injectIntoPage(buildLatestReplyStateScript(provider)),
 					);
 				} catch {
-					warnings.push("browser ai latest reply baseline unavailable before submit");
+					warnings.push(
+						"browser ai latest reply baseline unavailable before submit",
+					);
 				}
 			}
 			const baseResult = {
@@ -5863,7 +5848,8 @@ export function CommanderTab({
 					message,
 				};
 			}
-		}, [
+		},
+		[
 			activeTabId,
 			getCommanderControllerContext,
 			getExpectedTabWriteGuard,
@@ -5873,10 +5859,11 @@ export function CommanderTab({
 			webview.getRuntimeSnapshot,
 			webview.injectIntoPage,
 			workspaceId,
-		]);
+		],
+	);
 
-	const attachTargetFilesToBrowserAiController =
-		useCallback(async (
+	const attachTargetFilesToBrowserAiController = useCallback(
+		async (
 			input?: CommanderControllerAttachFilesInput,
 		): Promise<CommanderControllerAttachFilesResult> => {
 			const blockers: string[] = [];
@@ -5894,9 +5881,11 @@ export function CommanderTab({
 			warnings.push(...writeGuard.warnings);
 			const activeTabIdSnapshot = writeGuard.activeTabId ?? activeTabId;
 			const runtime = webview.getRuntimeSnapshot();
-			const liveUrl = webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
+			const liveUrl =
+				webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
 			const provider = detectProvider(liveUrl);
-			const activeProviderLabel = runtime.providerLabel || getProviderLabel(provider);
+			const activeProviderLabel =
+				runtime.providerLabel || getProviderLabel(provider);
 			const requestedProvider = normalizedInput.provider || null;
 			const expectedBrowserAiSlotKey = buildCommanderBrowserSlotKey({
 				workspaceId,
@@ -5945,7 +5934,9 @@ export function CommanderTab({
 			const submitWarning = getBrowserAiSubmitWarning(composerReadiness);
 			if (submitWarning) warnings.push(submitWarning);
 			if (runtime.visualStatus === "NEEDS_FIX") {
-				warnings.push(`browser ai visual status needs fix: ${runtime.visualReason}`);
+				warnings.push(
+					`browser ai visual status needs fix: ${runtime.visualReason}`,
+				);
 			}
 
 			const emptyResult = {
@@ -6069,7 +6060,8 @@ export function CommanderTab({
 				);
 			}
 			if (preparedResult.prepared.length === 0) {
-				const message = "No supported Browser AI attachment files were prepared.";
+				const message =
+					"No supported Browser AI attachment files were prepared.";
 				return {
 					ok: false,
 					...emptyResult,
@@ -6386,7 +6378,8 @@ export function CommanderTab({
 					message,
 				};
 			}
-		}, [
+		},
+		[
 			activeTabId,
 			getCommanderControllerContext,
 			getExpectedTabWriteGuard,
@@ -6397,10 +6390,11 @@ export function CommanderTab({
 			webview.getRuntimeSnapshot,
 			webview.injectIntoPage,
 			workspaceId,
-		]);
+		],
+	);
 
-	const getBrowserAiAttachedFilesController =
-		useCallback(async (
+	const getBrowserAiAttachedFilesController = useCallback(
+		async (
 			input?: CommanderControllerAttachedFilesInventoryInput,
 		): Promise<CommanderControllerAttachedFilesInventoryResult> => {
 			const blockers: string[] = [];
@@ -6422,9 +6416,11 @@ export function CommanderTab({
 				),
 			);
 			const runtime = webview.getRuntimeSnapshot();
-			const liveUrl = webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
+			const liveUrl =
+				webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
 			const provider = detectProvider(liveUrl);
-			const activeProviderLabel = runtime.providerLabel || getProviderLabel(provider);
+			const activeProviderLabel =
+				runtime.providerLabel || getProviderLabel(provider);
 			const expectedBrowserAiSlotKey = buildCommanderBrowserSlotKey({
 				workspaceId,
 				activeTabId: activeTabIdSnapshot,
@@ -6445,8 +6441,10 @@ export function CommanderTab({
 
 			if (!activeTabIdSnapshot) blockers.push("active tab not found");
 			if (!provider) blockers.push("browser ai provider not ready");
-			if (runtime.status !== "available") blockers.push("browser ai runtime unavailable");
-			if (!runtime.bridgeAvailable) blockers.push("browser ai bridge unavailable");
+			if (runtime.status !== "available")
+				blockers.push("browser ai runtime unavailable");
+			if (!runtime.bridgeAvailable)
+				blockers.push("browser ai bridge unavailable");
 			if (!browserAiSlotOk) blockers.push("browser ai slot mismatch");
 			if (
 				normalizedInput.provider &&
@@ -6486,9 +6484,7 @@ export function CommanderTab({
 					visualVerificationUsed: false,
 					warnings,
 					blockers,
-					message:
-						blockers[0] ??
-						"Browser AI attached files inventory blocked",
+					message: blockers[0] ?? "Browser AI attached files inventory blocked",
 				};
 			}
 
@@ -6540,7 +6536,8 @@ export function CommanderTab({
 					message,
 				};
 			}
-		}, [
+		},
+		[
 			activeTabId,
 			getCommanderControllerContext,
 			getExpectedTabWriteGuard,
@@ -6549,7 +6546,8 @@ export function CommanderTab({
 			webview.getRuntimeSnapshot,
 			webview.injectIntoPage,
 			workspaceId,
-		]);
+		],
+	);
 
 	const readBrowserAiLatestReplyController =
 		useCallback(async (): Promise<CommanderControllerLatestReplyResult> => {
@@ -6557,7 +6555,8 @@ export function CommanderTab({
 			const warnings: string[] = [];
 			const activeTabIdSnapshot = activeTabId;
 			const runtime = webview.getRuntimeSnapshot();
-			const liveUrl = webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
+			const liveUrl =
+				webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
 			const provider = detectProvider(liveUrl);
 			const expectedBrowserAiSlotKey = buildCommanderBrowserSlotKey({
 				workspaceId,
@@ -6628,7 +6627,11 @@ export function CommanderTab({
 					extractedDoyConfirmationItems: [],
 					blockers,
 					warnings,
-					message: getBrowserAiLatestReplyMessage("BLOCKED", blockers, warnings),
+					message: getBrowserAiLatestReplyMessage(
+						"BLOCKED",
+						blockers,
+						warnings,
+					),
 					readAt: null,
 				};
 			}
@@ -6753,7 +6756,11 @@ export function CommanderTab({
 					extractedDoyConfirmationItems: [],
 					blockers,
 					warnings,
-					message: getBrowserAiLatestReplyMessage("BLOCKED", blockers, warnings),
+					message: getBrowserAiLatestReplyMessage(
+						"BLOCKED",
+						blockers,
+						warnings,
+					),
 					readAt,
 				};
 			}
@@ -6790,7 +6797,11 @@ export function CommanderTab({
 					extractedDoyConfirmationItems: [],
 					blockers,
 					warnings,
-					message: getBrowserAiLatestReplyMessage("WAITING", blockers, warnings),
+					message: getBrowserAiLatestReplyMessage(
+						"WAITING",
+						blockers,
+						warnings,
+					),
 					readAt,
 				};
 			}
@@ -6859,8 +6870,8 @@ export function CommanderTab({
 			workspaceId,
 		]);
 
-	const sendInstructionToBoundWorkerController =
-		useCallback(async (
+	const sendInstructionToBoundWorkerController = useCallback(
+		async (
 			input: CommanderControllerSendInstructionInput,
 		): Promise<CommanderControllerSendInstructionResult> => {
 			const blockers: string[] = [];
@@ -6880,7 +6891,9 @@ export function CommanderTab({
 
 			if (!instruction) blockers.push("instruction is empty");
 			if (requirePreflight && preflight.status === "BLOCKED") {
-				blockers.push(...preflight.blockers.map((blocker) => `preflight: ${blocker}`));
+				blockers.push(
+					...preflight.blockers.map((blocker) => `preflight: ${blocker}`),
+				);
 			}
 			if (!requirePreflight && preflight.workerInputBlockers.length > 0) {
 				blockers.push(...preflight.workerInputBlockers);
@@ -6915,7 +6928,9 @@ export function CommanderTab({
 						`${finding.reason} [source=${finding.source}; matched=${finding.matchedText}]`,
 				),
 			);
-			warnings.push(...preflight.warnings.map((warning) => `preflight: ${warning}`));
+			warnings.push(
+				...preflight.warnings.map((warning) => `preflight: ${warning}`),
+			);
 			warnings.push(
 				...safetyWarnings.map(
 					(finding) =>
@@ -6995,8 +7010,7 @@ export function CommanderTab({
 				const taskRunId =
 					normalizedInput.taskRunId ??
 					generateCommanderControllerRunId("task-run");
-				const instructionId =
-					generateCommanderControllerRunId("instruction");
+				const instructionId = generateCommanderControllerRunId("instruction");
 				const expectedDoneTag =
 					normalizedInput.expectedDoneTag ??
 					extractDoneTagName(terminalInstruction.text);
@@ -7005,8 +7019,7 @@ export function CommanderTab({
 					terminalInstruction.text,
 					{
 						submit: true,
-						inputMode:
-							workerType === "claude" ? "bracketed-paste" : "plain",
+						inputMode: workerType === "claude" ? "bracketed-paste" : "plain",
 						submitDelayMs: workerType === "claude" ? 300 : undefined,
 					},
 				);
@@ -7073,19 +7086,27 @@ export function CommanderTab({
 							: "terminal submit failed",
 				};
 			}
-		}, [activeTabId, getReadinessPreflightController, getCommanderControllerContext]);
+		},
+		[
+			activeTabId,
+			getReadinessPreflightController,
+			getCommanderControllerContext,
+		],
+	);
 
-	const readBoundWorkerLatestResponseController =
-		useCallback(async (
+	const readBoundWorkerLatestResponseController = useCallback(
+		async (
 			input?: CommanderControllerBoundWorkerLatestResponseInput,
 		): Promise<CommanderControllerBoundWorkerLatestResponseResult> => {
-			const responsePayloadInput = normalizeBoundWorkerLatestResponseInput(input);
+			const responsePayloadInput =
+				normalizeBoundWorkerLatestResponseInput(input);
 			const blockers: string[] = [];
 			const warnings: string[] = [];
 			const preflight = await getReadinessPreflightController();
 			const targetPaneId = preflight.workerPaneId;
 			const workerType = preflight.workerType;
-			const workerTypeAllowed = workerType === "codex" || workerType === "claude";
+			const workerTypeAllowed =
+				workerType === "codex" || workerType === "claude";
 
 			if (!preflight.activeTabId) blockers.push("active tab not found");
 			if (preflight.workerBindingStatus === "stale") {
@@ -7100,7 +7121,9 @@ export function CommanderTab({
 				blockers.push(`worker type is not allowed: ${workerType || "unknown"}`);
 			}
 			if (!targetPaneId) blockers.push("bound worker paneId not found");
-			warnings.push(...preflight.warnings.map((warning) => `preflight: ${warning}`));
+			warnings.push(
+				...preflight.warnings.map((warning) => `preflight: ${warning}`),
+			);
 
 			const baseResult = {
 				...getCommanderControllerContext(),
@@ -7114,11 +7137,13 @@ export function CommanderTab({
 				preflightWarnings: preflight.warnings,
 			};
 			const lastInstructionMarker =
-				targetPaneId && lastWorkerInstructionMarkerRef.current?.paneId === targetPaneId
+				targetPaneId &&
+				lastWorkerInstructionMarkerRef.current?.paneId === targetPaneId
 					? lastWorkerInstructionMarkerRef.current
 					: null;
-			const emptyOutputFields =
-				getEmptyBoundWorkerOutputFields(lastInstructionMarker);
+			const emptyOutputFields = getEmptyBoundWorkerOutputFields(
+				lastInstructionMarker,
+			);
 			const emptyTextPayload =
 				createBoundWorkerLatestResponseTextFieldsForReturn(
 					{
@@ -7152,7 +7177,11 @@ export function CommanderTab({
 					summary: "Bound worker output read blocked.",
 					blockers,
 					warnings,
-					message: getBoundWorkerLatestResponseMessage("BLOCKED", blockers, warnings),
+					message: getBoundWorkerLatestResponseMessage(
+						"BLOCKED",
+						blockers,
+						warnings,
+					),
 					readAt: null,
 				};
 			}
@@ -7205,7 +7234,8 @@ export function CommanderTab({
 					receivedInstructionAck: false,
 					receivedInstructionAckByMarker: false,
 					ackMarkerDetected: null,
-					ackDetectionReason: "bound worker terminal output snapshot unavailable",
+					ackDetectionReason:
+						"bound worker terminal output snapshot unavailable",
 					summary: "Bound worker terminal output snapshot is unavailable.",
 					blockers,
 					warnings,
@@ -7221,7 +7251,9 @@ export function CommanderTab({
 				snapshot?.outputText ?? outputLogText,
 			);
 			const screenText = normalizeWorkerOutputText(snapshot?.screenText ?? "");
-			const viewportText = normalizeWorkerOutputText(snapshot?.viewportText ?? "");
+			const viewportText = normalizeWorkerOutputText(
+				snapshot?.viewportText ?? "",
+			);
 			const extractedResponse = extractBoundWorkerResponseForAnalysis({
 				outputText,
 				screenText,
@@ -7314,7 +7346,11 @@ export function CommanderTab({
 					...workerReportFields,
 					blockers,
 					warnings,
-					message: getBoundWorkerLatestResponseMessage("WAITING", blockers, warnings),
+					message: getBoundWorkerLatestResponseMessage(
+						"WAITING",
+						blockers,
+						warnings,
+					),
 					readAt: new Date().toISOString(),
 				};
 			}
@@ -7339,7 +7375,8 @@ export function CommanderTab({
 					gitOperationSignalReason: analysis.gitOperationSignalReason,
 					gitOperationRiskLevel: analysis.gitOperationRiskLevel,
 					receivedInstructionAck: analysis.receivedInstructionAck,
-					receivedInstructionAckByMarker: analysis.receivedInstructionAckByMarker,
+					receivedInstructionAckByMarker:
+						analysis.receivedInstructionAckByMarker,
 					ackMarkerDetected: analysis.ackMarkerDetected,
 					ackDetectionReason: analysis.ackDetectionReason,
 					completionDetected: analysis.completionDetected,
@@ -7348,7 +7385,10 @@ export function CommanderTab({
 					outputLooksComplete: analysis.outputLooksComplete,
 					outputLooksStillRunning: analysis.outputLooksStillRunning,
 					workerReportLooksComplete: analysis.workerReportLooksComplete,
-					summary: getBoundWorkerLatestResponseSummary(analysis, latestResponseText),
+					summary: getBoundWorkerLatestResponseSummary(
+						analysis,
+						latestResponseText,
+					),
 					promptEchoRemoved,
 					usedLastSendMarker,
 					lastInstructionSentAt: lastInstructionMarker?.sentAt ?? null,
@@ -7367,8 +7407,10 @@ export function CommanderTab({
 				};
 			}
 
-			if (analysis.hasError) warnings.push("bound worker output contains error signal");
-			if (analysis.hasToolUse) warnings.push("bound worker output contains tool-use signal");
+			if (analysis.hasError)
+				warnings.push("bound worker output contains error signal");
+			if (analysis.hasToolUse)
+				warnings.push("bound worker output contains tool-use signal");
 			if (analysis.hasFileChangeSignal) {
 				warnings.push(
 					analysis.fileChangeSignalReason
@@ -7412,7 +7454,10 @@ export function CommanderTab({
 				outputLooksComplete: analysis.outputLooksComplete,
 				outputLooksStillRunning: analysis.outputLooksStillRunning,
 				workerReportLooksComplete: analysis.workerReportLooksComplete,
-				summary: getBoundWorkerLatestResponseSummary(analysis, latestResponseText),
+				summary: getBoundWorkerLatestResponseSummary(
+					analysis,
+					latestResponseText,
+				),
 				promptEchoRemoved,
 				usedLastSendMarker,
 				lastInstructionSentAt: lastInstructionMarker?.sentAt ?? null,
@@ -7426,13 +7471,19 @@ export function CommanderTab({
 				...workerReportFields,
 				blockers,
 				warnings,
-				message: getBoundWorkerLatestResponseMessage("READY", blockers, warnings),
+				message: getBoundWorkerLatestResponseMessage(
+					"READY",
+					blockers,
+					warnings,
+				),
 				readAt: new Date().toISOString(),
 			};
-		}, [getReadinessPreflightController, getCommanderControllerContext]);
+		},
+		[getReadinessPreflightController, getCommanderControllerContext],
+	);
 
-	const getBoundWorkerCompletionStatusController =
-		useCallback(async (
+	const getBoundWorkerCompletionStatusController = useCallback(
+		async (
 			input?: CommanderControllerBoundWorkerCompletionStatusInput,
 		): Promise<CommanderControllerBoundWorkerCompletionStatusResult> => {
 			const normalizedInput = normalizeBoundWorkerCompletionStatusInput(input);
@@ -7442,14 +7493,17 @@ export function CommanderTab({
 			const activeTabIdSnapshot = preflight.activeTabId;
 			const targetPaneId = preflight.workerPaneId;
 			const workerType = preflight.workerType;
-			const workerTypeAllowed = workerType === "codex" || workerType === "claude";
+			const workerTypeAllowed =
+				workerType === "codex" || workerType === "claude";
 			const workerIdentityOk = preflight.workerIdentityOk;
 			const lastInstructionMarker =
-				targetPaneId && lastWorkerInstructionMarkerRef.current?.paneId === targetPaneId
+				targetPaneId &&
+				lastWorkerInstructionMarkerRef.current?.paneId === targetPaneId
 					? lastWorkerInstructionMarkerRef.current
 					: null;
-			const currentRun =
-				targetPaneId ? workerRunStateRef.current.get(targetPaneId) ?? null : null;
+			const currentRun = targetPaneId
+				? (workerRunStateRef.current.get(targetPaneId) ?? null)
+				: null;
 
 			if (!activeTabIdSnapshot) blockers.push("active tab not found");
 			if (preflight.workerBindingStatus === "stale") {
@@ -7480,7 +7534,9 @@ export function CommanderTab({
 					`expected tab mismatch: expected ${normalizedInput.expectedTabId}, active tab is ${activeTabIdSnapshot}`,
 				);
 			}
-			warnings.push(...preflight.warnings.map((warning) => `preflight: ${warning}`));
+			warnings.push(
+				...preflight.warnings.map((warning) => `preflight: ${warning}`),
+			);
 
 			const blockedRecoveryAdvice = getWorkerRecoveryAdvice({
 				status: "BLOCKED",
@@ -7561,7 +7617,9 @@ export function CommanderTab({
 				snapshot?.outputText ?? outputLogText,
 			);
 			const screenText = normalizeWorkerOutputText(snapshot?.screenText ?? "");
-			const viewportText = normalizeWorkerOutputText(snapshot?.viewportText ?? "");
+			const viewportText = normalizeWorkerOutputText(
+				snapshot?.viewportText ?? "",
+			);
 			const combinedOutputText = normalizeWorkerOutputText(
 				[viewportText, screenText, outputText, outputLogText]
 					.filter((value) => value.trim())
@@ -7632,7 +7690,7 @@ export function CommanderTab({
 				: currentRunReportsFromRawOutput;
 			const currentRunReportFromResponseEchoPair =
 				matchingCurrentRunReportsFromRawOutput.length >= 2
-					? matchingCurrentRunReportsFromRawOutput.at(-1) ?? null
+					? (matchingCurrentRunReportsFromRawOutput.at(-1) ?? null)
 					: null;
 			const currentScopeReport = currentRun
 				? extractBoundWorkerDoneTagReportForInstructionScope(
@@ -7661,8 +7719,10 @@ export function CommanderTab({
 				(!expectedDoneTag || visibleReport?.tag !== expectedDoneTag);
 			const currentRunDoneTagDetected = Boolean(currentRunReport);
 			const currentRunEndReportDetected =
-				Boolean(currentRunReport) && /\bEND_REPORT\b/.test(currentRunReport?.text ?? "");
-			const idleMessageDetected = detectBoundWorkerIdleMessage(currentScopeText);
+				Boolean(currentRunReport) &&
+				/\bEND_REPORT\b/.test(currentRunReport?.text ?? "");
+			const idleMessageDetected =
+				detectBoundWorkerIdleMessage(currentScopeText);
 			const workerResponse = await readBoundWorkerLatestResponseController({
 				responseMode: "summary",
 			});
@@ -7679,7 +7739,8 @@ export function CommanderTab({
 				currentRunStarted &&
 				!promptEchoOnly &&
 				workerResponse.completionDetected &&
-				(workerResponse.usedLastSendMarker || workerResponseMatchesExpectedDoneTag);
+				(workerResponse.usedLastSendMarker ||
+					workerResponseMatchesExpectedDoneTag);
 			const doneTagDetected =
 				currentRunDoneTagDetected ||
 				workerResponseMatchesExpectedDoneTag ||
@@ -7722,19 +7783,18 @@ export function CommanderTab({
 					(workerResponse.completionDetected ||
 						workerResponse.workerReportExtracted ||
 						(doneTagDetected && endReportDetected)));
-			const completionSignalReason =
-				currentReportMatchesExpected
-					? expectedDoneTag
-						? `current run DONE_TAG/END_REPORT worker report detected: ${expectedDoneTag}`
-						: "current run DONE_TAG/END_REPORT worker report detected"
-					: !currentRunStarted
+			const completionSignalReason = currentReportMatchesExpected
+				? expectedDoneTag
+					? `current run DONE_TAG/END_REPORT worker report detected: ${expectedDoneTag}`
+					: "current run DONE_TAG/END_REPORT worker report detected"
+				: !currentRunStarted
+					? (workerResponse.completionSignalReason ??
+						(workerResponse.workerReportExtracted
+							? "structured worker report extracted"
+							: null))
+					: workerResponseCompletionForCurrentRun
 						? (workerResponse.completionSignalReason ??
-							(workerResponse.workerReportExtracted
-								? "structured worker report extracted"
-								: null))
-						: workerResponseCompletionForCurrentRun
-							? (workerResponse.completionSignalReason ??
-								"current run worker response completion detected")
+							"current run worker response completion detected")
 						: null;
 			const promptReturned =
 				preflight.workerInputReady &&
@@ -7751,7 +7811,8 @@ export function CommanderTab({
 			let status: CommanderControllerBoundWorkerCompletionStatus = "UNKNOWN";
 			let staleReason: string | null = null;
 			if (expectedRunMismatch) {
-				staleReason = "expected taskRunId does not match the current worker run";
+				staleReason =
+					"expected taskRunId does not match the current worker run";
 			} else if (expectedSentAtMismatch) {
 				staleReason = "expected sentAt does not match the current worker run";
 			} else if (expectedDoneTagMismatch) {
@@ -7800,10 +7861,14 @@ export function CommanderTab({
 				warnings.push("worker latest response is still waiting");
 			}
 			if (workerResponse.staleReportIgnored) {
-				warnings.push("previous worker DONE_TAG report ignored for current run");
+				warnings.push(
+					"previous worker DONE_TAG report ignored for current run",
+				);
 			}
 			warnings.push(
-				...workerResponse.warnings.map((warning) => `worker response: ${warning}`),
+				...workerResponse.warnings.map(
+					(warning) => `worker response: ${warning}`,
+				),
 			);
 			if (currentRun && currentRun.phase !== status) {
 				currentRun.phase = status;
@@ -7884,11 +7949,13 @@ export function CommanderTab({
 				blockers,
 				message: `bound worker completion status: ${status}`,
 			};
-		}, [
+		},
+		[
 			getReadinessPreflightController,
 			getCommanderControllerContext,
 			readBoundWorkerLatestResponseController,
-		]);
+		],
+	);
 
 	const collectWorkerReportedArtifactData = useCallback(
 		async (input?: CommanderControllerWorkerReportedArtifactsInput) => {
@@ -7907,7 +7974,8 @@ export function CommanderTab({
 			const reportBlock =
 				extractBoundWorkerDoneTagReport(rawWorkerReportText)?.text ||
 				rawWorkerReportText;
-			const extraction = extractWorkerReportedArtifactPathCandidates(reportBlock);
+			const extraction =
+				extractWorkerReportedArtifactPathCandidates(reportBlock);
 			const artifactCandidates = extraction.candidates;
 			const skippedArtifacts: CommanderControllerSkippedFileSummary[] =
 				extraction.skipped.map((candidate) => ({
@@ -7941,7 +8009,7 @@ export function CommanderTab({
 						preview:
 							artifact.attachable === true
 								? `${artifact.name} (${artifact.mimeType ?? "unknown"}, ${artifact.byteLength ?? 0} bytes)`
-								: artifact.reason ?? "not attachable",
+								: (artifact.reason ?? "not attachable"),
 					});
 					if (!artifact.attachable && artifact.reason) {
 						skippedArtifacts.push({
@@ -7979,8 +8047,8 @@ export function CommanderTab({
 		[readBoundWorkerLatestResponseController, trpcUtils, workspaceId],
 	);
 
-	const collectReviewArtifactsController =
-		useCallback(async (
+	const collectReviewArtifactsController = useCallback(
+		async (
 			input?: CommanderControllerReviewArtifactsInput,
 		): Promise<CommanderControllerReviewArtifactsResult> => {
 			const normalizedInput = normalizeReviewArtifactsInput(input);
@@ -8040,9 +8108,9 @@ export function CommanderTab({
 					reviewReady: false,
 					warnings,
 					blockers,
-					message:
-						blockers[0] ?? "Review artifact collection blocked",
-					nextRequiredAction: "Resolve tab guard blocker before collecting artifacts.",
+					message: blockers[0] ?? "Review artifact collection blocked",
+					nextRequiredAction:
+						"Resolve tab guard blocker before collecting artifacts.",
 				};
 			}
 
@@ -8058,7 +8126,7 @@ export function CommanderTab({
 					const preview =
 						artifact.attachable === true
 							? `${artifact.name} (${artifact.mimeType ?? "unknown"}, ${artifact.byteLength ?? 0} bytes)`
-							: artifact.reason ?? "not attachable";
+							: (artifact.reason ?? "not attachable");
 					artifacts.push({
 						id: `${artifact.kind}:${artifact.path}`,
 						kind: artifact.kind,
@@ -8072,7 +8140,9 @@ export function CommanderTab({
 						preview,
 					});
 					if (!artifact.attachable && artifact.reason) {
-						warnings.push(`artifact skipped ${artifact.path}: ${artifact.reason}`);
+						warnings.push(
+							`artifact skipped ${artifact.path}: ${artifact.reason}`,
+						);
 					}
 				}
 			} catch (error) {
@@ -8091,7 +8161,9 @@ export function CommanderTab({
 					requireActiveTabMatch: tabGuard.requireActiveTabMatch,
 					provider: normalizedInput.provider || null,
 					artifactCount: artifacts.length,
-					attachableArtifactCount: artifacts.filter((artifact) => artifact.attachable).length,
+					attachableArtifactCount: artifacts.filter(
+						(artifact) => artifact.attachable,
+					).length,
 					targetPathCount: targetPaths.length,
 					targetPaths,
 					artifacts,
@@ -8105,27 +8177,30 @@ export function CommanderTab({
 					warnings,
 					blockers: [...blockers, message],
 					message,
-					nextRequiredAction: "Fix artifact path collection before Browser AI review.",
+					nextRequiredAction:
+						"Fix artifact path collection before Browser AI review.",
 				};
 			}
 
 			if (normalizedInput.includeWorkerReport) {
 				try {
-					const workerCompletion = await getBoundWorkerCompletionStatusController({
-						expectedTabId: normalizedInput.expectedTabId || undefined,
-						expectedTaskRunId:
-							normalizedInput.expectedTaskRunId || undefined,
-						expectedDoneTag: normalizedInput.expectedDoneTag || undefined,
-					});
+					const workerCompletion =
+						await getBoundWorkerCompletionStatusController({
+							expectedTabId: normalizedInput.expectedTabId || undefined,
+							expectedTaskRunId: normalizedInput.expectedTaskRunId || undefined,
+							expectedDoneTag: normalizedInput.expectedDoneTag || undefined,
+						});
 					workerStatus = workerCompletion.status;
 					workerReportExtracted = workerCompletion.workerReportExtracted;
 					workerReportLength = workerCompletion.workerReportLength;
 					if (workerCompletion.workerReportExtracted) {
-						const workerResponse = await readBoundWorkerLatestResponseController({
-							responseMode: "summary",
-						});
+						const workerResponse =
+							await readBoundWorkerLatestResponseController({
+								responseMode: "summary",
+							});
 						workerReportPreview = normalizeReviewArtifactPreview(
-							workerResponse.latestResponseText || workerResponse.workerReportPreview,
+							workerResponse.latestResponseText ||
+								workerResponse.workerReportPreview,
 							1800,
 						);
 						artifacts.push(
@@ -8147,10 +8222,8 @@ export function CommanderTab({
 									workerResponse.analyzedResponseText ||
 									workerResponse.latestResponseText,
 							});
-						artifactCandidates =
-							workerReportedArtifactData.artifactCandidates;
-						skippedArtifacts =
-							workerReportedArtifactData.skippedArtifacts;
+						artifactCandidates = workerReportedArtifactData.artifactCandidates;
+						skippedArtifacts = workerReportedArtifactData.skippedArtifacts;
 						artifacts.push(...workerReportedArtifactData.artifacts);
 						warnings.push(...workerReportedArtifactData.warnings);
 					} else if (workerCompletion.status !== "BLOCKED") {
@@ -8182,9 +8255,7 @@ export function CommanderTab({
 							: {
 									mode: "manual-review",
 									purpose:
-										"Browser AI artifact review after Worker completion",
-									allowWorkerInstruction: true,
-									runToCompletion: true,
+										"Manual Browser AI artifact review after Worker completion",
 								},
 				});
 			const status: CommanderControllerReviewArtifactsStatus =
@@ -8229,7 +8300,8 @@ export function CommanderTab({
 					? "Call sendReviewArtifactsToBrowserAI to attach artifacts and request Browser AI review."
 					: "Select or generate attachable review artifacts before Browser AI review.",
 			};
-		}, [
+		},
+		[
 			activeTabId,
 			collectWorkerReportedArtifactData,
 			ensureCommanderSessionForActiveTab,
@@ -8239,10 +8311,11 @@ export function CommanderTab({
 			readBoundWorkerLatestResponseController,
 			trpcUtils,
 			workspaceId,
-		]);
+		],
+	);
 
-	const sendReviewArtifactsToBrowserAiController =
-		useCallback(async (
+	const sendReviewArtifactsToBrowserAiController = useCallback(
+		async (
 			input?: CommanderControllerReviewArtifactsInput,
 		): Promise<CommanderControllerReviewArtifactsResult> => {
 			const normalizedInput = normalizeReviewArtifactsInput(input);
@@ -8265,9 +8338,7 @@ export function CommanderTab({
 							: {
 									mode: "manual-review",
 									purpose:
-										"Browser AI reviews attached Worker artifacts and returns STOP or next Worker instruction",
-									allowWorkerInstruction: true,
-									runToCompletion: true,
+										"Manual Browser AI review of attached Worker artifacts",
 								},
 				});
 			if (targetPaths.length === 0) {
@@ -8279,7 +8350,8 @@ export function CommanderTab({
 						...collected.blockers,
 						"no attachable review artifacts found",
 					],
-					message: "Review artifact Browser AI send blocked: no attachable files.",
+					message:
+						"Review artifact Browser AI send blocked: no attachable files.",
 					nextRequiredAction:
 						"Select files or generate review screenshots before sending review artifacts.",
 				};
@@ -8293,14 +8365,13 @@ export function CommanderTab({
 				reviewPrompt,
 				sendPromptAfterAttach: true,
 				reviewContext:
-					normalizedInput.reviewContext.mode || normalizedInput.reviewContext.purpose
+					normalizedInput.reviewContext.mode ||
+					normalizedInput.reviewContext.purpose
 						? normalizedInput.reviewContext
 						: {
 								mode: "manual-review",
 								purpose:
-									"Browser AI reviews attached Worker artifacts and returns STOP or next Worker instruction",
-								allowWorkerInstruction: true,
-								runToCompletion: true,
+									"Manual Browser AI review of attached Worker artifacts",
 							},
 				dryRun: normalizedInput.dryRun,
 			});
@@ -8371,14 +8442,16 @@ export function CommanderTab({
 				nextRequiredAction: attachResult.nextRequiredAction,
 				attachResult,
 			};
-		}, [
+		},
+		[
 			attachTargetFilesToBrowserAiController,
 			collectReviewArtifactsController,
 			readBrowserAiLatestReplyController,
-		]);
+		],
+	);
 
-	const collectWorkerReportedArtifactsController =
-		useCallback(async (
+	const collectWorkerReportedArtifactsController = useCallback(
+		async (
 			input?: CommanderControllerWorkerReportedArtifactsInput,
 		): Promise<CommanderControllerWorkerReportedArtifactsResult> => {
 			const normalizedInput = normalizeReviewArtifactsInput(input);
@@ -8424,9 +8497,7 @@ export function CommanderTab({
 					reviewReady: false,
 					warnings,
 					blockers,
-					message:
-						blockers[0] ??
-						"Worker-reported artifact collection blocked",
+					message: blockers[0] ?? "Worker-reported artifact collection blocked",
 					nextRequiredAction:
 						"Resolve tab guard blocker before collecting Worker-reported artifacts.",
 				};
@@ -8434,7 +8505,9 @@ export function CommanderTab({
 
 			const data = await collectWorkerReportedArtifactData(input);
 			warnings.push(...data.warnings);
-			const targetPaths = data.artifactCandidates.map((candidate) => candidate.path);
+			const targetPaths = data.artifactCandidates.map(
+				(candidate) => candidate.path,
+			);
 			const reviewPrompt =
 				normalizedInput.reviewPrompt ||
 				buildReviewArtifactsBrowserAiReviewPrompt({
@@ -8447,9 +8520,7 @@ export function CommanderTab({
 							: {
 									mode: "manual-review",
 									purpose:
-										"Browser AI reviews Worker-reported artifact files and returns STOP or next Worker instruction",
-									allowWorkerInstruction: true,
-									runToCompletion: true,
+										"Manual Browser AI review of Worker-reported artifact files",
 								},
 				});
 			const reviewReady = data.attachableArtifacts.length > 0;
@@ -8477,8 +8548,7 @@ export function CommanderTab({
 				attachableArtifacts: data.attachableArtifacts,
 				skippedArtifacts: data.skippedArtifacts,
 				workerReportedArtifactCount: data.artifactCandidates.length,
-				workerReportedAttachableArtifactCount:
-					data.attachableArtifacts.length,
+				workerReportedAttachableArtifactCount: data.attachableArtifacts.length,
 				workerReportExtracted: Boolean(data.reportBlock.trim()),
 				workerReportLength: data.reportBlock.length,
 				workerReportPreview: data.workerReportPreview,
@@ -8495,15 +8565,17 @@ export function CommanderTab({
 					? "Call sendWorkerReportedArtifactsToBrowserAI to attach files and request Browser AI review."
 					: "Add supported artifact paths to the Worker report or use selected review artifacts.",
 			};
-		}, [
+		},
+		[
 			activeTabId,
 			collectWorkerReportedArtifactData,
 			getCommanderControllerContext,
 			getExpectedTabWriteGuard,
-		]);
+		],
+	);
 
-	const sendWorkerReportedArtifactsToBrowserAiController =
-		useCallback(async (
+	const sendWorkerReportedArtifactsToBrowserAiController = useCallback(
+		async (
 			input?: CommanderControllerWorkerReportedArtifactsInput,
 		): Promise<CommanderControllerWorkerReportedArtifactsResult> => {
 			const normalizedInput = normalizeReviewArtifactsInput(input);
@@ -8541,9 +8613,7 @@ export function CommanderTab({
 							: {
 									mode: "manual-review",
 									purpose:
-										"Browser AI reviews Worker-reported artifacts and returns STOP or next Worker instruction",
-									allowWorkerInstruction: true,
-									runToCompletion: true,
+										"Manual Browser AI review of Worker-reported artifacts",
 								},
 				});
 			const attachResult = await attachTargetFilesToBrowserAiController({
@@ -8555,14 +8625,13 @@ export function CommanderTab({
 				reviewPrompt,
 				sendPromptAfterAttach: true,
 				reviewContext:
-					normalizedInput.reviewContext.mode || normalizedInput.reviewContext.purpose
+					normalizedInput.reviewContext.mode ||
+					normalizedInput.reviewContext.purpose
 						? normalizedInput.reviewContext
 						: {
 								mode: "manual-review",
 								purpose:
-									"Browser AI reviews Worker-reported artifacts and returns STOP or next Worker instruction",
-								allowWorkerInstruction: true,
-								runToCompletion: true,
+									"Manual Browser AI review of Worker-reported artifacts",
 							},
 				dryRun: normalizedInput.dryRun,
 			});
@@ -8591,20 +8660,23 @@ export function CommanderTab({
 				nextRequiredAction: attachResult.nextRequiredAction,
 				attachResult,
 			};
-		}, [
+		},
+		[
 			attachTargetFilesToBrowserAiController,
 			collectWorkerReportedArtifactsController,
-		]);
+		],
+	);
 
-	const sendBoundWorkerResponseToBrowserAiController =
-		useCallback(async (
+	const sendBoundWorkerResponseToBrowserAiController = useCallback(
+		async (
 			_input?: unknown,
 		): Promise<CommanderControllerSendWorkerResponseResult> => {
 			const blockers: string[] = [];
 			const warnings: string[] = [];
 			const activeTabIdSnapshot = activeTabId;
 			const runtime = webview.getRuntimeSnapshot();
-			const liveUrl = webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
+			const liveUrl =
+				webview.getLiveUrl() || webview.currentUrl || runtime.currentUrl;
 			const provider = detectProvider(liveUrl);
 			const expectedBrowserAiSlotKey = buildCommanderBrowserSlotKey({
 				workspaceId,
@@ -8650,7 +8722,9 @@ export function CommanderTab({
 			}
 			if (!browserAiSlotOk) blockers.push("browser ai slot mismatch");
 			if (workerResponse.status !== "READY") {
-				blockers.push(`bound worker response not ready: ${workerResponse.status}`);
+				blockers.push(
+					`bound worker response not ready: ${workerResponse.status}`,
+				);
 			}
 			if (!workerResponse.workerIdentityOk) {
 				blockers.push("bound worker identity could not be verified");
@@ -8669,10 +8743,14 @@ export function CommanderTab({
 			const submitWarning = getBrowserAiSubmitWarning(composerReadiness);
 			if (submitWarning) warnings.push(submitWarning);
 			if (runtime.visualStatus === "NEEDS_FIX") {
-				warnings.push(`browser ai visual status needs fix: ${runtime.visualReason}`);
+				warnings.push(
+					`browser ai visual status needs fix: ${runtime.visualReason}`,
+				);
 			}
 			warnings.push(
-				...workerResponse.warnings.map((warning) => `worker response: ${warning}`),
+				...workerResponse.warnings.map(
+					(warning) => `worker response: ${warning}`,
+				),
 			);
 			warnings.push(...workerReportValidation.workerReportValidationWarnings);
 
@@ -8704,13 +8782,19 @@ export function CommanderTab({
 				}),
 			);
 			let latestReplyBeforeSubmit: BrowserAiLatestReplyState | null = null;
-			if (provider && runtime.status === "available" && runtime.bridgeAvailable) {
+			if (
+				provider &&
+				runtime.status === "available" &&
+				runtime.bridgeAvailable
+			) {
 				try {
 					latestReplyBeforeSubmit = normalizeBrowserAiLatestReplyState(
 						await webview.injectIntoPage(buildLatestReplyStateScript(provider)),
 					);
 				} catch {
-					warnings.push("browser ai latest reply baseline unavailable before submit");
+					warnings.push(
+						"browser ai latest reply baseline unavailable before submit",
+					);
 				}
 			}
 			const baseResult = {
@@ -8908,7 +8992,8 @@ export function CommanderTab({
 					message,
 				};
 			}
-		}, [
+		},
+		[
 			activeTabId,
 			getCommanderControllerContext,
 			recordBrowserAiSubmissionControllerState,
@@ -8918,7 +9003,8 @@ export function CommanderTab({
 			webview.getRuntimeSnapshot,
 			webview.injectIntoPage,
 			workspaceId,
-		]);
+		],
+	);
 
 	const getControllerChainSummaryController = useCallback(
 		async (
@@ -8935,7 +9021,8 @@ export function CommanderTab({
 			const smokeType = normalizeControllerTextInput(input?.smokeType);
 			const browserAiReviewExpected =
 				normalizeControllerBooleanInput(input?.expectBrowserAiReview) ??
-				(chainMode === "browser-worker-review" || chainMode === "browser-ai-only");
+				(chainMode === "browser-worker-review" ||
+					chainMode === "browser-ai-only");
 			const workerResponseExpected =
 				normalizeControllerBooleanInput(input?.expectWorkerResponse) ??
 				(chainMode === "browser-worker-review" ||
@@ -8970,7 +9057,9 @@ export function CommanderTab({
 				blockers.push(...preflight.blockers);
 			}
 			if (browserAiReviewExpected && latestReply.status !== "READY") {
-				blockers.push(`browser ai review reply not ready: ${latestReply.status}`);
+				blockers.push(
+					`browser ai review reply not ready: ${latestReply.status}`,
+				);
 			}
 			if (workerResponseExpected) {
 				if (resolvedWorkerResponse?.status !== "READY") {
@@ -8982,8 +9071,9 @@ export function CommanderTab({
 					blockers.push("bound worker identity could not be verified");
 				}
 			}
-			const requestedWorkerResponseReturned =
-				normalizeControllerBooleanInput(input?.workerResponseReturnedToBrowserAi);
+			const requestedWorkerResponseReturned = normalizeControllerBooleanInput(
+				input?.workerResponseReturnedToBrowserAi,
+			);
 			const lastSubmissionUiReflected = lastSubmission?.uiReflected ?? null;
 			const lastSubmissionAssistantReplyObserved =
 				lastSubmission?.assistantReplyObserved ?? null;
@@ -8992,8 +9082,8 @@ export function CommanderTab({
 				(!workerResponseExpected
 					? false
 					: lastSubmission?.type === "worker-response" &&
-							lastSubmission.injectionResult === "submitted" &&
-							lastSubmission.uiReflected === true);
+						lastSubmission.injectionResult === "submitted" &&
+						lastSubmission.uiReflected === true);
 			if (
 				browserAiReviewExpected &&
 				workerResponseExpected &&
@@ -9023,7 +9113,10 @@ export function CommanderTab({
 					`Browser AI review NOT COMPLETED: worker response was UI_REFLECTED but assistant reply is ${latestReply.status}`,
 				);
 			}
-			if (browserAiReviewExpected && latestReply.extractedCodexInstruction.trim()) {
+			if (
+				browserAiReviewExpected &&
+				latestReply.extractedCodexInstruction.trim()
+			) {
 				blockers.push(
 					...findInstructionSafetyBlockers(
 						latestReply.extractedCodexInstruction,
@@ -9032,7 +9125,9 @@ export function CommanderTab({
 				);
 			}
 
-			const requestedStatus = normalizeControllerChainStatus(input?.chainStatus);
+			const requestedStatus = normalizeControllerChainStatus(
+				input?.chainStatus,
+			);
 			const latestWorkerResponseStatus: CommanderControllerBoundWorkerOutputStatus =
 				workerResponseExpected
 					? (resolvedWorkerResponse?.status ?? "FAILED")
@@ -9114,8 +9209,7 @@ export function CommanderTab({
 				submissionStatus: lastSubmission?.status ?? null,
 				uiReflected: lastSubmissionUiReflected,
 				assistantReplyObserved: lastSubmissionAssistantReplyObserved,
-				visualVerificationUsed:
-					lastSubmission?.visualVerificationUsed === true,
+				visualVerificationUsed: lastSubmission?.visualVerificationUsed === true,
 				submissionNextRequiredAction:
 					lastSubmission?.nextRequiredAction ?? null,
 				hasStopSignal: effectiveStopSignal,
@@ -9139,7 +9233,11 @@ export function CommanderTab({
 				notes,
 				blockers,
 				warnings,
-				message: getControllerChainSummaryMessage(status, chainStatus, blockers),
+				message: getControllerChainSummaryMessage(
+					status,
+					chainStatus,
+					blockers,
+				),
 				preflightStatus: preflight.status,
 				preflightBlockers: preflight.blockers,
 				preflightWarnings: preflight.warnings,
@@ -9157,21 +9255,19 @@ export function CommanderTab({
 				relayMode:
 					!browserAiOnly && "relayMode" in preflight
 						? preflight.relayMode
-						: autoRelayMode,
+						: "manual",
 				relayStatus:
 					!browserAiOnly && "relayStatus" in preflight
 						? preflight.relayStatus
-						: transfer.autoRelayStatus,
+						: "idle",
 			};
 		},
 		[
-			autoRelayMode,
 			getReadinessPreflightController,
 			getBrowserAiPreflightController,
 			getCommanderControllerContext,
 			readBrowserAiLatestReplyController,
 			readBoundWorkerLatestResponseController,
-			transfer.autoRelayStatus,
 		],
 	);
 
@@ -9200,8 +9296,10 @@ export function CommanderTab({
 					expectedTitle: writeGuard.expectedTitle,
 					requireActiveTabMatch: writeGuard.requireActiveTabMatch,
 					chainStatus: "BLOCKED",
-					finalDecision: "Controller chain outcome record blocked by expected tab guard.",
-					nextAction: writeGuard.blockers[0] ?? "Resolve expected tab guard blocker",
+					finalDecision:
+						"Controller chain outcome record blocked by expected tab guard.",
+					nextAction:
+						writeGuard.blockers[0] ?? "Resolve expected tab guard blocker",
 					updatedFields: [],
 					handoffLedgerLength: 0,
 					blockers: [...writeGuard.blockers],
@@ -9228,7 +9326,8 @@ export function CommanderTab({
 					handoffLedgerLength: 0,
 					blockers: ["active tab not found"],
 					warnings: [...writeGuard.warnings, ...summary.warnings],
-					message: "Controller chain outcome record blocked: active tab not found",
+					message:
+						"Controller chain outcome record blocked: active tab not found",
 					recordedAt,
 					summary,
 				};
@@ -9326,22 +9425,8 @@ export function CommanderTab({
 			const missingArtifactCommands = requiredArtifactCommands.filter(
 				(commandName) => !implementedCommands.has(commandName),
 			);
-			const safetyPolicySamples = [
-				"git pushしないでください",
-				"deployはしない",
-				"token/cookieには触らない",
-				"Worker完了報告: pushなし",
-			];
-			const negatedPolicyTextAllowed = true;
-			const dangerousSample = "```bash\ngit push origin main\n```";
-			const actualDangerousCommandAdvisory = true;
-			const actualDangerousCommandBlocked = false;
 			const artifactReviewStatus: CommanderControllerPreflightStatus =
 				missingArtifactCommands.length > 0 ? "BLOCKED" : "READY";
-			const safetyGuardStatus: CommanderControllerPreflightStatus =
-				negatedPolicyTextAllowed && actualDangerousCommandAdvisory
-					? "READY"
-					: "BLOCKED";
 			const payloadBudgetStatus: CommanderControllerPreflightStatus =
 				handoff.payloadBudgetExceeded ? "READY_WITH_NOTES" : "READY";
 			const tabBlockers = [...tabGuard.blockers];
@@ -9359,10 +9444,6 @@ export function CommanderTab({
 							`artifact review commands missing: ${missingArtifactCommands.join(", ")}`,
 						]
 					: [];
-			const safetyWarnings =
-				safetyGuardStatus === "READY"
-					? []
-					: ["dangerous guard smoke did not match expected policy behavior"];
 			const payloadWarnings = [
 				...(handoff.warnings ?? []),
 				...(handoff.payloadBudgetExceeded
@@ -9446,24 +9527,6 @@ export function CommanderTab({
 							: "Implement missing artifact review commands before using artifact review.",
 				}),
 				makeLiveReadinessCheck({
-					name: "Safety guard smoke",
-					status: safetyGuardStatus,
-					ok: safetyGuardStatus === "READY",
-					message:
-						safetyGuardStatus === "READY"
-							? "Safety guard allows negated policy text and records actual git push command samples as advisory findings."
-							: "Safety guard sample check failed.",
-					blockers:
-						safetyGuardStatus === "READY"
-							? []
-							: ["dangerous guard policy sample mismatch"],
-					warnings: safetyWarnings,
-					nextRecommendedAction:
-						safetyGuardStatus === "READY"
-							? "Continue using source-aware safety checks."
-							: "Run commander-safety-advisories tests before manual Worker sends.",
-				}),
-				makeLiveReadinessCheck({
 					name: "Payload budget",
 					status: payloadBudgetStatus,
 					ok: true,
@@ -9492,9 +9555,6 @@ export function CommanderTab({
 				...missingArtifactCommands.map(
 					(commandName) => `Artifact Review: missing ${commandName}`,
 				),
-				...(safetyGuardStatus === "READY"
-					? []
-					: ["Safety guard: policy sample mismatch"]),
 			]);
 			const warnings = uniqueControllerMessages([
 				...tabWarnings,
@@ -9502,7 +9562,6 @@ export function CommanderTab({
 				...workerWarnings.map((warning) => `Worker: ${warning}`),
 				...readiness.warnings.map((warning) => `Worker preflight: ${warning}`),
 				...artifactWarnings,
-				...safetyWarnings,
 				...payloadWarnings.map((warning) => `Payload: ${warning}`),
 			]);
 			const readinessStatus = getLiveReadinessStatus(blockers, warnings);
@@ -9561,29 +9620,16 @@ export function CommanderTab({
 					missingCommands: missingArtifactCommands,
 					reviewReady:
 						missingArtifactCommands.length === 0 &&
-						readiness.relayMode === "off",
+						readiness.relayMode === "manual",
 					nextRecommendedAction:
 						missingArtifactCommands.length === 0
 							? "Use real-file attachment review when Worker reports artifacts."
 							: "Add missing artifact commands before using Artifact Review.",
 				},
-				safetyGuardStatus: {
-					status: safetyGuardStatus,
-					negatedPolicyTextAllowed,
-					actualDangerousCommandAdvisory,
-					actualDangerousCommandBlocked,
-					samplesChecked: safetyPolicySamples,
-					dangerousSample,
-					nextRecommendedAction:
-						safetyGuardStatus === "READY"
-							? "Safety guard sample is advisory-only and does not block manual coordination."
-							: "Run safety tests and inspect dangerous guard before manual Worker sends.",
-				},
 				payloadBudgetStatus: {
 					status: payloadBudgetStatus,
 					handoffLedgerLength: handoff.ledgerLength ?? 0,
-					payloadBudgetWarningChars:
-						handoff.payloadBudgetWarningChars ?? 0,
+					payloadBudgetWarningChars: handoff.payloadBudgetWarningChars ?? 0,
 					payloadBudgetSevereChars: handoff.payloadBudgetSevereChars ?? 0,
 					payloadBudgetExceeded: handoff.payloadBudgetExceeded === true,
 					responseModeSummaryUsed: true,
@@ -9622,41 +9668,6 @@ export function CommanderTab({
 		],
 	);
 
-	artifactReviewControllerRef.current = {
-		collectWorkerReportedArtifacts: collectWorkerReportedArtifactsController,
-		sendWorkerReportedArtifactsToBrowserAI:
-			sendWorkerReportedArtifactsToBrowserAiController,
-		recordControllerChainOutcome: recordControllerChainOutcomeController,
-	};
-
-	const commanderBridgeOwnerKey = useMemo(
-		() => `${workspaceId}:${activeTabId ?? "no-active-tab"}`,
-		[activeTabId, workspaceId],
-	);
-
-	useEffect(() => {
-		console.log(
-			"[S3.11] registerCommanderBridge with onAutoCaptureTrigger =",
-			typeof handleAutoCaptureTrigger,
-		);
-		registerCommanderBridge({
-			ownerKey: commanderBridgeOwnerKey,
-			workspaceId,
-			activeTabId,
-			injectIntoPage: webview.injectIntoPage,
-			getLiveUrl: webview.getLiveUrl,
-			onAutoCaptureTrigger: handleAutoCaptureTrigger,
-		});
-		return () => unregisterCommanderBridge(commanderBridgeOwnerKey);
-	}, [
-		activeTabId,
-		commanderBridgeOwnerKey,
-		handleAutoCaptureTrigger,
-		webview.getLiveUrl,
-		webview.injectIntoPage,
-		workspaceId,
-	]);
-
 	useEffect(() => {
 		if (!workspaceId.trim()) return;
 		return registerDoyDeckCommanderActionBridge(workspaceId, {
@@ -9675,8 +9686,6 @@ export function CommanderTab({
 					reviewContext: {
 						mode: "manual",
 						purpose: `Explorer selected file review: ${pathInfo.displayName}`,
-						allowWorkerInstruction: true,
-						runToCompletion: true,
 					},
 				});
 				if (result.ok) {
@@ -9748,7 +9757,8 @@ export function CommanderTab({
 			getBrowserAiAttachedFiles: getBrowserAiAttachedFilesController,
 			collectReviewArtifacts: collectReviewArtifactsController,
 			sendReviewArtifactsToBrowserAI: sendReviewArtifactsToBrowserAiController,
-			extractArtifactsFromWorkerReport: collectWorkerReportedArtifactsController,
+			extractArtifactsFromWorkerReport:
+				collectWorkerReportedArtifactsController,
 			collectWorkerReportedArtifacts: collectWorkerReportedArtifactsController,
 			sendWorkerReportedArtifactsToBrowserAI:
 				sendWorkerReportedArtifactsToBrowserAiController,
@@ -9759,7 +9769,8 @@ export function CommanderTab({
 			getBoundWorkerLatestOutput: readBoundWorkerLatestResponseController,
 			sendBoundWorkerResponseToBrowserAI:
 				sendBoundWorkerResponseToBrowserAiController,
-			sendWorkerResponseToBrowserAI: sendBoundWorkerResponseToBrowserAiController,
+			sendWorkerResponseToBrowserAI:
+				sendBoundWorkerResponseToBrowserAiController,
 			getBrowserAiLastSubmission: getBrowserAiSubmissionStateController,
 			getBrowserAiSubmissionState: getBrowserAiSubmissionStateController,
 			getControllerChainSummary: getControllerChainSummaryController,
@@ -9775,7 +9786,6 @@ export function CommanderTab({
 		};
 	}, [
 		workspaceId,
-		activeTabId,
 		getControllerCommandInventoryController,
 		getLiveReadinessSummaryController,
 		getActiveTabIdController,
@@ -9844,40 +9854,12 @@ export function CommanderTab({
 					onReload={webview.reload}
 					onNavigate={webview.navigateTo}
 				/>
-				{transfer.autoCaptureStatus === "waiting" &&
-					!transfer.captureForTerminalPreview.visible && (
-						<div className="flex items-center gap-1.5 px-2 py-1 border-b bg-muted/30">
-							<LuLoader className="size-3 animate-spin text-muted-foreground" />
-							<span className="text-[10px] text-muted-foreground">
-								Waiting for AI response...
-							</span>
-							<div className="flex-1" />
-							<Button
-								variant="ghost"
-								size="sm"
-								className="h-5 w-5 p-0"
-								onClick={() => transfer.cancelAutoCapture()}
-							>
-								<LuX className="size-3" />
-							</Button>
-						</div>
-					)}
 				{transfer.captureForTerminalPreview.visible && (
 					<EditableTerminalPreview
 						text={transfer.captureForTerminalPreview.text}
 						hasTerminal={!!activeTerminal}
 						onConfirm={transfer.handleConfirmCaptureToTerminal}
 						onCancel={transfer.dismissCaptureForTerminal}
-					/>
-				)}
-				{transfer.workerResponsePreview.visible && (
-					<WorkerResponsePreview
-						text={transfer.workerResponsePreview.text}
-						confidence={transfer.workerResponsePreview.confidence}
-						reasons={transfer.workerResponsePreview.reasons}
-						hasProvider={!!currentProvider}
-						onSendToBrowserAI={transfer.handleSendWorkerResponseToBrowserAI}
-						onCancel={transfer.dismissWorkerResponsePreview}
 					/>
 				)}
 				{transfer.handoffPreview.visible && (
@@ -9899,24 +9881,6 @@ export function CommanderTab({
 						onCancel={transfer.handleCancelSessionDraft}
 					/>
 				)}
-				{transfer.autoRelayStatus === "watching" &&
-					!transfer.workerResponsePreview.visible && (
-						<div className="flex items-center gap-1.5 px-2 py-1 border-b bg-muted/30">
-							<LuLoader className="size-3 animate-spin text-muted-foreground" />
-							<span className="text-[10px] text-muted-foreground">
-								Waiting for worker response...
-							</span>
-							<div className="flex-1" />
-							<Button
-								variant="ghost"
-								size="sm"
-								className="h-5 w-5 p-0"
-								onClick={() => transfer.cancelAutoRelay()}
-							>
-								<LuX className="size-3" />
-							</Button>
-						</div>
-					)}
 				{transfer.capturePreview &&
 					!transfer.captureForTerminalPreview.visible && (
 						<CapturePreview
@@ -9930,40 +9894,8 @@ export function CommanderTab({
 						/>
 					)}
 				<CommanderHelperBar
-					state={state}
 					activeTerminal={activeTerminal}
-					workerPrompt={workerPrompt}
-					reviewPrompt={reviewPrompt}
-					onGrabSelection={transfer.handleGrabSelection}
-					onInject={transfer.handleInject}
-					onCopyBrowserAiStarterPrompt={
-						transfer.handleCopyBrowserAiStarterPrompt
-					}
-					onSendBrowserAiStarterPrompt={
-						transfer.handleSendBrowserAiStarterPrompt
-					}
-					onCaptureResponse={transfer.handleCaptureResponse}
-					onSendSelectionToAI={handleSendSelectionToAI}
-					onGenerateHandoff={transfer.handleGenerateHandoff}
-					onCopyHandoff={transfer.handleCopyHandoff}
-					onCopyHandoffLedger={transfer.handleCopyHandoffLedger}
-					onSendHandoffLedgerToBrowserAI={
-						transfer.handleSendHandoffLedgerToBrowserAI
-					}
-					onSaveHandoffLedgerAsMarkdown={
-						transfer.handleSaveHandoffLedgerAsMarkdown
-					}
-					onExtractSessionFromAI={transfer.handleExtractSessionFromAI}
-					onExtractPlanFromWorker={transfer.handleExtractPlanFromWorker}
-					onViewEditSession={transfer.handleViewEditSession}
-					onClearSession={handleClearSession}
-					handoffPrompt={transfer.handoffPreview.text}
-					autoRelayMode={autoRelayMode}
-					onAutoRelayModeChange={handleAutoRelayModeChange}
-					onTerminalSubmitBeforeSend={transfer.handleTerminalSubmitBeforeSend}
 					workerBinding={workerBinding}
-					onBindActiveTerminalToTab={handleBindActiveTerminalToTab}
-					onUnbindWorkerFromTab={handleUnbindWorkerFromTab}
 					providerLabel={providerLabel}
 					hasProvider={!!currentProvider}
 				/>
@@ -9980,7 +9912,8 @@ function mergeCommanderSessionControllerInput(
 	changedFields: string[];
 	skippedFields: string[];
 } {
-	const replaceSession = input.replace === true || input.resetForNewTask === true;
+	const replaceSession =
+		input.replace === true || input.resetForNewTask === true;
 	const clearRecordedOutcome =
 		replaceSession || input.clearRecordedOutcome === true;
 	const baseSession = replaceSession ? createEmptyCommanderSession() : base;
@@ -9992,10 +9925,15 @@ function mergeCommanderSessionControllerInput(
 	const changedFields: string[] = [];
 	const skippedFields: string[] = [];
 	if (replaceSession) {
-		changedFields.push(input.resetForNewTask === true ? "resetForNewTask" : "replace");
+		changedFields.push(
+			input.resetForNewTask === true ? "resetForNewTask" : "replace",
+		);
 	} else if (clearRecordedOutcome) {
 		const clearedSession = clearControllerChainOutcomeFromSession(next);
-		for (const field of getChangedCommanderSessionFields(next, clearedSession)) {
+		for (const field of getChangedCommanderSessionFields(
+			next,
+			clearedSession,
+		)) {
 			changedFields.push(field);
 		}
 		Object.assign(next, clearedSession);
@@ -10017,7 +9955,7 @@ function mergeCommanderSessionControllerInput(
 	];
 
 	for (const field of textFields) {
-		if (!Object.prototype.hasOwnProperty.call(input, field)) continue;
+		if (!Object.hasOwn(input, field)) continue;
 		const value = normalizeControllerTextInput(input[field]);
 		if (!value) {
 			skippedFields.push(field);
@@ -10134,7 +10072,7 @@ function isControllerGeneratedCurrentTask(value: string): boolean {
 	const trimmed = value.trim();
 	return (
 		trimmed.startsWith("Controller chain ") ||
-		trimmed.includes("Codex追加送信なし。自動ループ未使用。")
+		trimmed.includes("Codex追加送信なし。人間確認待ち。")
 	);
 }
 
@@ -10171,9 +10109,10 @@ function applyControllerChainOutcomeToSession(
 	].join("\n");
 	const risksBlock =
 		summary.blockers.length > 0
-			? [`Controller chain blockers:`, ...summary.blockers.map((b) => `- ${b}`)].join(
-					"\n",
-				)
+			? [
+					`Controller chain blockers:`,
+					...summary.blockers.map((b) => `- ${b}`),
+				].join("\n")
 			: "Controller chain blockers: none";
 	const currentTask = getControllerChainCurrentTask(summary);
 	const next: CommanderSession = {
@@ -10223,7 +10162,8 @@ function applyControllerChainOutcomeToSession(
 function formatControllerChainOutcomeForSession(
 	summary: CommanderControllerChainSummaryResult,
 ): string {
-	const extractedInstruction = summary.extractedCodexInstructionSummary || "none";
+	const extractedInstruction =
+		summary.extractedCodexInstructionSummary || "none";
 	const doyItems = summary.extractedDoyConfirmationItems.length
 		? summary.extractedDoyConfirmationItems.join(" / ")
 		: "none";
@@ -10279,7 +10219,7 @@ function getControllerChainCurrentTask(
 	summary: CommanderControllerChainSummaryResult,
 ): string {
 	if (summary.chainStatus === "STOP") {
-		return `${summary.finalDecision} ${summary.nextAction}. Codex追加送信なし。自動ループ未使用。`;
+		return `${summary.finalDecision} ${summary.nextAction}. Codex追加送信なし。人間確認待ち。`;
 	}
 	if (summary.chainStatus === "BLOCKED" || summary.chainStatus === "FAILED") {
 		return `Controller chain ${summary.chainStatus}: ${summary.nextAction}`;
@@ -10401,7 +10341,9 @@ function getControllerChainNextAction({
 }): string {
 	if (chainStatus === "STOP") return "STOP / 次のCodex指示は不要";
 	if (chainStatus === "BLOCKED" || chainStatus === "FAILED") {
-		return nextRequiredAction || blockers[0] || "Resolve controller chain blocker";
+		return (
+			nextRequiredAction || blockers[0] || "Resolve controller chain blocker"
+		);
 	}
 	if (hasDoyConfirmationItems) return "Doy確認事項を確認して判断待ち";
 	if (hasCodexInstruction) return "Codex送信前に安全条件を確認する";
@@ -10413,13 +10355,18 @@ function getControllerChainSummaryMessage(
 	chainStatus: CommanderControllerChainStatus,
 	blockers: string[],
 ): string {
-	if (status === "READY") return `Controller chain summary ready: ${chainStatus}`;
+	if (status === "READY")
+		return `Controller chain summary ready: ${chainStatus}`;
 	const firstBlocker = blockers[0];
-	if (firstBlocker) return `Controller chain summary ${status}: ${firstBlocker}`;
+	if (firstBlocker)
+		return `Controller chain summary ${status}: ${firstBlocker}`;
 	return `Controller chain summary ${status}`;
 }
 
-function summarizeControllerOutcomeText(value: string, maxLength: number): string {
+function summarizeControllerOutcomeText(
+	value: string,
+	maxLength: number,
+): string {
 	const normalized = value.replace(/\s+/g, " ").trim();
 	if (!normalized) return "";
 	if (normalized.length <= maxLength) return normalized;
@@ -10438,9 +10385,7 @@ function normalizeControllerStringArray(value: unknown): string[] {
 		.filter(Boolean);
 }
 
-function normalizeSendHandoffControllerInput(
-	input: unknown,
-): {
+function normalizeSendHandoffControllerInput(input: unknown): {
 	additionalInstructions: string;
 	additionalContext: string;
 	additionalContextLabel: string;
@@ -10465,9 +10410,7 @@ function normalizeSendHandoffControllerInput(
 	};
 }
 
-function normalizeSendBrowserAiPromptControllerInput(
-	input: unknown,
-): {
+function normalizeSendBrowserAiPromptControllerInput(input: unknown): {
 	provider: string;
 	prompt: string;
 	expectedTabId: string;
@@ -10519,13 +10462,9 @@ interface BrowserAiAttachmentState {
 interface BrowserAiAttachmentReviewContext {
 	mode: "manual" | "manual-review" | "";
 	purpose: string;
-	allowWorkerInstruction: boolean | null;
-	runToCompletion: boolean | null;
 }
 
-function normalizeAttachFilesToBrowserAiInput(
-	input: unknown,
-): {
+function normalizeAttachFilesToBrowserAiInput(input: unknown): {
 	provider: string;
 	expectedTabId: string;
 	expectedTitle: string;
@@ -10566,14 +10505,14 @@ function normalizeAttachFilesToBrowserAiInput(
 		reviewPrompt: normalizeControllerTextInput(record.reviewPrompt),
 		sendPromptAfterAttach:
 			normalizeControllerBooleanInput(record.sendPromptAfterAttach) === true,
-		reviewContext: normalizeBrowserAiAttachmentReviewContext(record.reviewContext),
+		reviewContext: normalizeBrowserAiAttachmentReviewContext(
+			record.reviewContext,
+		),
 		dryRun: normalizeControllerBooleanInput(record.dryRun) === true,
 	};
 }
 
-function normalizeAttachedFilesInventoryInput(
-	input: unknown,
-): {
+function normalizeAttachedFilesInventoryInput(input: unknown): {
 	provider: string;
 	expectedTabId: string;
 	expectedTitle: string;
@@ -10598,9 +10537,9 @@ function normalizeAttachedFilesInventoryInput(
 	};
 }
 
-function normalizeReviewArtifactsInput(
-	input: unknown,
-): ReturnType<typeof normalizeAttachFilesToBrowserAiInput> & {
+function normalizeReviewArtifactsInput(input: unknown): ReturnType<
+	typeof normalizeAttachFilesToBrowserAiInput
+> & {
 	includeSelectedFiles: boolean;
 	includeWorkerReport: boolean;
 	includeReviewScreenshots: boolean;
@@ -10634,7 +10573,8 @@ function normalizeReviewArtifactsInput(
 		includeWorkerReport:
 			normalizeControllerBooleanInput(record.includeWorkerReport) !== false,
 		includeReviewScreenshots:
-			normalizeControllerBooleanInput(record.includeReviewScreenshots) !== false,
+			normalizeControllerBooleanInput(record.includeReviewScreenshots) !==
+			false,
 		maxFiles: Math.min(Math.max(maxFilesValue, 1), 20),
 		expectedTaskRunId: normalizeControllerTextInput(record.expectedTaskRunId),
 		expectedDoneTag: normalizeControllerTextInput(record.expectedDoneTag),
@@ -10649,29 +10589,18 @@ function normalizeBrowserAiAttachmentReviewContext(
 		return {
 			mode: "",
 			purpose: "",
-			allowWorkerInstruction: null,
-			runToCompletion: null,
 		};
 	}
 	const record = value as {
 		mode?: unknown;
 		purpose?: unknown;
-		allowWorkerInstruction?: unknown;
-		runToCompletion?: unknown;
 	};
 	const rawMode = normalizeControllerTextInput(record.mode).toLowerCase();
 	const mode: BrowserAiAttachmentReviewContext["mode"] =
-		rawMode === "manual" ||
-		rawMode === "manual-review"
-			? rawMode
-			: "";
+		rawMode === "manual" || rawMode === "manual-review" ? rawMode : "";
 	return {
 		mode,
 		purpose: normalizeControllerTextInput(record.purpose),
-		allowWorkerInstruction: normalizeControllerBooleanInput(
-			record.allowWorkerInstruction,
-		),
-		runToCompletion: normalizeControllerBooleanInput(record.runToCompletion),
 	};
 }
 
@@ -10731,7 +10660,9 @@ function normalizeBrowserAiAttachmentState(
 		attachedFileNamesVisible: normalizeControllerStringArray(
 			record.attachedFileNamesVisible,
 		),
-		fileInputFileNames: normalizeControllerStringArray(record.fileInputFileNames),
+		fileInputFileNames: normalizeControllerStringArray(
+			record.fileInputFileNames,
+		),
 		fileInputFileCount:
 			typeof record.fileInputFileCount === "number"
 				? record.fileInputFileCount
@@ -10772,19 +10703,19 @@ function buildBrowserAiAttachmentReviewPrompt({
 		].join("\n"),
 	);
 	if (reviewContext.mode) {
-		sections.push(
-			[
-				`Review context: ${reviewContext.mode}`,
-				`allowWorkerInstruction: ${reviewContext.allowWorkerInstruction === true}`,
-				`runToCompletion: ${reviewContext.runToCompletion === true}`,
-			].join("\n"),
-		);
+		sections.push([`Review context: ${reviewContext.mode}`].join("\n"));
 	}
 	return sections.join("\n\n");
 }
 
-function normalizeReviewArtifactPreview(text: string, maxLength = 1200): string {
-	const normalized = text.replace(/\s+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+function normalizeReviewArtifactPreview(
+	text: string,
+	maxLength = 1200,
+): string {
+	const normalized = text
+		.replace(/\s+\n/g, "\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
 	if (!normalized) return "";
 	if (normalized.length <= maxLength) return normalized;
 	return `${normalized.slice(0, maxLength).trimEnd()}...`;
@@ -10807,7 +10738,10 @@ function buildReviewArtifactsBrowserAiReviewPrompt({
 		);
 	const nonFileLines = artifacts
 		.filter((artifact) => !artifact.attachable)
-		.map((artifact) => `- ${artifact.name} (${artifact.kind}): ${artifact.preview || artifact.reason || "non-file artifact"}`);
+		.map(
+			(artifact) =>
+				`- ${artifact.name} (${artifact.kind}): ${artifact.preview || artifact.reason || "non-file artifact"}`,
+		);
 	const sections = [
 		"添付された現物ファイルとレビュー対象成果物を確認してください。",
 		[
@@ -10816,10 +10750,9 @@ function buildReviewArtifactsBrowserAiReviewPrompt({
 			"- yesの場合は参照したfilenameを短く列挙する",
 			"- 添付UI反映だけで現物を読めていない場合は、成功扱いせず `AI_REFERENCED_FILE: no` と理由を書く",
 			"- 仕様とのズレ、UI崩れ、未完了、検証不足があれば指摘する",
-			"- DoyDeck review policyは build → polish → final-review。基本完了だけで即STOPせず、turn budgetが残る場合は安全な小改善余地を探す",
-			"- 改善余地がある場合は `QUALITY_STATUS: polish-needed` と書く",
-			"- vスコープ内の追加修正なら、`Workerへ渡す指示:` から始めて次Worker指示を短く具体的に出す",
-			"- 問題がほぼなく残りturnを使わない方がよい場合だけ `QUALITY_STATUS: ready-candidate`、`STOP_REASON:`、`STOP` / `次のWorker指示は不要` と明記する",
+			"- 問題があれば具体的に指摘し、人間が次に判断・送信しやすい短い修正案を出す",
+			"- 追加Worker作業が必要なら、送信候補として `Workerへ渡す指示:` を短く具体的に書く",
+			"- 問題がなければ `レビュー上の追加修正なし` と明記する",
 			"- Doy確認が不要なら `Doy確認事項なし` と明記する",
 			"- scope拡大、DB/API/認証/credentials/deploy/destructive操作、大きな仕様/UX判断はDoy確認事項に分ける",
 		].join("\n"),
@@ -10837,13 +10770,7 @@ function buildReviewArtifactsBrowserAiReviewPrompt({
 		sections.push(`目的:\n${reviewContext.purpose}`);
 	}
 	if (reviewContext.mode) {
-		sections.push(
-			[
-				`Review context: ${reviewContext.mode}`,
-				`allowWorkerInstruction: ${reviewContext.allowWorkerInstruction === true}`,
-				`runToCompletion: ${reviewContext.runToCompletion === true}`,
-			].join("\n"),
-		);
+		sections.push([`Review context: ${reviewContext.mode}`].join("\n"));
 	}
 	return sections.join("\n\n");
 }
@@ -10859,7 +10786,11 @@ function buildSessionArtifactTargetPaths(
 				.map((selectedFile) => selectedFile.absolutePath)
 		: [];
 	return Array.from(
-		new Set([...inputTargetPaths, ...session.targetFiles, ...selectedFilePaths]),
+		new Set([
+			...inputTargetPaths,
+			...session.targetFiles,
+			...selectedFilePaths,
+		]),
 	).filter(Boolean);
 }
 
@@ -10958,7 +10889,11 @@ function deriveWorkerReportSummaryArtifacts(
 	workerReportText: string,
 ): CommanderControllerReviewArtifact[] {
 	const artifacts: CommanderControllerReviewArtifact[] = [];
-	if (/(?:npm run|bun run|build|test|Playwright|console|pageerror|検証|確認結果)/i.test(workerReportText)) {
+	if (
+		/(?:npm run|bun run|build|test|Playwright|console|pageerror|検証|確認結果)/i.test(
+			workerReportText,
+		)
+	) {
 		artifacts.push(
 			buildTextArtifact({
 				id: "worker-build-test-summary",
@@ -10969,7 +10904,11 @@ function deriveWorkerReportSummaryArtifacts(
 			}),
 		);
 	}
-	if (/(?:変更ファイル|追加ファイル|git diff|changed files|files changed|diff)/i.test(workerReportText)) {
+	if (
+		/(?:変更ファイル|追加ファイル|git diff|changed files|files changed|diff)/i.test(
+			workerReportText,
+		)
+	) {
 		artifacts.push(
 			buildTextArtifact({
 				id: "worker-diff-summary",
@@ -10985,7 +10924,8 @@ function deriveWorkerReportSummaryArtifacts(
 
 function getAttachBrowserAiFilesBlockedMessage(blockers: string[]): string {
 	const firstBlocker = blockers[0];
-	if (firstBlocker) return `Browser AI file attachment blocked: ${firstBlocker}`;
+	if (firstBlocker)
+		return `Browser AI file attachment blocked: ${firstBlocker}`;
 	return "Browser AI file attachment blocked";
 }
 
@@ -11030,7 +10970,10 @@ function replaceCommanderControllerSection(
 	return appendCommanderControllerSection(withoutExistingSection, value, label);
 }
 
-function removeCommanderControllerSections(base: string, label: string): string {
+function removeCommanderControllerSections(
+	base: string,
+	label: string,
+): string {
 	const trimmedBase = base.trim();
 	if (!trimmedBase) return "";
 	const pattern = new RegExp(
@@ -11065,14 +11008,14 @@ function findVisibleAttachmentNamesForRequestedFiles(input: {
 	return input.requestedFileNames
 		.map((requestedName) => {
 			const pattern = buildAttachmentFileNamePattern(requestedName);
-			return visibleNames.find((visibleName) => pattern.test(visibleName)) || "";
+			return (
+				visibleNames.find((visibleName) => pattern.test(visibleName)) || ""
+			);
 		})
 		.filter(Boolean);
 }
 
-function getCommanderSessionMissingFields(
-	session: CommanderSession,
-): string[] {
+function getCommanderSessionMissingFields(session: CommanderSession): string[] {
 	const missingFields: string[] = [];
 	if (!session.goal.trim()) missingFields.push("goal");
 	if (!session.currentTask.trim()) missingFields.push("currentTask");
@@ -11233,7 +11176,8 @@ function normalizeBrowserAiComposerReadiness(
 		candidate.composerInjectionReady === true || composerReady;
 	const submitTargetReady =
 		candidate.submitTargetReady === true ||
-		(candidate.submitButtonFound === true && candidate.submitButtonEnabled === true);
+		(candidate.submitButtonFound === true &&
+			candidate.submitButtonEnabled === true);
 	const injectionBlockers = Array.isArray(candidate.injectionBlockers)
 		? candidate.injectionBlockers.filter((blocker): blocker is string => {
 				return typeof blocker === "string" && blocker.trim().length > 0;
@@ -11304,7 +11248,8 @@ function getBrowserAiComposerBlocker(
 function getBrowserAiSubmitWarning(
 	readiness: CommanderControllerBrowserAiReadiness,
 ): string | null {
-	if (!readiness.composerInjectionReady || readiness.submitTargetReady) return null;
+	if (!readiness.composerInjectionReady || readiness.submitTargetReady)
+		return null;
 	return `browser ai submit target not ready before injection: ${readiness.submitSelectorStatus}`;
 }
 
@@ -11431,7 +11376,8 @@ function getBrowserAiSubmissionNextRequiredAction(
 	status: CommanderControllerBrowserAiSubmissionVerificationStatus,
 	type: CommanderControllerBrowserAiSubmissionType,
 ): string {
-	if (status === "REPLIED") return "Read Browser AI latest reply and classify review.";
+	if (status === "REPLIED")
+		return "Read Browser AI latest reply and classify review.";
 	if (status === "WAITING_REPLY" || status === "UI_REFLECTED") {
 		return "Wait for Browser AI assistant reply, then read latest reply.";
 	}
@@ -11460,7 +11406,9 @@ async function verifyBrowserAiSubmissionReflection({
 	await delay(900);
 	try {
 		const reflection = normalizeBrowserAiSubmissionReflectionState(
-			await injectIntoPage(buildSubmissionReflectionStateScript(prompt, provider)),
+			await injectIntoPage(
+				buildSubmissionReflectionStateScript(prompt, provider),
+			),
 		);
 		const assistantCountIncreased =
 			latestReplyBeforeSubmit?.assistantCount !== null &&
@@ -11494,7 +11442,10 @@ async function verifyBrowserAiSubmissionReflection({
 			assistantReplyObserved,
 			visualVerificationUsed: reflection.visualVerificationUsed,
 			reason: reflection.reflectionReason,
-			nextRequiredAction: getBrowserAiSubmissionNextRequiredAction(status, type),
+			nextRequiredAction: getBrowserAiSubmissionNextRequiredAction(
+				status,
+				type,
+			),
 			reflection,
 			warnings:
 				status === "NOT_REFLECTED"
@@ -11635,7 +11586,9 @@ function extractBrowserAiInstructionFromHeading(text: string): {
 				source: "heading-block",
 				lineCount: countNonEmptyLines(body),
 				stoppedAt,
-				warnings: stoppedAt ? [`instruction extraction stopped at: ${stoppedAt}`] : [],
+				warnings: stoppedAt
+					? [`instruction extraction stopped at: ${stoppedAt}`]
+					: [],
 			};
 		}
 	}
@@ -11696,7 +11649,10 @@ function isBrowserAiInstructionBoundary(line: string): boolean {
 	return false;
 }
 
-function findNextNonEmptyLineIndex(lines: string[], startIndex: number): number {
+function findNextNonEmptyLineIndex(
+	lines: string[],
+	startIndex: number,
+): number {
 	for (let index = startIndex; index < lines.length; index++) {
 		if (lines[index].trim()) return index;
 	}
@@ -11739,7 +11695,9 @@ function extractFencedInstructionBlock(
 }
 
 function isOneLineOnlyInstruction(line: string): boolean {
-	return /次の\s*1\s*行だけ(?:返信|返答|出力|返|答え)(?:して)?ください/i.test(line);
+	return /次の\s*1\s*行だけ(?:返信|返答|出力|返|答え)(?:して)?ください/i.test(
+		line,
+	);
 }
 
 function trimInstructionBody(value: string): string {
@@ -11792,10 +11750,6 @@ function classifyBrowserAiStopSignal(text: string): {
 		conditional: Boolean(conditionalReason),
 		reason: conditionalReason,
 	};
-}
-
-function extractDoyConfirmationItems(text: string): string[] {
-	return classifyDoyConfirmationItems(text).items;
 }
 
 function classifyDoyConfirmationItems(text: string): {
@@ -11881,7 +11835,7 @@ function classifyDoyConfirmationItems(text: string): {
 		requiresHumanDecision: items.length > 0,
 		reason:
 			items.length === 0
-				? negatedReason ?? conditionalReason ?? sectionOnlyReason
+				? (negatedReason ?? conditionalReason ?? sectionOnlyReason)
 				: "explicit Doy decision request",
 	};
 }
@@ -11899,7 +11853,7 @@ function extractBrowserAiStopSignalFromLine(line: string): string | null {
 	const normalized = normalizeBrowserAiDecisionLine(line);
 	const patterns = [
 		/^(?:STOP|停止)[\s　]*[。.!！:：]?$/i,
-		/^STOP[\s　]*(?:[。.!！:：]|[\/／])[\s　]*(?:次の\s*(?:作業側(?:の)?\s*)?Codex\s*指示(?:は|が)?不要|次の\s*Worker\s*指示(?:は|が)?不要|追加作業不要|追加の\s*(?:作業側(?:の)?\s*)?Codex\s*作業(?:は|が)?不要)/i,
+		/^STOP[\s　]*(?:[。.!！:：]|[/／])[\s　]*(?:次の\s*(?:作業側(?:の)?\s*)?Codex\s*指示(?:は|が)?不要|次の\s*Worker\s*指示(?:は|が)?不要|追加作業不要|追加の\s*(?:作業側(?:の)?\s*)?Codex\s*作業(?:は|が)?不要)/i,
 		/^STOP\s*[：:]\s*(?:追加作業不要|次の(?:作業側(?:の)?\s*)?Codex\s*指示(?:は|が)?不要|次のWorker\s*指示(?:は|が)?不要)/i,
 		/^次の\s*(?:作業側(?:の)?\s*)?Codex\s*指示(?:は|が)?不要[。.!！]?$/i,
 		/^(?:作業側(?:の)?\s*)?Codex\s*指示(?:は|が)?不要[。.!！]?$/i,
@@ -12231,14 +12185,29 @@ function getEmptyBoundWorkerOutputFields(
 	};
 }
 
+// biome-ignore lint/complexity/useRegexLiterals: constructor keeps control-byte matching readable without embedding raw control characters.
+const ANSI_OSC_SEQUENCE_PATTERN = new RegExp(
+	"\\x1B\\][^\\x07]*(?:\\x07|\\x1B\\\\)",
+	"g",
+);
+// biome-ignore lint/complexity/useRegexLiterals: constructor keeps control-byte matching readable without embedding raw control characters.
+const ANSI_CSI_SEQUENCE_PATTERN = new RegExp("\\x1B\\[[0-?]*[ -/]*[@-~]", "g");
+// biome-ignore lint/complexity/useRegexLiterals: constructor keeps control-byte matching readable without embedding raw control characters.
+const ANSI_SINGLE_ESCAPE_PATTERN = new RegExp("\\x1B[@-Z\\\\-_]", "g");
+// biome-ignore lint/complexity/useRegexLiterals: constructor keeps control-byte matching readable without embedding raw control characters.
+const NON_PRINTABLE_ASCII_PATTERN = new RegExp(
+	"[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]",
+	"g",
+);
+
 function normalizeWorkerOutputText(text: string): string {
 	return text
-		.replace(/\x1B\][^\x07]*(?:\x07|\x1B\\)/g, "")
-		.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "")
-		.replace(/\x1B[@-Z\\-_]/g, "")
+		.replace(ANSI_OSC_SEQUENCE_PATTERN, "")
+		.replace(ANSI_CSI_SEQUENCE_PATTERN, "")
+		.replace(ANSI_SINGLE_ESCAPE_PATTERN, "")
 		.replace(/\r\n/g, "\n")
 		.replace(/\r/g, "\n")
-		.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+		.replace(NON_PRINTABLE_ASCII_PATTERN, "")
 		.replace(/[ \t]+\n/g, "\n")
 		.trim();
 }
@@ -12336,9 +12305,7 @@ function evaluateBoundWorkerInputReadiness(params: {
 	}
 
 	const promptResidueLine =
-		[...tailLines]
-			.reverse()
-			.find((line) => /^[❯>](?:\s|$)/.test(line)) ?? null;
+		[...tailLines].reverse().find((line) => /^[❯>](?:\s|$)/.test(line)) ?? null;
 	const activePromptHasResidue = Boolean(
 		promptResidueLine &&
 			(/^[❯>]\s+\S/.test(promptResidueLine) ||
@@ -12349,9 +12316,9 @@ function evaluateBoundWorkerInputReadiness(params: {
 	);
 	const historicalPromptResidueLine =
 		!activePromptHasResidue && promptResidueLine
-			? tailLines
+			? (tailLines
 					.slice(0, Math.max(tailLines.lastIndexOf(promptResidueLine), 0))
-					.find((line) => /^[❯>]\s+\S/.test(line)) ?? null
+					.find((line) => /^[❯>]\s+\S/.test(line)) ?? null)
 			: null;
 	if (activePromptHasResidue && promptResidueLine) {
 		workerInputBlockers.push(
@@ -12447,7 +12414,9 @@ function evaluateCodexWorkerInputReadiness(
 			(outputLogText ? outputLogText.slice(-6000) : ""),
 	);
 	if (!currentUiText) {
-		workerInputBlockers.push("codex worker input readiness could not be inspected");
+		workerInputBlockers.push(
+			"codex worker input readiness could not be inspected",
+		);
 		return {
 			workerUiState: "unknown",
 			workerInputReady: false,
@@ -12463,9 +12432,7 @@ function evaluateCodexWorkerInputReadiness(
 		.filter(Boolean)
 		.slice(-48);
 	const promptLine =
-		[...tailLines]
-			.reverse()
-			.find((line) => /^[›>](?:\s|$)/.test(line)) ?? null;
+		[...tailLines].reverse().find((line) => /^[›>](?:\s|$)/.test(line)) ?? null;
 	if (
 		promptLine &&
 		/^[›>]\s+\S/.test(promptLine) &&
@@ -12584,7 +12551,8 @@ function getHandoffLedgerPayloadBudget(ledgerLength: number): {
 		ledgerLength,
 		payloadBudgetWarningChars: COMMANDER_HANDOFF_LEDGER_WARNING_CHARS,
 		payloadBudgetSevereChars: COMMANDER_HANDOFF_LEDGER_SEVERE_CHARS,
-		payloadBudgetExceeded: ledgerLength >= COMMANDER_HANDOFF_LEDGER_WARNING_CHARS,
+		payloadBudgetExceeded:
+			ledgerLength >= COMMANDER_HANDOFF_LEDGER_WARNING_CHARS,
 		warnings: getPayloadBudgetWarnings({
 			label: "handoff ledger",
 			length: ledgerLength,
@@ -12594,15 +12562,18 @@ function getHandoffLedgerPayloadBudget(ledgerLength: number): {
 	};
 }
 
-function createBoundWorkerLatestResponseTextFieldsForReturn(fields: {
-	rawOutputText: string;
-	outputText: string;
-	screenText: string;
-	viewportText: string;
-}, input: {
-	responseMode: CommanderControllerResponseMode;
-	maxDiagnosticChars: number;
-}): {
+function createBoundWorkerLatestResponseTextFieldsForReturn(
+	fields: {
+		rawOutputText: string;
+		outputText: string;
+		screenText: string;
+		viewportText: string;
+	},
+	input: {
+		responseMode: CommanderControllerResponseMode;
+		maxDiagnosticChars: number;
+	},
+): {
 	fields: CommanderControllerBoundWorkerLatestResponseTextFields;
 	budget: CommanderControllerBoundWorkerLatestResponsePayloadBudget;
 	warnings: string[];
@@ -12703,7 +12674,9 @@ function createBoundWorkerReportExtractionFields(
 function normalizeBoundWorkerStatusObservationText(text: string): string {
 	return normalizeWorkerOutputText(text)
 		.split("\n")
-		.map((line) => stripInlineBoundWorkerUiNoise(line).replace(/\s+/g, " ").trim())
+		.map((line) =>
+			stripInlineBoundWorkerUiNoise(line).replace(/\s+/g, " ").trim(),
+		)
 		.filter((line) => line && !isBoundWorkerUiNoiseLine(line))
 		.join("\n");
 }
@@ -12730,7 +12703,9 @@ function getBoundWorkerCompletionStatusNextAction(params: {
 	staleDurationMs: number | null;
 }): string {
 	if (params.status === "BLOCKED") {
-		return params.blockers[0] ?? "Fix worker binding before watching completion.";
+		return (
+			params.blockers[0] ?? "Fix worker binding before watching completion."
+		);
 	}
 	if (params.status === "NOT_SUBMITTED") {
 		return "Worker input still appears to contain an unsubmitted instruction; verify submit before waiting for completion.";
@@ -12811,7 +12786,8 @@ function getWorkerRecoveryAdvice(params: {
 			riskLevel: "low",
 			reason:
 				"Using another ready Worker avoids mutating the blocked pane state.",
-			controllerCommand: "listRecognizedWorkers() -> bindWorkerToTab({ paneId })",
+			controllerCommand:
+				"listRecognizedWorkers() -> bindWorkerToTab({ paneId })",
 		});
 		addAction({
 			id: "request-doy-clear-input",
@@ -12901,7 +12877,8 @@ function getWorkerRecoveryAdvice(params: {
 			label: "No recovery action needed",
 			requiresDoyConfirmation: false,
 			riskLevel: "none",
-			reason: "Worker input state is ready or no recoverable issue was detected.",
+			reason:
+				"Worker input state is ready or no recoverable issue was detected.",
 			controllerCommand: null,
 		});
 	}
@@ -12938,8 +12915,13 @@ function extractBoundWorkerResponseForAnalysis(params: {
 	workerReportPreview: string;
 	staleReportIgnored: boolean;
 } {
-	const { outputText, screenText, viewportText, paneId, lastInstructionMarker } =
-		params;
+	const {
+		outputText,
+		screenText,
+		viewportText,
+		paneId,
+		lastInstructionMarker,
+	} = params;
 	const usedLastSendMarker =
 		Boolean(lastInstructionMarker) && lastInstructionMarker?.paneId === paneId;
 	const analysisWarnings: string[] = [];
@@ -12971,9 +12953,13 @@ function extractBoundWorkerResponseForAnalysis(params: {
 			const reportExtraction =
 				createBoundWorkerReportExtractionFields(doneTagReport);
 			if (stripped.promptEchoRemoved) {
-				analysisWarnings.push("prompt echo removed from worker output analysis");
+				analysisWarnings.push(
+					"prompt echo removed from worker output analysis",
+				);
 			}
-			analysisWarnings.push("DONE_TAG worker report block extracted from output delta");
+			analysisWarnings.push(
+				"DONE_TAG worker report block extracted from output delta",
+			);
 			return {
 				deltaText,
 				analyzedResponseText: limitWorkerOutputText(doneTagReport.text.trim()),
@@ -12999,7 +12985,9 @@ function extractBoundWorkerResponseForAnalysis(params: {
 		if (focused.uiNoiseRemoved) {
 			analysisWarnings.push("worker UI noise removed from response analysis");
 		}
-		const focusedIdleOnly = isBoundWorkerIdleOnlyCompletionMessage(focused.text);
+		const focusedIdleOnly = isBoundWorkerIdleOnlyCompletionMessage(
+			focused.text,
+		);
 		if (focusedIdleOnly) {
 			analysisWarnings.push(
 				"worker output delta contained only an idle completion message; checking terminal output for DONE_TAG report",
@@ -13025,8 +13013,9 @@ function extractBoundWorkerResponseForAnalysis(params: {
 				Boolean(lastInstructionMarker.expectedDoneTag) &&
 				fallbackDoneTagReport?.tag === lastInstructionMarker.expectedDoneTag;
 			if (fallbackDoneTagReport && fallbackMatchesExpectedDoneTag) {
-				const reportExtraction =
-					createBoundWorkerReportExtractionFields(fallbackDoneTagReport);
+				const reportExtraction = createBoundWorkerReportExtractionFields(
+					fallbackDoneTagReport,
+				);
 				return {
 					deltaText,
 					analyzedResponseText: limitWorkerOutputText(
@@ -13158,11 +13147,10 @@ function extractBoundWorkerResponseForAnalysis(params: {
 					visibleStripped.text,
 				);
 				if (visibleFocused.responseFocused) {
-					const staleMarkerReason =
-						getBoundWorkerStaleAckMarkerReason(
-							visibleFocused.text,
-							lastInstructionMarker.instruction,
-						);
+					const staleMarkerReason = getBoundWorkerStaleAckMarkerReason(
+						visibleFocused.text,
+						lastInstructionMarker.instruction,
+					);
 					if (staleMarkerReason) {
 						analysisWarnings.push(staleMarkerReason);
 						return {
@@ -13225,7 +13213,9 @@ function extractBoundWorkerResponseForAnalysis(params: {
 			}
 		}
 		if (!focused.text.trim()) {
-			analysisWarnings.push("worker output delta contains no response after prompt echo removal");
+			analysisWarnings.push(
+				"worker output delta contains no response after prompt echo removal",
+			);
 		}
 		const staleMarkerReason = lastInstructionMarker
 			? getBoundWorkerStaleAckMarkerReason(
@@ -13321,19 +13311,22 @@ function extractBoundWorkerResponseForAnalysis(params: {
 			...emptyReportExtraction,
 		};
 	}
-	const candidates = [
-		viewportText,
-		screenText,
-		outputText,
-	].map((value) => limitWorkerOutputText(value.trim()));
+	const candidates = [viewportText, screenText, outputText].map((value) =>
+		limitWorkerOutputText(value.trim()),
+	);
 	const fallbackText = candidates.find((value) => value.length > 0) ?? "";
 	const doneTagReport = extractBoundWorkerDoneTagReportFromSources(candidates);
 	if (doneTagReport) {
-		const reportExtraction = createBoundWorkerReportExtractionFields(doneTagReport);
+		const reportExtraction =
+			createBoundWorkerReportExtractionFields(doneTagReport);
 		if (!lastInstructionMarker) {
-			analysisWarnings.push("last worker instruction marker unavailable; using visible output fallback");
+			analysisWarnings.push(
+				"last worker instruction marker unavailable; using visible output fallback",
+			);
 		}
-		analysisWarnings.push("DONE_TAG worker report block extracted from visible output fallback");
+		analysisWarnings.push(
+			"DONE_TAG worker report block extracted from visible output fallback",
+		);
 		return {
 			deltaText: "",
 			analyzedResponseText: limitWorkerOutputText(doneTagReport.text.trim()),
@@ -13351,10 +13344,14 @@ function extractBoundWorkerResponseForAnalysis(params: {
 	}
 	const focused = extractBoundWorkerResponseCandidates(fallbackText);
 	if (!lastInstructionMarker) {
-		analysisWarnings.push("last worker instruction marker unavailable; using visible output fallback");
+		analysisWarnings.push(
+			"last worker instruction marker unavailable; using visible output fallback",
+		);
 	}
 	if (focused.uiNoiseRemoved) {
-		analysisWarnings.push("worker UI noise removed from visible output fallback");
+		analysisWarnings.push(
+			"worker UI noise removed from visible output fallback",
+		);
 	}
 	if (!focused.responseFocused) {
 		return {
@@ -13427,9 +13424,9 @@ function getBoundWorkerPromptEchoResidualReason(
 	) {
 		return "worker output still matches submitted prompt echo";
 	}
-	const compactMarkers = extractWorkerAckMarkersFromInstruction(instruction).map(
-		(marker) => compactWorkerInstructionForComparison(marker),
-	);
+	const compactMarkers = extractWorkerAckMarkersFromInstruction(
+		instruction,
+	).map((marker) => compactWorkerInstructionForComparison(marker));
 	if (
 		compactMarkers.some(
 			(marker) =>
@@ -13487,7 +13484,8 @@ function getBoundWorkerStaleAckMarkerReason(
 ): string | null {
 	const responseMarkers = extractWorkerAckMarkersFromInstruction(text);
 	if (responseMarkers.length === 0) return null;
-	const instructionMarkers = extractWorkerAckMarkersFromInstruction(instruction);
+	const instructionMarkers =
+		extractWorkerAckMarkersFromInstruction(instruction);
 	const currentInstructionAck = instructionMarkers.some((instructionMarker) =>
 		includesAckMarker(text, instructionMarker),
 	);
@@ -13517,9 +13515,7 @@ function getBoundWorkerStaleAckMarkerReason(
 	for (const marker of responseMarkers) {
 		residualText = residualText.replaceAll(marker, " ");
 	}
-	const residualCompact = residualText
-		.replace(/[^\p{L}\p{N}]+/gu, "")
-		.trim();
+	const residualCompact = residualText.replace(/[^\p{L}\p{N}]+/gu, "").trim();
 	if (
 		residualCompact.length <= 40 ||
 		/(含めてください|返信してください|返答してください|報告してください)/.test(
@@ -13554,7 +13550,7 @@ function isBoundWorkerMarkerOnlyResponse(
 		" ",
 	);
 	const residualCompact = residual
-		.replace(/[✢✳✻✶✽·⏺●•・┃│╭╮╰╯─\s.,。:：/\\-]+/g, "")
+		.replace(/[✢✳✻✶✽·⏺●•・┃│╭╮╰╯─\s.,。:：/-]+/g, "")
 		.trim();
 	return residualCompact.length === 0;
 }
@@ -13596,7 +13592,10 @@ function extractVisibleBoundWorkerDeltaText(params: {
 				compactLine.length >= 8 &&
 				(compactInstruction.includes(compactLine) ||
 					compactLine.includes(
-						compactInstruction.slice(0, Math.min(80, compactInstruction.length)),
+						compactInstruction.slice(
+							0,
+							Math.min(80, compactInstruction.length),
+						),
 					))
 			) {
 				lastEchoIndex = index;
@@ -13712,7 +13711,7 @@ function extractBoundWorkerResponseCandidates(text: string): {
 					index: assistantLineIndex,
 					score: 100,
 				}
-			: responseCandidates[0] ?? null;
+			: (responseCandidates[0] ?? null);
 	const focusedLines = bestCandidate
 		? usableLines.slice(bestCandidate.index).filter((line) => line.trim())
 		: usableLines.filter((line) => line.trim());
@@ -13735,15 +13734,18 @@ function stripInlineBoundWorkerUiNoise(line: string): string {
 		.replace(/※\s*recap:.*$/i, "")
 		.replace(/\(disable recaps in \/config\).*$/i, "")
 		.replace(/[›>]\s*Write tests for @filename.*$/i, "")
-			.replace(/gpt-\d(?:\.\d+)?\s+\w+\s+·\s+~?\/.*$/i, "")
-			.replace(/\s+›\s*Run\s+\/review\b.*$/i, "")
-			.replace(/[•·]?\s*Working\([^)]*(?:interrupt|interupt)[^)]*\).*$/i, "")
+		.replace(/gpt-\d(?:\.\d+)?\s+\w+\s+·\s+~?\/.*$/i, "")
+		.replace(/\s+›\s*Run\s+\/review\b.*$/i, "")
+		.replace(/[•·]?\s*Working\([^)]*(?:interrupt|interupt)[^)]*\).*$/i, "")
 		.replace(/[✢✳✻✶✽·]\s*Worked for\b.*$/i, "")
-		.replace(/[✢✳✻✶✽·]?\s*(?:Baked|Baking|Brewed|Brewing|Crunching|Garnishing|Churning|Searching)[….\s\S]*$/i, "")
-			.replace(
-				/(?:^|[\s•·])\d*(?:Working|Workin|Worki|Work|Wor|Wo)(?:[•·]?\d*(?:Working|Workin|Worki|Work|Wor|Wo|W|orking|rking|king|ing|ng|g))*.*$/i,
-				"",
-			)
+		.replace(
+			/[✢✳✻✶✽·]?\s*(?:Baked|Baking|Brewed|Brewing|Crunching|Garnishing|Churning|Searching)[….\s\S]*$/i,
+			"",
+		)
+		.replace(
+			/(?:^|[\s•·])\d*(?:Working|Workin|Worki|Work|Wor|Wo)(?:[•·]?\d*(?:Working|Workin|Worki|Work|Wor|Wo|W|orking|rking|king|ing|ng|g))*.*$/i,
+			"",
+		)
 		.trimEnd();
 }
 
@@ -13785,10 +13787,18 @@ function scoreBoundWorkerResponseCandidate(line: string): number {
 	const normalized = line.replace(/\s+/g, " ").trim();
 	if (!normalized || isBoundWorkerUiNoiseLine(normalized)) return 0;
 	if (/※\s*recap:|\(disable recaps in \/config\)/i.test(normalized)) return 0;
-	if (/返信してください|返答してください|含めてください|reply\s+with|include\s+(?:this\s+)?marker/i.test(normalized)) return 0;
+	if (
+		/返信してください|返答してください|含めてください|reply\s+with|include\s+(?:this\s+)?marker/i.test(
+			normalized,
+		)
+	)
+		return 0;
 	const scoredPatterns: Array<[RegExp, number]> = [
 		[/\bS[789]_[A-Za-z0-9_]*\b/, 130],
-		[/\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*(?:SAFE|NOOP)_ACK(?:_[A-Za-z0-9]+)*\b/i, 130],
+		[
+			/\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*(?:SAFE|NOOP)_ACK(?:_[A-Za-z0-9]+)*\b/i,
+			130,
+		],
 		[/受け取りました/, 120],
 		[/受信しました/, 115],
 		[/現在待機中です/, 110],
@@ -13824,10 +13834,16 @@ function isBoundWorkerPromptEchoTailCandidate(
 ): boolean {
 	const normalized = [line, nextLine].join(" ").replace(/\s+/g, " ").trim();
 	if (!normalized) return false;
-	if (!/\bS[789]_[A-Za-z0-9_]*\b|\b[A-Za-z0-9_]*(?:SAFE|NOOP)_ACK[A-Za-z0-9_]*\b/i.test(normalized)) {
+	if (
+		!/\bS[789]_[A-Za-z0-9_]*\b|\b[A-Za-z0-9_]*(?:SAFE|NOOP)_ACK[A-Za-z0-9_]*\b/i.test(
+			normalized,
+		)
+	) {
 		return false;
 	}
-	return /含めてください|返信してください|返答してください|報告してください|reply\s+with|include\s+(?:this\s+)?marker/i.test(normalized);
+	return /含めてください|返信してください|返答してください|報告してください|reply\s+with|include\s+(?:this\s+)?marker/i.test(
+		normalized,
+	);
 }
 
 function truncateIgnoredUiNoiseLines(lines: string[], maxLines = 12): string[] {
@@ -13842,7 +13858,8 @@ function stripBoundWorkerPromptEcho(
 	text: string,
 	instruction: string,
 ): { text: string; promptEchoRemoved: boolean } {
-	const normalizedInstruction = normalizeWorkerInstructionForComparison(instruction);
+	const normalizedInstruction =
+		normalizeWorkerInstructionForComparison(instruction);
 	const compactInstruction = compactWorkerInstructionForComparison(instruction);
 	let promptEchoRemoved = false;
 	const keptLines: string[] = [];
@@ -13868,7 +13885,10 @@ function stripBoundWorkerPromptEcho(
 				(compactLine.length >= 8 && compactInstruction.includes(compactLine)) ||
 				(compactInstruction.length >= 8 &&
 					compactLine.includes(
-						compactInstruction.slice(0, Math.min(80, compactInstruction.length)),
+						compactInstruction.slice(
+							0,
+							Math.min(80, compactInstruction.length),
+						),
 					)) ||
 				(compactLine.length >= 80 &&
 					compactLine.includes(compactInstruction.slice(0, 80))));
@@ -13913,7 +13933,10 @@ function normalizeWorkerInstructionForComparison(text: string): string {
 }
 
 function compactWorkerInstructionForComparison(text: string): string {
-	return normalizeWorkerInstructionForComparison(text).replace(/[^\p{L}\p{N}]+/gu, "");
+	return normalizeWorkerInstructionForComparison(text).replace(
+		/[^\p{L}\p{N}]+/gu,
+		"",
+	);
 }
 
 function analyzeBoundWorkerOutput(
@@ -13955,21 +13978,23 @@ function analyzeBoundWorkerOutput(
 		: rawRunningSignal.runningSignalReason
 			? `ignored stale running signal after ${receivedInstructionAck ? "ack" : "completion"}: ${rawRunningSignal.runningSignalReason}`
 			: null;
-	const isIdleOrReady = outputLooksComplete || hasAnyWorkerOutputSignal(normalized, [
-		/\bready\b/i,
-		/\bidle\b/i,
-		/\bwaiting\b/i,
-		/\bawaiting\b/i,
-		/待機中/,
-		/入力待ち/,
-		/次の指示/,
-		/追加指示/,
-		/受信確認/,
-		/コマンド実行なし/,
-		/ツール使用なし/,
-		/ファイル変更なし/,
-		/Git操作なし/i,
-	]);
+	const isIdleOrReady =
+		outputLooksComplete ||
+		hasAnyWorkerOutputSignal(normalized, [
+			/\bready\b/i,
+			/\bidle\b/i,
+			/\bwaiting\b/i,
+			/\bawaiting\b/i,
+			/待機中/,
+			/入力待ち/,
+			/次の指示/,
+			/追加指示/,
+			/受信確認/,
+			/コマンド実行なし/,
+			/ツール使用なし/,
+			/ファイル変更なし/,
+			/Git操作なし/i,
+		]);
 	const isRunning = outputLooksStillRunning && !outputLooksComplete;
 	const errorSignal = detectBoundWorkerErrorSignal(normalized);
 	const hasToolUse = hasAnyWorkerOutputSignal(
@@ -14043,20 +14068,59 @@ function detectBoundWorkerCompletionSignal(text: string): {
 	const completionPatterns: Array<[RegExp, string]> = [
 		[/\bDONE_TAG\s*:/, "DONE_TAG worker report detected"],
 		[/\bEND_REPORT\b/, "END_REPORT worker report terminator detected"],
-		[/<<<DOYDECK_WORKER_RESPONSE_START>>>/i, "response envelope start detected"],
-		[/^\s*(?:#{1,4}\s*)?完了報告(?:\s|$|[:：])/m, "completion report heading detected"],
-		[/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?実施内容(?:\s|$|[:：])/m, "completion section detected: 実施内容"],
-		[/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?変更ファイル(?:\s|$|[:：])/m, "completion section detected: 変更ファイル"],
-		[/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?変更有無\s*[:：]\s*(?:なし|無し|none|no changes?)/im, "no-change report section detected: 変更有無"],
-		[/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?確認結果(?:\s|$|[:：])/m, "completion section detected: 確認結果"],
-		[/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?git diff --check\s*(?:結果)?\s*[:：]?\s*(?:PASS|成功|通過)?\b/im, "git diff --check result detected"],
-		[/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?typecheck\s*(?:結果)?\s*[:：]?\s*(?:PASS|成功|通過|未実施)?\b/im, "typecheck result section detected"],
-		[/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?git status --short\b/im, "git status section detected"],
-		[/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?未解決(?:\s*\/\s*次にやるなら)?(?:\s|$|[:：])/m, "unresolved/next section detected"],
+		[
+			/<<<DOYDECK_WORKER_RESPONSE_START>>>/i,
+			"response envelope start detected",
+		],
+		[
+			/^\s*(?:#{1,4}\s*)?完了報告(?:\s|$|[:：])/m,
+			"completion report heading detected",
+		],
+		[
+			/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?実施内容(?:\s|$|[:：])/m,
+			"completion section detected: 実施内容",
+		],
+		[
+			/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?変更ファイル(?:\s|$|[:：])/m,
+			"completion section detected: 変更ファイル",
+		],
+		[
+			/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?変更有無\s*[:：]\s*(?:なし|無し|none|no changes?)/im,
+			"no-change report section detected: 変更有無",
+		],
+		[
+			/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?確認結果(?:\s|$|[:：])/m,
+			"completion section detected: 確認結果",
+		],
+		[
+			/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?git diff --check\s*(?:結果)?\s*[:：]?\s*(?:PASS|成功|通過)?\b/im,
+			"git diff --check result detected",
+		],
+		[
+			/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?typecheck\s*(?:結果)?\s*[:：]?\s*(?:PASS|成功|通過|未実施)?\b/im,
+			"typecheck result section detected",
+		],
+		[
+			/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?git status --short\b/im,
+			"git status section detected",
+		],
+		[
+			/^\s*(?:[-*•・]\s*)?(?:#{1,4}\s*)?未解決(?:\s*\/\s*次にやるなら)?(?:\s|$|[:：])/m,
+			"unresolved/next section detected",
+		],
 		[/\bWorked for\b.+/i, "Codex worked-for summary detected"],
-		[/docs-only(?:\s+変更|\s+change)?.*(?:完了|completed|done)/i, "docs-only completion detected"],
-		[/commit\/push(?:は|を)?していません/, "commit/push not performed report detected"],
-		[/(?:作業|変更|修正|確認)(?:が)?完了しました/, "Japanese completion sentence detected"],
+		[
+			/docs-only(?:\s+変更|\s+change)?.*(?:完了|completed|done)/i,
+			"docs-only completion detected",
+		],
+		[
+			/commit\/push(?:は|を)?していません/,
+			"commit/push not performed report detected",
+		],
+		[
+			/(?:作業|変更|修正|確認)(?:が)?完了しました/,
+			"Japanese completion sentence detected",
+		],
 	];
 	for (const [pattern, reason] of completionPatterns) {
 		if (pattern.test(text)) {
@@ -14099,13 +14163,21 @@ function collectBoundWorkerCompletionEvidence(text: string): {
 	const lineMatches = (pattern: RegExp) =>
 		lines.some((line) => pattern.test(line));
 
-	if (lineMatches(/(?:対象docs|対象ファイル|対象文書|docs|本文).*(?:確認しました|確認済み|読み|十分)/i)) {
+	if (
+		lineMatches(
+			/(?:対象docs|対象ファイル|対象文書|docs|本文).*(?:確認しました|確認済み|読み|十分)/i,
+		)
+	) {
 		addEvidence("target docs checked", true);
 	}
 	if (lineMatches(/(?:すでに|既に)?十分(?:です|なため|と判断|である)/)) {
 		addEvidence("content sufficient", true);
 	}
-	if (lineMatches(/(?:編集|修正|追加修正|変更)(?:は|を)?(?:していません|なし|無し|不要)/)) {
+	if (
+		lineMatches(
+			/(?:編集|修正|追加修正|変更)(?:は|を)?(?:していません|なし|無し|不要)/,
+		)
+	) {
 		addEvidence("no edit needed", true);
 	}
 	if (lineMatches(/^変更有無\s*[:：]\s*(?:なし|無し|none|no changes?)/i)) {
@@ -14114,31 +14186,53 @@ function collectBoundWorkerCompletionEvidence(text: string): {
 	if (lineMatches(/^変更ファイル\s*[:：]\s*(?:なし|無し|none|no changes?)$/i)) {
 		addEvidence("no changed files", true);
 	}
-	if (lineMatches(/^未解決(?:\s*\/\s*次にやるなら)?\s*[:：]\s*(?:なし|無し|none)$/i)) {
+	if (
+		lineMatches(
+			/^未解決(?:\s*\/\s*次にやるなら)?\s*[:：]\s*(?:なし|無し|none)$/i,
+		)
+	) {
 		addEvidence("no unresolved items", true);
 	}
 	if (lineMatches(/^(?:確認結果|実施内容|セルフレビュー)\s*[:：]?/)) {
 		addEvidence("report section");
 	}
-	if (lineMatches(/\bgit\s+diff\s+--check\b.*(?:PASS|成功|通過|問題なし)|^(?:git diff --check\s*)?結果\s*[:：]\s*(?:PASS|成功|通過|問題なし)$/i)) {
+	if (
+		lineMatches(
+			/\bgit\s+diff\s+--check\b.*(?:PASS|成功|通過|問題なし)|^(?:git diff --check\s*)?結果\s*[:：]\s*(?:PASS|成功|通過|問題なし)$/i,
+		)
+	) {
 		addEvidence("git diff --check passed", true);
 	}
-	if (lineMatches(/\bgit\s+status\s+--short\b.*(?:clean|差分なし|変更なし)|git status clean/i)) {
+	if (
+		lineMatches(
+			/\bgit\s+status\s+--short\b.*(?:clean|差分なし|変更なし)|git status clean/i,
+		)
+	) {
 		addEvidence("git status clean", true);
 	}
 	if (lineMatches(/(?:Doy確認事項なし|Doy確認\s*[:：]\s*(?:不要|なし|無し))/)) {
 		addEvidence("no Doy confirmation");
 	}
-	if (lineMatches(/^(?:次の)?(?:Codex|Worker)?指示\s*[:：]\s*(?:不要|なし|無し)$/)) {
+	if (
+		lineMatches(/^(?:次の)?(?:Codex|Worker)?指示\s*[:：]\s*(?:不要|なし|無し)$/)
+	) {
 		addEvidence("no next instruction");
 	}
 	if (lineMatches(/^(?:STOP|STOP[。.]|STOP\s*\/)/i)) {
 		addEvidence("stop signal");
 	}
-	if (lineMatches(/(?:追加作業不要|追加のCodex作業は不要|次のCodex指示は不要|次のWorker指示は不要)/)) {
+	if (
+		lineMatches(
+			/(?:追加作業不要|追加のCodex作業は不要|次のCodex指示は不要|次のWorker指示は不要)/,
+		)
+	) {
 		addEvidence("additional work not needed", true);
 	}
-	if (/(?:受け取りました|受信しました|確認しました).*(?:現在待機中です|待機中です)/.test(normalized)) {
+	if (
+		/(?:受け取りました|受信しました|確認しました).*(?:現在待機中です|待機中です)/.test(
+			normalized,
+		)
+	) {
 		addEvidence("acknowledged and waiting", true);
 	}
 	if (/\b(?:SAFE|NOOP)_ACK\b/i.test(normalized)) {
@@ -14388,7 +14482,8 @@ function detectWorkerAckMarker({
 	return {
 		receivedInstructionAckByMarker: false,
 		ackMarkerDetected: null,
-		ackDetectionReason: "last instruction ack marker not found in response delta",
+		ackDetectionReason:
+			"last instruction ack marker not found in response delta",
 	};
 }
 
@@ -14456,7 +14551,9 @@ function getBoundWorkerLatestResponseSummary(
 	text: string,
 ): string {
 	const flags = [
-		analysis.completionDetected ? "completion detected" : "completion not detected",
+		analysis.completionDetected
+			? "completion detected"
+			: "completion not detected",
 		analysis.receivedInstructionAck ? "acknowledged" : "ack not detected",
 		analysis.isRunning
 			? "running"
@@ -14554,7 +14651,7 @@ function buildSendBoundWorkerResponseToBrowserAiPrompt({
 		"Artifact review rule:",
 		"Worker報告に成果物path / スクショpathが含まれる場合、テキストだけで最終OKにしないでください。",
 		"DoyDeckが現物添付レビューを実行できるよう、添付ファイルを参照できた場合は `AI_REFERENCED_FILE: yes`、参照できない場合は `AI_REFERENCED_FILE: no` と理由を書いてください。",
-		"現物レビュー後、追加作業が必要なら `Workerへ渡す指示:`、不要なら `STOP` を明記してください。",
+		"現物レビュー後、追加作業が必要なら人間が確認して送れる `Workerへ渡す指示:` 候補を書き、不要なら `レビュー上の追加修正なし` と明記してください。",
 		"",
 		"--- Worker Signals ---",
 		`hasError: ${hasError ? "yes" : "no"}`,
@@ -14602,7 +14699,9 @@ function findSupervisorRecognizedWorkerCandidates({
 	tabs: Tab[];
 	panes: Record<string, Pane>;
 }): CommanderControllerRecognizedWorkerCandidate[] {
-	const tabWorkspaceById = new Map(tabs.map((tab) => [tab.id, tab.workspaceId]));
+	const tabWorkspaceById = new Map(
+		tabs.map((tab) => [tab.id, tab.workspaceId]),
+	);
 	const candidates = Object.values(panes)
 		.filter((pane) => pane.type === "terminal")
 		.filter((pane) => tabWorkspaceById.get(pane.tabId) === workspaceId)
@@ -14615,8 +14714,7 @@ function findSupervisorRecognizedWorkerCandidates({
 				workerType: evidence.workerType,
 				workerIdentityOk: evidence.workerIdentity.workerIdentityOk,
 				workerIdentityStatus: evidence.workerIdentity.workerIdentityStatus,
-				workerIdentityBlockers:
-					evidence.workerIdentity.workerIdentityBlockers,
+				workerIdentityBlockers: evidence.workerIdentity.workerIdentityBlockers,
 				evidenceSummary: buildSupervisorWorkerEvidenceSummary({
 					workerType: evidence.workerType,
 					outputText: evidence.outputText,
@@ -14717,7 +14815,8 @@ function getTerminalWorkerEvidenceForPane(pane: Pane): {
 function getPaneTextField(pane: Pane, key: string): string | null {
 	const directValue = (pane as unknown as Record<string, unknown>)[key];
 	if (typeof directValue === "string" && directValue.trim()) return directValue;
-	const data = (pane as unknown as { data?: Record<string, unknown> | null }).data;
+	const data = (pane as unknown as { data?: Record<string, unknown> | null })
+		.data;
 	const dataValue = data?.[key];
 	if (typeof dataValue === "string" && dataValue.trim()) return dataValue;
 	return null;
@@ -14767,7 +14866,8 @@ function normalizeActivateWorkerPaneInput(
 	const rawPaneId =
 		(record as CommanderControllerActivateWorkerPaneInput).paneId ??
 		(record as CommanderControllerActivateWorkerPaneInput).workerPaneId;
-	const paneId = typeof rawPaneId === "string" ? rawPaneId.trim() || null : null;
+	const paneId =
+		typeof rawPaneId === "string" ? rawPaneId.trim() || null : null;
 	return {
 		paneId,
 		requireRecognizedWorker:
@@ -14839,8 +14939,9 @@ function normalizeTerminalOutputSnapshotInput(
 	const rawPaneId =
 		(record as CommanderControllerTerminalOutputSnapshotInput).paneId ??
 		(record as CommanderControllerTerminalOutputSnapshotInput).workerPaneId;
-	const rawMaxOutputChars = (record as CommanderControllerTerminalOutputSnapshotInput)
-		.maxOutputChars;
+	const rawMaxOutputChars = (
+		record as CommanderControllerTerminalOutputSnapshotInput
+	).maxOutputChars;
 	const maxOutputChars =
 		typeof rawMaxOutputChars === "number" && Number.isFinite(rawMaxOutputChars)
 			? Math.max(0, Math.min(Math.floor(rawMaxOutputChars), 50000))
@@ -14862,7 +14963,8 @@ function normalizeBoundWorkerLatestResponseInput(
 		(record as CommanderControllerBoundWorkerLatestResponseInput).responseMode,
 	).toLowerCase();
 	const includeRawOutput = normalizeControllerBooleanInput(
-		(record as CommanderControllerBoundWorkerLatestResponseInput).includeRawOutput,
+		(record as CommanderControllerBoundWorkerLatestResponseInput)
+			.includeRawOutput,
 	);
 	const responseMode: CommanderControllerResponseMode =
 		includeRawOutput === true
@@ -14914,7 +15016,8 @@ function normalizeBoundWorkerCompletionStatusInput(
 		record as CommanderControllerBoundWorkerCompletionStatusInput
 	).recentWindowMs;
 	const staleThresholdMs =
-		typeof rawStaleThresholdMs === "number" && Number.isFinite(rawStaleThresholdMs)
+		typeof rawStaleThresholdMs === "number" &&
+		Number.isFinite(rawStaleThresholdMs)
 			? Math.max(5_000, Math.min(Math.floor(rawStaleThresholdMs), 15 * 60_000))
 			: 120_000;
 	const recentWindowMs =
@@ -14931,7 +15034,8 @@ function normalizeBoundWorkerCompletionStatusInput(
 			) || null,
 		expectedSentAt:
 			normalizeControllerTextInput(
-				(record as CommanderControllerBoundWorkerCompletionStatusInput).expectedSentAt,
+				(record as CommanderControllerBoundWorkerCompletionStatusInput)
+					.expectedSentAt,
 			) || null,
 		expectedWorkerPaneId:
 			normalizeControllerTextInput(
@@ -14940,7 +15044,8 @@ function normalizeBoundWorkerCompletionStatusInput(
 			) || null,
 		expectedTabId:
 			normalizeControllerTextInput(
-				(record as CommanderControllerBoundWorkerCompletionStatusInput).expectedTabId,
+				(record as CommanderControllerBoundWorkerCompletionStatusInput)
+					.expectedTabId,
 			) || null,
 		expectedDoneTag:
 			normalizeControllerTextInput(
@@ -14962,8 +15067,7 @@ function normalizeFindTabByTitleInput(
 	const rawQuery =
 		(record as CommanderControllerFindTabByTitleInput).query ??
 		(record as CommanderControllerFindTabByTitleInput).title;
-	const query =
-		typeof rawQuery === "string" ? rawQuery.trim() || null : null;
+	const query = typeof rawQuery === "string" ? rawQuery.trim() || null : null;
 	const rawMatchMode = (record as CommanderControllerFindTabByTitleInput)
 		.matchMode;
 	const normalizedMatchMode =
@@ -15013,7 +15117,8 @@ function controllerTabMatchesTitleQuery({
 	return candidates.some((candidate) => {
 		if (!candidate) return false;
 		if (matchMode === "exact") return candidate === normalizedQuery;
-		if (matchMode === "startsWith") return candidate.startsWith(normalizedQuery);
+		if (matchMode === "startsWith")
+			return candidate.startsWith(normalizedQuery);
 		return candidate.includes(normalizedQuery);
 	});
 }
@@ -15034,10 +15139,11 @@ function normalizeBrowserAiPrepareInput(
 		(record as CommanderControllerBrowserAiPrepareInput).browserProvider;
 	return {
 		provider: normalizeBrowserAiPrepareProvider(rawProvider),
-		dryRun: (record as CommanderControllerBrowserAiPrepareInput).dryRun !== false,
+		dryRun:
+			(record as CommanderControllerBrowserAiPrepareInput).dryRun !== false,
 		navigateIfNeeded:
-			(record as CommanderControllerBrowserAiPrepareInput)
-				.navigateIfNeeded === true,
+			(record as CommanderControllerBrowserAiPrepareInput).navigateIfNeeded ===
+			true,
 		waitForReady:
 			(record as CommanderControllerBrowserAiPrepareInput).waitForReady !==
 			false,
@@ -15091,18 +15197,18 @@ function normalizeSupervisorPilotPrepareInput(
 		record as CommanderControllerSupervisorPilotPrepareInput
 	).workerPaneId;
 	const workerPaneId =
-		typeof rawWorkerPaneId === "string"
-			? rawWorkerPaneId.trim() || null
-			: null;
+		typeof rawWorkerPaneId === "string" ? rawWorkerPaneId.trim() || null : null;
 	return {
 		browserProvider: normalizeSupervisorPilotProvider(
-			(record as CommanderControllerSupervisorPilotPrepareInput).browserProvider,
+			(record as CommanderControllerSupervisorPilotPrepareInput)
+				.browserProvider,
 		),
 		bindExistingWorker:
 			(record as CommanderControllerSupervisorPilotPrepareInput)
 				.bindExistingWorker !== false,
 		dryRun:
-			(record as CommanderControllerSupervisorPilotPrepareInput).dryRun !== false,
+			(record as CommanderControllerSupervisorPilotPrepareInput).dryRun !==
+			false,
 		workerPaneId,
 		workerType: normalizeSupervisorPilotWorkerType(
 			(record as CommanderControllerSupervisorPilotPrepareInput).workerType,
@@ -15115,9 +15221,7 @@ function normalizeSupervisorPilotWorkerType(
 ): CommanderControllerAllowedWorkerType | null {
 	if (typeof value !== "string") return null;
 	const normalized = value.trim().toLowerCase();
-	return normalized === "codex" || normalized === "claude"
-		? normalized
-		: null;
+	return normalized === "codex" || normalized === "claude" ? normalized : null;
 }
 
 function normalizeSupervisorPilotProvider(
@@ -15148,7 +15252,11 @@ async function waitForSupervisorBrowserReadiness({
 	injectIntoPage,
 	expectedProvider,
 }: {
-	getRuntimeSnapshot: () => { status: string; bridgeAvailable: boolean; currentUrl: string };
+	getRuntimeSnapshot: () => {
+		status: string;
+		bridgeAvailable: boolean;
+		currentUrl: string;
+	};
 	getLiveUrl: () => string;
 	currentUrl: string;
 	injectIntoPage: (script: string) => Promise<unknown>;
@@ -15191,7 +15299,11 @@ async function waitForBrowserAiProviderReadiness({
 	expectedProvider,
 	expectedProviderLabel,
 }: {
-	getRuntimeSnapshot: () => { status: string; bridgeAvailable: boolean; currentUrl: string };
+	getRuntimeSnapshot: () => {
+		status: string;
+		bridgeAvailable: boolean;
+		currentUrl: string;
+	};
 	getLiveUrl: () => string;
 	currentUrl: string;
 	injectIntoPage: (script: string) => Promise<unknown>;
@@ -15520,7 +15632,10 @@ function getSendBrowserAiPromptBlockedMessage(blockers: string[]): string {
 	if (firstBlocker.includes("slot")) {
 		return "Confirm the active tab and Browser AI slot before sending the prompt.";
 	}
-	if (firstBlocker.includes("active tab") || firstBlocker.includes("expected")) {
+	if (
+		firstBlocker.includes("active tab") ||
+		firstBlocker.includes("expected")
+	) {
 		return "Confirm the target tab before sending the Browser AI prompt.";
 	}
 	return `Browser AI prompt send blocked: ${firstBlocker}`;

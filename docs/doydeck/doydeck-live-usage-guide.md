@@ -8,7 +8,7 @@ controller, Supervisor pilot, Browser AI, Codex, and Claude Code work.
 
 For the latest controlled-live readiness decision and remaining P1 findings,
 see [`doydeck-final-readiness-audit.md`](./doydeck-final-readiness-audit.md).
-For final practical polish around Worker residue, background loop safety,
+For final practical polish around Worker residue, manual review readiness,
 PDF/multiple-file attachments, and Browser AI thread reset, see
 [`doydeck-final-usability-polish.md`](./doydeck-final-usability-polish.md).
 
@@ -28,7 +28,7 @@ Doy確認ゲート付きで扱う。
 - DoyDeck本体開発は、外側環境 / 通常Superset / 作業側Codex・CCで進める。
 - DoyDeck safe-devは、Controller chain、Meta AI連携、実運用pilotの検証対象として使う。
 - DoyDeck本体修正をDoyDeck内Workerへ投げない。
-- 旧自律実行は人間利用の主導線から外す。DoyDeckはManual / Auto Relay Preview /
+- 旧自律実行と旧自動リレー導線は人間利用の主導線から外す。DoyDeckはManual /
   Browser AI添付レビュー / Worker手動送信を中心に使う。
 - Meta AIは旧自律実行を再実装しない。
 - Computer Useはprimary操作ではなくvisual second opinionとして扱う。
@@ -140,18 +140,18 @@ Doy確認ゲート付きで扱う。
 
 Meta AIの詳しい役割は[`meta-ai-operating-model-v2.md`](./meta-ai-operating-model-v2.md)に従う。
 Meta AIは準備係、監視係、管理係、セカンドレビュー役であり、
-Browser AI <-> Worker loopを毎回手動で再現する中継係ではない。
+Browser AIとWorkerの間を毎回手動で中継する係ではない。
 
 標準フロー:
 
 1. DoyがMeta AIへ雑に目的や複数タスクを渡す。
 2. Meta AIがタスク候補を整理し、DoyDeckに入れるものを提案する。
-3. Doyがタブ化とLoop開始を判断する。
+3. Doyがタブ化と実作業開始を判断する。
 4. Meta AIがController Commandでタブ、Browser AI、Worker、Handoffを準備する。
 5. Doyがタブ内でBrowser AIと壁打ちする。
 6. Browser AIが要件定義、Worker指示文作成、Worker結果レビューを行う。
 7. Worker AIが調査、実装、検証、self-reviewを行う。
-8. Meta AIがLoop状態、異常、Doy確認境界、Outcome記録を監視する。
+8. Meta AIが作業状態、異常、Doy確認境界、Outcome記録を監視する。
 9. 必要ならDecision Ledgerへ判断を記録する。
 10. Doyは最後に成果物、検証結果、Doy確認事項を見る。
 
@@ -279,14 +279,14 @@ Browser AIへ実ファイル添付する。
 - フォルダ、未対応拡張子、大きすぎるファイルはBLOCKEDまたはwarning。
 - PDF、複数ファイルUX、画像レビューの細部、添付済みファイル一覧取得はfuture。
 
-Loop方針:
+Manual handoff方針:
 
 - 添付資料を前提にBrowser AIがWorker指示を作る。
 - vスコープ内の追加Worker指示はDoy確認なしで継続してよい。
 - scope拡大、DB/API/認証/credentials/deploy/destructive操作、
   大きな仕様/UX判断はDoy確認で止める。
 
-## 7.2 Artifact Review Loop
+## 7.2 Artifact Review
 
 Worker完了後は、Browser AIにテキスト要約だけを返すのではなく、現物artifactを
 添付してレビューさせる。
@@ -298,11 +298,11 @@ Worker完了後は、Browser AIにテキスト要約だけを返すのではな�
 1. WorkerはDONE_TAGからEND_REPORTまでの完了報告を返す。
 2. Workerがスクショを生成する場合は`review-screenshots/*.png`に置く。
 3. Workerが成果物pathを報告に書いた場合は、`collectWorkerReportedArtifacts()`でpath候補を抽出し、存在確認と添付可否を確認する。
-4. Meta AI / Controllerは`collectLoopReviewArtifacts({ expectedTabId, requireActiveTabMatch:true })`で収集する。
+4. Meta AI / Controllerは`collectReviewArtifacts({ expectedTabId, requireActiveTabMatch:true })`で収集する。
 5. manual artifact review中はWorker完了後にDoyDeckが`collectWorkerReportedArtifacts()`を先に実行し、attachable artifactがあれば`sendWorkerReportedArtifactsToBrowserAI()`で実添付レビューへ進む。
-6. 選択ファイルやreview-screenshotsも含めたpackageなら`sendLoopArtifactsToBrowserAI()`で対応ファイルをBrowser AIへ実添付し、artifact review promptを送る。
-7. Browser AIは添付ファイル、Worker報告、検証結果を見て、`STOP`または次Worker指示を返す。
-8. vスコープ内の修正ならDoy確認なしで次Worker指示に進める。
+6. 選択ファイルやreview-screenshotsも含めたpackageなら`sendReviewArtifactsToBrowserAI()`で対応ファイルをBrowser AIへ実添付し、artifact review promptを送る。
+7. Browser AIは添付ファイル、Worker報告、検証結果を見て、`STOP`または次Worker指示案を返す。
+8. 人間が内容を確認して、必要なら次のWorker手動送信へ進める。
 
 収集対象:
 
@@ -319,7 +319,7 @@ Worker完了後は、Browser AIにテキスト要約だけを返すのではな�
   `AI_REFERENCED_FILE: yes`またはfilename言及で現物参照を確認する。
 - Browser AIが現物を参照できていない場合は、テキストレビューだけで完成扱いにしない。
 - `.env`, token, cookie, secret, `local.db`, `app-state.json`, `node_modules`, `.git`を含むpathは添付候補から除外する。
-- 旧自律実行本体は勝手に開始しない。開始済みmanual artifact reviewではWorker完了後のartifact review分岐は自動で走る。
+- 旧自律実行本体は勝手に開始しない。artifact reviewは人間が内容を確認して次の手動送信へつなぐ。
 - attachable artifactがないWorker報告はtext-only fallbackとして明示し、現物レビュー完了とは扱わない。
 - PDF/OCR/zip、複数ファイルUXの細部、添付済みファイルの長期registry UIはfuture。
 
@@ -393,7 +393,7 @@ ssh -tt -i ~/.ssh/id_ed25519 doy90@100.67.78.1 'claude --dangerously-skip-permis
 - Computer Use
   - primary操作経路ではない。
   - DoyDeck-native / CDP / Playwright / Electron側の確認を優先する。
-- Manual / Auto Relay Preview
+- Manual review
   - DoyDeckは自動往復ではなく、人間がBrowser AI判断とWorker指示を確認しながら使う。
   - 実運用ではController chain、preflight、Handoff Ledgerを監視対象として扱う。
 
@@ -463,7 +463,7 @@ Priority F: paneId activate / output capture継続改善
 Priority G: 旧自律実行撤去後の人間操作UI整理
 
 - 旧自律実行本体を作り直さない。
-- 既存旧自律実行由来の表示や文言は、Manual / Auto Relay Preview / Artifact Reviewの
+- 既存旧自律実行由来の表示や文言は、Manual review / Artifact Reviewの
   手動導線へ段階的に整理する。
 - advisory、warning、Outcomeは残してよいが、自動往復を前提にしたstop reason表示は
   主導線から外す。

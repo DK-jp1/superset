@@ -3,8 +3,7 @@ import type { CommanderSession, CommanderState } from "../commander-types";
 
 export const DOYDECK_WORKER_RESPONSE_START =
 	"<<<DOYDECK_WORKER_RESPONSE_START>>>";
-export const DOYDECK_WORKER_RESPONSE_END =
-	"<<<DOYDECK_WORKER_RESPONSE_END>>>";
+export const DOYDECK_WORKER_RESPONSE_END = "<<<DOYDECK_WORKER_RESPONSE_END>>>";
 export const DOYDECK_WORKER_RESPONSE_ENVELOPE_TEMPLATE = `DONE_TAG:DOYDECK_WORKER_REPORT
 
 実施内容:
@@ -64,7 +63,7 @@ DoyDeckの構成:
 - Center Preview: PDF / image / Office / text / codeのPreview
 - Commander: Session / Handoff / Browser AI ⇄ Worker連携
 - Terminal Worker: Claude Code / Codexなどの実装担当
-- Auto Relay Preview: Worker Responseを拾ってBrowser AIへ返す
+- Manual Relay: 人間がBrowser AIの判断を確認してからWorkerへ渡す
 
 役割分担:
 - Doy: 最終判断者、UX感覚、事業目的
@@ -76,7 +75,7 @@ Doyの好み:
 - 結論ファースト
 - 抽象論より具体アクション
 - 主導線だけ表に出す
-- 補助機能はActions / Advancedへ逃がす
+- 補助機能はController Commandまたは明示的な手動操作として扱う
 - ボタンを増やしすぎない
 - AIっぽい汎用SaaS感を避ける
 - 実在する作業ツール感を重視する
@@ -131,7 +130,7 @@ interface HandoffPromptInput {
 	browserProviderLabel: string;
 	currentUrl: string;
 	activeTerminal: string | null;
-	autoRelayMode: string;
+	operationMode: string;
 	gitSummary: HandoffGitSummary | null;
 }
 
@@ -169,11 +168,6 @@ interface WorkSessionLedgerInput {
 		bindingPolicy: string;
 		fallbackUsed: boolean;
 		reason: string | null;
-	};
-	automation: {
-		mode: string;
-		status: string;
-		lastAction: string;
 	};
 	latestWorkerReport: string;
 	latestBrowserDecision: string;
@@ -231,9 +225,7 @@ Diff stat:
 ${gitSummary.diffStat || "変更なし"}`;
 }
 
-function formatSelectedFiles(
-	files: CommanderSession["selectedFiles"],
-): string {
+function formatSelectedFiles(files: CommanderSession["selectedFiles"]): string {
 	if (files.length === 0) return "未設定。必要ならExplorerから追加してください";
 	return files
 		.map((file) => {
@@ -294,7 +286,7 @@ export function generateHandoffPrompt({
 	browserProviderLabel,
 	currentUrl,
 	activeTerminal,
-	autoRelayMode,
+	operationMode,
 	gitSummary,
 }: HandoffPromptInput): string {
 	const nextAction = latestBrowserAiDirection.trim()
@@ -363,8 +355,8 @@ ${valueOrUnset(latestBrowserAiDirection, "未取得。必要ならBrowser AI側�
 - Active Terminal: ${activeTerminal ? "connected" : "disconnected"}
 - Pane ID: ${activeTerminal || "未取得"}
 
-### Auto Relay Mode
-${autoRelayMode}
+### Operation Mode
+${operationMode}
 
 ### Git / Files
 ${formatGitSummary(gitSummary)}
@@ -390,14 +382,14 @@ export function generateWorkSessionLedgerMarkdown({
 	session,
 	browser,
 	worker,
-	automation,
 	latestWorkerReport,
 	latestBrowserDecision,
 	latestQaResult,
 }: WorkSessionLedgerInput): string {
 	const recordedOutcome = extractLatestControllerChainOutcome(session);
 	const goal = session.goal || state.goal;
-	const objective = goal.trim() || "未設定。必要ならSessionに目的を追加してください";
+	const objective =
+		goal.trim() || "未設定。必要ならSessionに目的を追加してください";
 	const currentTask =
 		session.currentTask.trim() ||
 		state.currentProblem.trim() ||
@@ -434,9 +426,9 @@ export function generateWorkSessionLedgerMarkdown({
 		? "Latest Browser AI Decisionを確認し、必要なら次のWorker指示を作成してください。"
 		: recordedOutcome?.nextAction
 			? recordedOutcome.nextAction
-		: session.currentTask.trim() || state.currentProblem.trim()
-			? "Current Taskを確認し、次の最小アクションを決めてください。"
-			: "目的と制約を整理し、最初のWorker指示を作るか判断してください。";
+			: session.currentTask.trim() || state.currentProblem.trim()
+				? "Current Taskを確認し、次の最小アクションを決めてください。"
+				: "目的と制約を整理し、最初のWorker指示を作るか判断してください。";
 	const qaLines = latestQaResult
 		? [
 				`- status: ${latestQaResult.status}`,
@@ -466,7 +458,6 @@ export function generateWorkSessionLedgerMarkdown({
 			? ""
 			: `Worker identity live check is false (${worker.workerType || "unknown"})`,
 		worker.reason ? `Worker binding reason: ${worker.reason}` : "",
-		automation.lastAction ? `Automation action: ${automation.lastAction}` : "",
 	].filter(Boolean);
 	const liveStateSection = recordedOutcome
 		? `## 現在のlive状態
@@ -495,11 +486,6 @@ ${!browser.ready || !worker.workerIdentityOk ? "注: live状態がUnsupported/un
 - terminalId: ${worker.terminalId || "未取得"}
 - reason: ${worker.reason || "なし"}
 
-### Automation State
-- mode: ${automation.mode}
-- status: ${automation.status}
-- last action: ${automation.lastAction || "なし"}
-
 ### live blockers / warnings
 ${liveWarnings.length ? liveWarnings.map((warning) => `- ${warning}`).join("\n") : "- なし"}
 `
@@ -522,11 +508,6 @@ ${liveWarnings.length ? liveWarnings.map((warning) => `- ${warning}`).join("\n")
 - paneId: ${worker.paneId || "未取得"}
 - terminalId: ${worker.terminalId || "未取得"}
 - reason: ${worker.reason || "なし"}
-
-## Automation State
-- mode: ${automation.mode}
-- status: ${automation.status}
-- last action: ${automation.lastAction || "なし"}
 `;
 	const targetFiles = session.targetFiles.length
 		? session.targetFiles.map((path) => `- ${path}`).join("\n")
@@ -607,10 +588,16 @@ export function buildHandoffLedgerRelativePath({
 	return `docs/doydeck/handoffs/${baseName}-${tabSuffix}.md`;
 }
 
+// biome-ignore lint/complexity/useRegexLiterals: constructor avoids embedding raw control characters in the source.
+const RESERVED_FILE_NAME_CHARS_PATTERN = new RegExp(
+	'[<>:"/\\\\|?*\\x00-\\x1F]',
+	"g",
+);
+
 function sanitizeHandoffLedgerFileName(value: string): string {
 	return value
 		.trim()
-		.replace(/[<>:"/\\|?*\x00-\x1F]/g, "-")
+		.replace(RESERVED_FILE_NAME_CHARS_PATTERN, "-")
 		.replace(/\s+/g, "-")
 		.replace(/-+/g, "-")
 		.replace(/^-|-$/g, "")
@@ -647,7 +634,6 @@ interface RecordedControllerChainOutcome {
 	extractedCodexInstructionSummary: string;
 	extractedDoyConfirmationItems: string;
 	notes: string;
-	automationState: string;
 	completedAt: string;
 }
 
@@ -680,11 +666,10 @@ function formatRecordedOutcomeQaLines(
 			`- Chain mode: ${recordedOutcome.chainMode || "worker-only"}`,
 			recordedOutcome.smokeType
 				? `- Smoke type: ${recordedOutcome.smokeType}`
-			: "",
+				: "",
 			"- Browser AI review: not expected",
 			`- Worker response: ${recordedOutcome.latestWorkerResponseStatus || "未取得"}`,
 			`- Worker-only smoke: ${workerOnlySmokeStatus}`,
-			`- Automation state: ${recordedOutcome.automationState || "未取得"}`,
 		]
 			.filter(Boolean)
 			.join("\n");
@@ -705,7 +690,6 @@ function formatRecordedOutcomeQaLines(
 		`- STOP: ${recordedOutcome.hasStopSignal || "false"}`,
 		`- Codex instruction: ${recordedOutcome.hasCodexInstruction || "false"}`,
 		`- Doy confirmation: ${recordedOutcome.hasDoyConfirmationItems || "false"}`,
-		`- Automation state: ${recordedOutcome.automationState || "未取得"}`,
 	].join("\n");
 }
 
@@ -728,7 +712,6 @@ ${recordedOutcome.smokeType ? `- smokeType: ${recordedOutcome.smokeType}` : ""}
 - nextAction: ${recordedOutcome.nextAction || "STOP / 追加Worker指示不要"}
 - recorded worker type: ${recordedOutcome.workerType || "未取得"}
 - recorded workerIdentityOk: ${recordedOutcome.workerIdentityOk || "未取得"}
-- Automation state at record time: ${recordedOutcome.automationState || "未取得"}
 - completedAt / recordedAt: ${recordedOutcome.completedAt || "未取得"}
 ${recordedOutcome.notes ? `- notes: ${recordedOutcome.notes}` : ""}
 `;
@@ -757,7 +740,6 @@ ${recordedOutcome.submissionNextRequiredAction ? `- Browser AI submission next a
 - recorded Browser provider: ${recordedOutcome.browserAiProvider || "未取得"}
 - recorded worker type: ${recordedOutcome.workerType || "未取得"}
 - recorded workerIdentityOk: ${recordedOutcome.workerIdentityOk || "未取得"}
-- Automation state at record time: ${recordedOutcome.automationState || "未取得"}
 - completedAt / recordedAt: ${recordedOutcome.completedAt || "未取得"}
 ${recordedOutcome.notes ? `- notes: ${recordedOutcome.notes}` : ""}
 `;
@@ -816,7 +798,6 @@ function extractLatestControllerChainOutcome(
 		),
 		extractedDoyConfirmationItems: readLine("extractedDoyConfirmationItems"),
 		notes: readLine("notes"),
-		automationState: readLine("automationState"),
 		completedAt: readLine("completedAt"),
 	};
 }

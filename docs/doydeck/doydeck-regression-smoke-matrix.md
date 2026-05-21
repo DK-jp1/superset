@@ -4,7 +4,7 @@ Status: regression smoke checklist for post-hardening DoyDeck safe-dev.
 
 Use this matrix after CommanderTab, Browser AI, Worker, Handoff, or Controller
 Command changes. It keeps past DoyDeck incidents visible without requiring a
-long Auto Loop run.
+long live run.
 
 ## 1. Always Run
 
@@ -16,8 +16,7 @@ long Auto Loop run.
 | Controller attach | CDP attach to safe-dev page | `window.__doydeckCommanderController` exists. |
 | Inventory | `getControllerCommandInventory()` | READY; new commands are listed and dangerous future commands are not marked implemented. |
 | Tabs | `listTabs()` / `getActiveTab()` | Active tab and target tab are clear before writes. |
-| Live readiness | `getLiveReadinessSummary({ expectedTabId, expectedTitle, requireActiveTabMatch:true })` | Returns READY / READY_WITH_NOTES / BLOCKED with active tab, Browser AI, Worker, Auto Loop, Artifact Review, safety, and payload budget sections. |
-| Auto Loop | `getAutoLoopPreflight()` | Auto Loop remains off/idle unless Doy explicitly starts it. |
+| Live readiness | `getLiveReadinessSummary({ expectedTabId, expectedTitle, requireActiveTabMatch:true })` | Returns READY / READY_WITH_NOTES / BLOCKED with active tab, Browser AI, Worker, Artifact Review, safety, and payload budget sections. |
 
 ## 2. Guarded Writes
 
@@ -40,7 +39,7 @@ long Auto Loop run.
 | Claude short send | `UI_REFLECTED`, `WAITING_REPLY`, or `REPLIED`; `NOT_REFLECTED` includes a clear reason. |
 | `getBrowserAiLastSubmission()` | Includes `submissionStatus`, `uiReflected`, `assistantReplyObserved`, `visualVerificationUsed`. |
 | `sendBrowserAiPrompt({ provider, prompt, expectedTabId, expectedTitle, requireActiveTabMatch:true })` | Sends a short prompt without full Handoff; reaches `UI_REFLECTED`, `WAITING_REPLY`, or `REPLIED`. |
-| `result === "injected"` bridge path | Does not auto-capture and does not count as completed send. |
+| `result === "injected"` submit path | Treated as manual-submit-required and not counted as a completed send. |
 
 ## 4. Worker Identity / Binding / Input
 
@@ -67,7 +66,7 @@ long Auto Loop run.
 | Current-run DONE_TAG / END_REPORT | COMPLETED with `workerReportExtracted:true` and `workerReportLength > 0`. |
 | Expected taskRunId mismatch | STALE or warning; no false COMPLETED. |
 | Worker unbound or identity mismatch | BLOCKED. |
-| Worker output quiet past no-activity timeout | Advisory event / waiting status; Auto Loop does not hard-stop only because output is quiet. |
+| Worker output quiet past no-activity timeout | Advisory event / waiting status; no follow-up is sent only because output is quiet. |
 | Worker watcher reaches hard max wait while still active | Advisory event; watcher remains observable instead of forcing `stopped`. |
 
 ## 6. Worker Report Extraction / Packaging
@@ -88,8 +87,8 @@ long Auto Loop run.
 
 | Smoke | Expected |
 | --- | --- |
-| Actual `git push` command | Advisory finding; DoyDeck Auto Loop does not hard-stop on this text. |
-| Actual `rm -rf` command | Advisory finding; DoyDeck Auto Loop does not hard-stop on this text. |
+| Actual `git push` command | Advisory finding; DoyDeck does not hard-stop on this text. |
+| Actual `rm -rf` command | Advisory finding; DoyDeck does not hard-stop on this text. |
 | Negative instructions such as `pushはしないでください` | No block. |
 | Local checkpoint commit after verification | Warning only. |
 | Worker report saying commit/push were not performed | No block. |
@@ -109,20 +108,16 @@ long Auto Loop run.
 | Multiple Browser AI file attachment | Up to 5 files are prepared; overflow files are returned as skipped instead of causing a request error. |
 | PDF Browser AI attachment | `.pdf` is a supported real attachment type; no OCR or PDF text extraction is performed. |
 | Browser AI file review prompt | Optional review prompt reaches `UI_REFLECTED`, `WAITING_REPLY`, or `REPLIED`; text fallback alone is not success. |
-| Folder / missing path / unsupported type attachment | BLOCKED or skipped with clear reason; no Worker send or Auto Loop start. |
+| Folder / missing path / unsupported type attachment | BLOCKED or skipped with clear reason; no Worker send. |
 | Browser AI attached-file inventory | `getBrowserAiAttachedFiles()` returns visible filenames/file-input names without sending. |
-| Loop artifact collection | `collectLoopReviewArtifacts()` collects selected files, `review-screenshots/*`, and Worker DONE_TAG report metadata without starting Auto Loop. |
-| Loop artifact review send | `sendLoopArtifactsToBrowserAI({ dryRun:true })` returns attachable artifacts and review prompt; live send must verify filename/chip UI reflection. |
+| Artifact collection | `collectReviewArtifacts()` collects selected files, `review-screenshots/*`, and Worker DONE_TAG report metadata without sending Worker instructions. |
+| Artifact review send | `sendReviewArtifactsToBrowserAI({ dryRun:true })` returns attachable artifacts and review prompt; live send must verify filename/chip UI reflection. |
 | Worker-reported artifact extraction | `collectWorkerReportedArtifacts()` extracts supported paths from DONE_TAG report, skips secret/local DB/node_modules/.git paths, and separates missing/unsupported files. |
-| Worker-reported artifact Browser AI review | `sendWorkerReportedArtifactsToBrowserAI()` attaches extracted files and sends Browser AI review prompt without starting Auto Loop or sending Worker instructions. Browser AI should reply with `AI_REFERENCED_FILE: yes/no` plus `STOP` or `Workerへ渡す指示:`. |
+| Worker-reported artifact Browser AI review | `sendWorkerReportedArtifactsToBrowserAI()` attaches extracted files and sends Browser AI review prompt without sending Worker instructions. Browser AI should reply with `AI_REFERENCED_FILE: yes/no` plus review notes or a human-approved `Workerへ渡す指示:` candidate. |
 | Worker report without artifact paths | `collectWorkerReportedArtifacts()` returns no attachable files and a warning/blocker path for artifact review rather than treating text-only review as real-file review. |
-| Bounded-loop Worker artifact route | When Auto Loop sees a Worker response preview with attachable DONE_TAG artifact paths, it calls Worker-reported artifact collection/send before the legacy text review path. No-artifact reports fall back to text review with an explicit "text-only" note. |
-| Bounded-loop artifact review E2E | Worker-reported artifact path is attached through `sendWorkerReportedArtifactsToBrowserAI()`, Browser AI replies with `AI_REFERENCED_FILE: yes`, and the loop resolves to STOP without `artifact attachment command unavailable`. |
-| Budgeted completion / Polish Mode | If Browser AI returns basic-complete STOP while `remainingTurnBudget > 0`, DoyDeck requests a Polish Mode review instead of stopping. It accepts early STOP only with `QUALITY_STATUS: ready-candidate` and `STOP_REASON:`. |
 | Artifact attachment chip appears late / `NOT_ATTACHED` first pass | Advisory plus text fallback or retry path; no hard stop unless a structural guarded-write blocker appears. |
-| Artifact review reply omits `AI_REFERENCED_FILE: yes` temporarily | Advisory diagnostic; Browser AI STOP is not accepted as artifact-backed, but Auto Loop is not stopped solely by the missing marker. |
-| Browser AI reply has no `Workerへ渡す指示` block | Advisory diagnostic and visible preview; no automatic `stopped` state unless the reply explicitly requests STOP. |
-| Active-tab loop safety | Auto Loop is armed to the active tab and aborts on tab switch; background/multi-tab concurrent loop scheduling remains out of scope. |
+| Artifact review reply omits `AI_REFERENCED_FILE: yes` temporarily | Advisory diagnostic; Browser AI STOP is not accepted as artifact-backed solely by the missing marker. |
+| Browser AI reply has no `Workerへ渡す指示` block | Advisory diagnostic and visible preview; no follow-up is sent unless a human chooses to send it. |
 
 ## 9. Docs / Prompt Contract
 
@@ -139,9 +134,9 @@ long Auto Loop run.
 - Run sections 1, 2, 3, 4, and 5 for CommanderTab runtime changes.
 - Run sections 1, 3, and 6 for Browser AI submission or Worker report changes.
 - Run sections 1, 7, and relevant Worker sections for safety classifier changes.
-- Run sections 1, 3, 6, and 8 for Artifact Review Loop changes.
+- Run sections 1, 3, 6, and 8 for Artifact Review changes.
 - Run sections 1 and 8 for Explorer/file handling changes.
 - Run sections 1 and 9 for docs-only prompt/role changes.
 - For pre-task live operation, run the short pack in
   [`doydeck-live-readiness-smoke-pack.md`](./doydeck-live-readiness-smoke-pack.md)
-  before starting Auto Loop.
+  before starting manual Browser AI / Worker handoff.

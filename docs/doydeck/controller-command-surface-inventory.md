@@ -122,8 +122,8 @@ Implemented:
 | Browser AI | `sendTargetFilesReviewToBrowserAI(input?)` | implemented | Alias for `attachTargetFilesToBrowserAI`; can attach files and send a short review prompt. |
 | Browser AI | `attachSelectedExplorerFileToBrowserAI(input?)` | implemented | Alias used by the Explorer UI action for the selected file. |
 | Browser AI | `getBrowserAiAttachedFiles(input?)` | implemented | Read-only visible attachment/chip inventory for the active Browser AI slot. |
-| Browser AI | `collectLoopReviewArtifacts(input?)` | implemented | Collects selected files, review screenshots, and Worker DONE_TAG report metadata for loop review. |
-| Browser AI | `sendReviewArtifactsToBrowserAI(input?)` | implemented | Attaches collected loop artifacts to Browser AI and can send a manual-review artifact review prompt. |
+| Browser AI | `collectReviewArtifacts(input?)` | implemented | Collects selected files, review screenshots, and Worker DONE_TAG report metadata for manual artifact review. |
+| Browser AI | `sendReviewArtifactsToBrowserAI(input?)` | implemented | Attaches collected artifacts to Browser AI and can send a manual-review artifact review prompt. |
 | Browser AI | `extractArtifactsFromWorkerReport(input?)` | implemented | Extracts supported artifact path candidates from a Worker DONE_TAG report without sending. |
 | Browser AI | `collectWorkerReportedArtifacts(input?)` | implemented | Resolves Worker-reported artifact paths, checks existence/attachability, and separates skipped candidates. |
 | Browser AI | `sendWorkerReportedArtifactsToBrowserAI(input?)` | implemented | Attaches Worker-reported artifact files to Browser AI and sends an artifact review prompt. |
@@ -185,7 +185,7 @@ should be called with an expected-tab guard in normal operation:
 | Send Handoff | implemented | done | `sendHandoffToBrowserAI()`. |
 | Send short prompt | implemented | done | `sendBrowserAiPrompt({ provider, prompt, expectedTabId, expectedTitle, requireActiveTabMatch })`. |
 | Attach Explorer files | implemented | done | `attachTargetFilesToBrowserAI({ targetPaths, provider, sendPromptAfterAttach })` uses the Browser AI native file input, skips overflow beyond 5 files, blocks folders/unsupported files, and does not treat text fallback as success. |
-| Attach Worker-reported artifacts | implemented | done | `sendWorkerReportedArtifactsToBrowserAI({ workerReportText, expectedTabId, requireActiveTabMatch:true })` extracts paths from DONE_TAG reports, skips sensitive or unsupported paths, attaches real files, and sends a Browser AI review prompt that requires `AI_REFERENCED_FILE: yes/no`, `STOP`, or `Workerへ渡す指示:`. Bounded loop now calls this route before falling back to text-only Worker review. |
+| Attach Worker-reported artifacts | implemented | done | `sendWorkerReportedArtifactsToBrowserAI({ workerReportText, expectedTabId, requireActiveTabMatch:true })` extracts paths from DONE_TAG reports, skips sensitive or unsupported paths, attaches real files, and sends a Browser AI review prompt that asks for `AI_REFERENCED_FILE: yes/no` plus review notes or a human-approved `Workerへ渡す指示:` candidate. Use it from the manual review path before any text-only Worker review. |
 | Read latest reply | implemented | done | `getBrowserAiLatestReply()` / `readBrowserAiLatestReply()`. |
 | Get last submission | implemented | done | `getBrowserAiLastSubmission()`. |
 | Send target-doc Browser AI review | partially implemented | P1 | S9.2 support exists in prompt flow, but a narrower command could reduce prompt boilerplate. |

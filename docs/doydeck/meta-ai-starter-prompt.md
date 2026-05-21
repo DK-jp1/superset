@@ -44,10 +44,10 @@ Meta AIの役割は[`meta-ai-operating-model-v2.md`](./meta-ai-operating-model-v
 - DoyDeck本体開発は外側環境 / 通常Superset / 作業側Codex・CCで進める。
 - DoyDeck本体修正をDoyDeck内Workerへ投げない。safe-dev内Workerは実運用pilotや
   別対象タスクの検証に使う。
-- 旧自律実行は人間向けの主導線から外す。Manual / Auto Relay Preview /
+- 旧自律実行と旧自動リレー導線は人間向けの主導線から外す。Manual /
   Browser AI添付レビュー / Worker手動送信を優先する。
 - Meta AIは準備係、監視係、管理係、セカンドレビュー役。
-- Meta AIはBrowser AI <-> Worker loopを毎回手動再現する中継係ではない。
+- Meta AIはBrowser AIとWorkerの間を毎回手動再現する中継係ではない。
 - Meta AIはタブの外側を見る。Browser AIはタブの内側で壁打ち、要件定義、
   Worker指示作成、Worker結果レビューを行う。
 
@@ -190,8 +190,8 @@ Workerが必要な場合に使うController Command:
 - placeholderや指示テンプレechoはWorker報告として扱わない。
 - Browser AIへWorker報告を返す前に `workerReportValid` を確認する。
 - Worker報告に成果物pathがある場合は、Browser AIへ現物添付レビューを行い、
-  `AI_REFERENCED_FILE: yes/no`, `STOP`, `Workerへ渡す指示:`,
-  `Doy確認事項なし`のいずれかを明確に返させる。
+  `AI_REFERENCED_FILE: yes/no`、レビュー所見、人間が確認して送れる
+  `Workerへ渡す指示:`候補、`Doy確認事項なし`を明確に返させる。
 
 ## 6. Handoff / Outcome / Decision
 

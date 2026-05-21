@@ -62,26 +62,6 @@ async function getScopedHost(organizationId: string, hostId: string) {
 	);
 }
 
-async function _getScopedWorkspace(
-	organizationId: string,
-	workspaceId: string,
-) {
-	return requireOrgScopedResource(
-		() =>
-			dbWs.query.v2Workspaces.findFirst({
-				columns: {
-					id: true,
-					organizationId: true,
-				},
-				where: eq(v2Workspaces.id, workspaceId),
-			}),
-		{
-			message: "Workspace not found in this organization",
-			organizationId,
-		},
-	);
-}
-
 async function getWorkspaceAccess(
 	userId: string,
 	workspaceId: string,

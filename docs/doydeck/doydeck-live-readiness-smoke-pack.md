@@ -4,10 +4,10 @@ Status: initial smoke pack, 2026-05-20.
 
 Use this before starting a real task in DoyDeck safe-dev. It answers:
 
-> Is the current tab ready for Browser AI, Worker, Auto Loop, and Artifact
+> Is the current tab ready for Browser AI, Worker, and Artifact
 > Review, or what must be fixed first?
 
-This pack is intentionally short. It does not start Auto Loop, send Worker
+This pack is intentionally short. It does not send Worker
 instructions, mutate local DB/app-state, or perform destructive operations.
 
 ## Primary Command
@@ -33,9 +33,7 @@ The command is read-only. It aggregates existing Controller checks and returns:
 - `activeTab`
 - `browserAiStatus`
 - `workerStatus`
-- `autoLoopStatus`
 - `artifactReviewStatus`
-- `safetyGuardStatus`
 - `payloadBudgetStatus`
 - `blockers`
 - `warnings`
@@ -48,9 +46,7 @@ The command is read-only. It aggregates existing Controller checks and returns:
 | Active tab | Whether active tab and expected tab/title match. |
 | Browser AI | Provider readiness, composer injection, and short-prompt readiness. |
 | Worker | Recognized Worker count, bound Worker, input readiness, and task-run status. |
-| Auto Loop | Whether preflight is READY / READY_WITH_NOTES / BLOCKED and whether mode is idle/off. |
 | Artifact Review | Whether attachment and Worker-reported artifact commands are present. |
-| Safety guard | Whether forbidden-policy text is allowed while an actual `git push` command is recorded as advisory only. |
 | Payload budget | Whether the Handoff Ledger is within budget and summary-mode status is used. |
 
 ## Manual Smoke Steps
@@ -69,7 +65,7 @@ Use the summary first. Then run only the checks needed for the task.
    - Treat `shortPromptReady:false` as a send-readiness warning. It usually means the composer exists but the submit target was not visible yet.
    - Optional short smoke:
      `sendBrowserAiPrompt({ prompt:"受信確認のみ。DoyDeck live readiness smokeです。", expectedTabId, expectedTitle, requireActiveTabMatch:true })`
-   - If the optional smoke returns `NOT_REFLECTED`, do not start Loop. Reload/prepare the provider and rerun this pack.
+   - If the optional smoke returns `NOT_REFLECTED`, do not continue Browser AI review. Reload/prepare the provider and rerun this pack.
 
 3. Worker:
    - `listRecognizedWorkers()`
@@ -77,11 +73,7 @@ Use the summary first. Then run only the checks needed for the task.
    - `getWorkerInputReadiness()`
    - `getTaskRunStatus({ responseMode:"summary" })`
 
-4. Auto Loop:
-   - `getAutoLoopPreflight()`
-   - Do not start Auto Loop unless Doy has approved the task.
-
-5. Artifact Review:
+4. Artifact Review:
    - Confirm `artifactReviewStatus.commandsAvailable:true`.
    - Optional attachment smoke:
      `attachTargetFilesToBrowserAI({ targetPaths:[smallMdPath], expectedTabId, expectedTitle, requireActiveTabMatch:true, dryRun:false })`
@@ -92,8 +84,8 @@ Use the summary first. Then run only the checks needed for the task.
 | Summary result | Meaning | Action |
 | --- | --- | --- |
 | `READY` | The tab is ready for the short live-readiness path. | Start task flow only after Doy approves the task. |
-| `READY_WITH_NOTES` | Usable, but warnings matter. | Read warnings before Loop; warnings should remain advisory unless they are a structural send/write mismatch. |
-| `BLOCKED` | Do not start Loop. | Resolve the first blocker in `nextRecommendedAction`. |
+| `READY_WITH_NOTES` | Usable, but warnings matter. | Read warnings before manual handoff; warnings should remain advisory unless they are a structural send/write mismatch. |
+| `BLOCKED` | Do not continue the handoff. | Resolve the first blocker in `nextRecommendedAction`. |
 
 Common blockers:
 
@@ -102,17 +94,17 @@ Common blockers:
 - `Task run: ...`: task-run status is stale, blocked, or not bound.
 - `active tab mismatch`: activate the intended tab before guarded writes.
 
-Loop diagnostics such as Worker no-activity timeout, Browser AI no-activity
-timeout, hard-max wait timeout, delayed attachment chips, missing
+Manual handoff diagnostics such as Worker no-activity timeout, Browser AI
+no-activity timeout, hard-max wait timeout, delayed attachment chips, missing
 `AI_REFERENCED_FILE`, provider notes, and payload warnings should be reported as
-warnings/advisories. They are not by themselves a reason for DoyDeck to hard
-stop an already running bounded loop.
+warnings/advisories. They are not by themselves a reason for DoyDeck to block
+human-directed handoff.
 
 ## Guardrails
 
 Do not use this pack to:
 
-- start a long Auto Loop,
+- start any background run,
 - send a Worker instruction,
 - push/deploy,
 - clear/delete Worker input,

@@ -1,6 +1,6 @@
 import { Button } from "@superset/ui/button";
 import { Textarea } from "@superset/ui/textarea";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
 	LuCheck,
 	LuClipboard,
@@ -19,65 +19,6 @@ type SessionEditableTextField = Exclude<
 	keyof CommanderSession,
 	"targetFiles" | "selectedFiles"
 >;
-
-export function TerminalSendPreview({
-	text,
-	label,
-	onConfirm,
-	onCancel,
-	hasTerminal = true,
-}: {
-	text: string;
-	label: string;
-	onConfirm: (options?: { submit?: boolean }) => void;
-	onCancel: () => void;
-	hasTerminal?: boolean;
-}) {
-	const canSend = hasTerminal && text.trim().length > 0;
-
-	return (
-		<div className="flex flex-col gap-1.5 p-1.5 border-t bg-muted/30">
-			<div className="flex items-center justify-between">
-				<span className="text-[10px] font-medium text-muted-foreground">
-					Send {label} to Terminal
-				</span>
-				<div className="flex flex-wrap justify-end gap-0.5">
-					<Button
-						variant="ghost"
-						size="sm"
-						className="h-5 w-5 p-0"
-						onClick={onCancel}
-					>
-						<LuX className="size-3" />
-					</Button>
-					<Button
-						variant="default"
-						size="sm"
-						className="h-5 px-1.5 gap-0.5 text-[10px]"
-						disabled={!canSend}
-						onClick={() => onConfirm()}
-					>
-						<LuCheck className="size-2.5" />
-						Send
-					</Button>
-					<Button
-						variant="secondary"
-						size="sm"
-						className="h-5 px-1.5 gap-0.5 text-[10px]"
-						disabled={!canSend}
-						onClick={() => onConfirm({ submit: true })}
-					>
-						<LuCornerDownLeft className="size-2.5" />
-						Send + Enter
-					</Button>
-				</div>
-			</div>
-			<pre className="text-[10px] font-mono bg-muted rounded p-1.5 max-h-24 overflow-y-auto whitespace-pre-wrap break-all">
-				{text}
-			</pre>
-		</div>
-	);
-}
 
 export function CapturePreview({
 	text,
@@ -209,70 +150,6 @@ export function EditableTerminalPreview({
 				rows={6}
 				className="resize-y font-mono text-[10px] max-h-48"
 			/>
-		</div>
-	);
-}
-
-export function WorkerResponsePreview({
-	text,
-	confidence,
-	reasons,
-	hasProvider,
-	onSendToBrowserAI,
-	onCancel,
-}: {
-	text: string;
-	confidence: "high" | "medium" | "low";
-	reasons: string[];
-	hasProvider: boolean;
-	onSendToBrowserAI: () => void;
-	onCancel: () => void;
-}) {
-	const canSend = hasProvider && text.trim().length > 0;
-	const confidenceLabel =
-		confidence === "high"
-			? "High confidence"
-			: confidence === "medium"
-				? "Medium confidence"
-				: "Low confidence";
-	const reasonText = reasons.length > 0 ? reasons.join(", ") : "no reason";
-
-	return (
-		<div className="flex flex-col gap-1.5 p-1.5 border-b bg-muted/30">
-			<div className="flex items-center justify-between">
-				<div className="flex flex-col">
-					<span className="text-[10px] font-medium text-muted-foreground">
-						Worker Response Preview
-					</span>
-					<span className="text-[9px] text-muted-foreground">
-						{confidenceLabel}
-						{confidence === "low" ? " · 確認推奨" : ""} · {reasonText}
-					</span>
-				</div>
-				<div className="flex flex-wrap justify-end gap-0.5">
-					<Button
-						variant="ghost"
-						size="sm"
-						className="h-5 w-5 p-0"
-						onClick={onCancel}
-					>
-						<LuX className="size-3" />
-					</Button>
-					<Button
-						variant="default"
-						size="sm"
-						className="h-5 px-1.5 gap-0.5 text-[10px]"
-						disabled={!canSend}
-						onClick={onSendToBrowserAI}
-					>
-						<LuSend className="size-2.5" />
-						Send to Browser AI
-					</Button>
-				</div>
-			</div>
-			<pre className="text-[10px] font-mono bg-muted rounded p-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap break-all">
-				{text}
-			</pre>
 		</div>
 	);
 }
@@ -521,17 +398,23 @@ function SessionTextarea({
 	onChange: (value: string) => void;
 	rows?: number;
 }) {
+	const textareaId = useId();
+
 	return (
-		<label className="flex flex-col gap-0.5">
-			<span className="text-[9px] font-medium text-muted-foreground">
+		<div className="flex flex-col gap-0.5">
+			<label
+				htmlFor={textareaId}
+				className="text-[9px] font-medium text-muted-foreground"
+			>
 				{label}
-			</span>
+			</label>
 			<Textarea
+				id={textareaId}
 				value={value}
 				onChange={(event) => onChange(event.target.value)}
 				rows={rows}
 				className="resize-y font-mono text-[10px]"
 			/>
-		</label>
+		</div>
 	);
 }
