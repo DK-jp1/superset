@@ -25,6 +25,7 @@ import { createServer, type Server, Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { SUPERSET_DIR_NAME } from "shared/constants";
+import { getTerminalHostEndpoint, IS_WINDOWS } from "../lib/terminal-host/endpoint";
 import {
 	type CancelCreateOrAttachRequest,
 	type ClearScrollbackRequest,
@@ -60,8 +61,9 @@ const DAEMON_VERSION = "1.0.0";
 const SUPERSET_HOME_DIR =
 	process.env.SUPERSET_HOME_DIR || join(homedir(), SUPERSET_DIR_NAME);
 
-// Socket and token paths
-const SOCKET_PATH = join(SUPERSET_HOME_DIR, "terminal-host.sock");
+// Socket and token paths.
+// On Windows SOCKET_PATH is a named pipe (not a filesystem path); see endpoint.ts.
+const SOCKET_PATH = getTerminalHostEndpoint(SUPERSET_HOME_DIR);
 const TOKEN_PATH = join(SUPERSET_HOME_DIR, "terminal-host.token");
 const PID_PATH = join(SUPERSET_HOME_DIR, "terminal-host.pid");
 
@@ -659,7 +661,9 @@ function handleConnection(socket: Socket) {
  */
 function isSocketLive(): Promise<boolean> {
 	return new Promise((resolve) => {
-		if (!existsSync(SOCKET_PATH)) {
+		// On Windows the endpoint is a named pipe, not a file; skip the FS check
+		// and probe by connecting directly.
+		if (!IS_WINDOWS && !existsSync(SOCKET_PATH)) {
 			resolve(false);
 			return;
 		}
@@ -701,7 +705,14 @@ async function startServer(): Promise<void> {
 
 	// Check if socket is live before removing it
 	// This prevents orphaning a running daemon
-	if (existsSync(SOCKET_PATH)) {
+	if (IS_WINDOWS) {
+		// Named pipe: there is no stale file to remove. If a live daemon already
+		// holds the pipe, refuse to start (listen would otherwise fail with EADDRINUSE).
+		if (await isSocketLive()) {
+			log("error", "Another daemon is already running and responsive");
+			throw new Error("Another daemon is already running");
+		}
+	} else if (existsSync(SOCKET_PATH)) {
 		const isLive = await isSocketLive();
 		if (isLive) {
 			log("error", "Another daemon is already running and responsive");
@@ -764,11 +775,14 @@ async function startServer(): Promise<void> {
 		});
 
 		newServer.listen(SOCKET_PATH, () => {
-			// Set socket permissions (readable/writable by owner only)
-			try {
-				chmodSync(SOCKET_PATH, 0o600);
-			} catch {
-				// May fail on some systems, that's okay - directory permissions protect us
+			// Set socket permissions (readable/writable by owner only).
+			// Not applicable to Windows named pipes.
+			if (!IS_WINDOWS) {
+				try {
+					chmodSync(SOCKET_PATH, 0o600);
+				} catch {
+					// May fail on some systems, that's okay - directory permissions protect us
+				}
 			}
 
 			// Write PID file
@@ -800,7 +814,8 @@ async function stopServer(): Promise<void> {
 	});
 
 	try {
-		if (existsSync(SOCKET_PATH)) unlinkSync(SOCKET_PATH);
+		// SOCKET_PATH is a named pipe on Windows (not a file); only POSIX has a socket file to unlink.
+		if (!IS_WINDOWS && existsSync(SOCKET_PATH)) unlinkSync(SOCKET_PATH);
 		if (existsSync(PID_PATH)) unlinkSync(PID_PATH);
 	} catch {
 		// Best effort cleanup

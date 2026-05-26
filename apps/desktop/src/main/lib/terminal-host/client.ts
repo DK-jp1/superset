@@ -30,6 +30,7 @@ import { app } from "electron";
 import { SUPERSET_DIR_NAME } from "shared/constants";
 import { throwIfAborted } from "../terminal/abort";
 import { TerminalAttachCanceledError } from "../terminal/errors";
+import { getTerminalHostEndpoint, IS_WINDOWS } from "./endpoint";
 import {
 	type CancelCreateOrAttachRequest,
 	type ClearScrollbackRequest,
@@ -74,7 +75,8 @@ const DEBUG_CLIENT = process.env.SUPERSET_TERMINAL_DEBUG === "1";
 const SUPERSET_HOME_DIR =
 	process.env.SUPERSET_HOME_DIR || join(homedir(), SUPERSET_DIR_NAME);
 
-const SOCKET_PATH = join(SUPERSET_HOME_DIR, "terminal-host.sock");
+// On Windows SOCKET_PATH is a named pipe (not a filesystem path); see endpoint.ts.
+const SOCKET_PATH = getTerminalHostEndpoint(SUPERSET_HOME_DIR);
 const TOKEN_PATH = join(SUPERSET_HOME_DIR, "terminal-host.token");
 const PID_PATH = join(SUPERSET_HOME_DIR, "terminal-host.pid");
 const SPAWN_LOCK_PATH = join(SUPERSET_HOME_DIR, "terminal-host.spawn.lock");
@@ -498,7 +500,9 @@ export class TerminalHostClient extends EventEmitter {
 
 	private async tryConnectControl(): Promise<boolean> {
 		return new Promise((resolve) => {
-			if (!existsSync(SOCKET_PATH)) {
+			// On Windows the endpoint is a named pipe, not a file; skip the FS
+			// pre-check and probe by connecting directly.
+			if (!IS_WINDOWS && !existsSync(SOCKET_PATH)) {
 				resolve(false);
 				return;
 			}
@@ -546,7 +550,9 @@ export class TerminalHostClient extends EventEmitter {
 
 	private async tryConnectStream(): Promise<boolean> {
 		return new Promise((resolve) => {
-			if (!existsSync(SOCKET_PATH)) {
+			// On Windows the endpoint is a named pipe, not a file; skip the FS
+			// pre-check and probe by connecting directly.
+			if (!IS_WINDOWS && !existsSync(SOCKET_PATH)) {
 				resolve(false);
 				return;
 			}
@@ -900,7 +906,8 @@ export class TerminalHostClient extends EventEmitter {
 	}: {
 		killSessions?: boolean;
 	} = {}): Promise<void> {
-		if (!existsSync(SOCKET_PATH)) return;
+		// Windows named pipe is not a file; attempt to connect regardless.
+		if (!IS_WINDOWS && !existsSync(SOCKET_PATH)) return;
 
 		const token = this.readAuthToken();
 
@@ -995,7 +1002,7 @@ export class TerminalHostClient extends EventEmitter {
 		const timeoutMs = 2000;
 
 		while (Date.now() - startTime < timeoutMs) {
-			if (!existsSync(SOCKET_PATH)) return;
+			if (!IS_WINDOWS && !existsSync(SOCKET_PATH)) return;
 			const live = await this.isSocketLive();
 			if (!live) return;
 			await this.sleep(100);
@@ -1012,7 +1019,9 @@ export class TerminalHostClient extends EventEmitter {
 	 */
 	private isSocketLive(): Promise<boolean> {
 		return new Promise((resolve) => {
-			if (!existsSync(SOCKET_PATH)) {
+			// On Windows the endpoint is a named pipe, not a file; skip the FS
+			// pre-check and probe by connecting directly.
+			if (!IS_WINDOWS && !existsSync(SOCKET_PATH)) {
 				resolve(false);
 				return;
 			}
@@ -1092,9 +1101,11 @@ export class TerminalHostClient extends EventEmitter {
 	 * Spawn the daemon process if not running
 	 */
 	private async spawnDaemon(): Promise<void> {
-		// Check if socket is live first - this is the authoritative check
-		// PID file can be stale if daemon crashed and PID was reused by another process
-		if (existsSync(SOCKET_PATH)) {
+		// Check if the daemon is live first - this is the authoritative check.
+		// PID file can be stale if daemon crashed and PID was reused by another process.
+		// On Windows the endpoint is a named pipe (no file), so probe by connecting.
+		const socketPresent = IS_WINDOWS || existsSync(SOCKET_PATH);
+		if (socketPresent) {
 			const isLive = await this.isSocketLive();
 			if (isLive) {
 				if (DEBUG_CLIENT) {
@@ -1103,14 +1114,16 @@ export class TerminalHostClient extends EventEmitter {
 				return;
 			}
 
-			// Socket exists but not responsive - safe to remove
-			if (DEBUG_CLIENT) {
-				console.log("[TerminalHostClient] Removing stale socket file");
-			}
-			try {
-				unlinkSync(SOCKET_PATH);
-			} catch {
-				// Ignore - might not have permission
+			// Socket exists but not responsive - safe to remove (POSIX socket file only)
+			if (!IS_WINDOWS) {
+				if (DEBUG_CLIENT) {
+					console.log("[TerminalHostClient] Removing stale socket file");
+				}
+				try {
+					unlinkSync(SOCKET_PATH);
+				} catch {
+					// Ignore - might not have permission
+				}
 			}
 		}
 
@@ -1263,9 +1276,15 @@ export class TerminalHostClient extends EventEmitter {
 		const startTime = Date.now();
 
 		while (Date.now() - startTime < SPAWN_WAIT_MS) {
-			if (existsSync(SOCKET_PATH)) {
-				// Give it a moment to start listening
-				await this.sleep(200);
+			// POSIX: the socket file appears just before listen() completes.
+			// Windows: the named pipe is not a file, so probe by connecting.
+			const ready = IS_WINDOWS
+				? await this.isSocketLive()
+				: existsSync(SOCKET_PATH);
+			if (ready) {
+				// Give it a moment to start listening (POSIX only; on Windows
+				// isSocketLive already confirmed an accepted connection).
+				if (!IS_WINDOWS) await this.sleep(200);
 				return;
 			}
 			await this.sleep(100);
