@@ -1251,6 +1251,9 @@ export const createProjectsRouter = (getWindow: () => BrowserWindow | null) => {
 				if (!existsSync(input.path)) {
 					throw new Error("Path does not exist");
 				}
+				if (!statSync(input.path).isDirectory()) {
+					throw new Error("Please select a folder, not a file");
+				}
 				const project = upsertProject(input.path, "");
 				await ensureFolderWorkspace(project);
 

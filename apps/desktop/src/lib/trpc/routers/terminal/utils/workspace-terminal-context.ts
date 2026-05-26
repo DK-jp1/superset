@@ -52,7 +52,9 @@ function loadWorkspaceTerminalContext(
 	return {
 		workspace: row.workspace,
 		workspacePath:
-			row.workspace.type === "branch"
+			// "branch" and "folder" (DoyDeck non-git) both work in-place in the
+			// project's mainRepoPath; only "worktree" uses a separate worktree dir.
+			row.workspace.type === "branch" || row.workspace.type === "folder"
 				? (row.mainRepoPath ?? undefined)
 				: (row.worktreePath ?? undefined),
 		rootPath: row.mainRepoPath ?? undefined,

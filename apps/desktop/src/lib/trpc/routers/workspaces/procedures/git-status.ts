@@ -102,6 +102,19 @@ export const createGitStatusProcedures = () => {
 				if (!workspace) {
 					throw new Error(`Workspace ${input.workspaceId} not found`);
 				}
+				// DoyDeck folder workspaces are non-git: nothing to refresh.
+				if (workspace.type === "folder") {
+					return {
+						gitStatus: {
+							branch: "",
+							needsRebase: false,
+							ahead: 0,
+							behind: 0,
+							lastRefreshed: Date.now(),
+						},
+						defaultBranch: null,
+					};
+				}
 
 				const repoPath = getWorkspacePath(workspace);
 				if (!repoPath) {
@@ -164,6 +177,10 @@ export const createGitStatusProcedures = () => {
 				if (!workspace) {
 					return { ahead: 0, behind: 0 };
 				}
+				// DoyDeck folder workspaces are non-git: no ahead/behind.
+				if (workspace.type === "folder") {
+					return { ahead: 0, behind: 0 };
+				}
 
 				const project = getProject(workspace.projectId);
 				if (!project) {
@@ -181,6 +198,10 @@ export const createGitStatusProcedures = () => {
 			.query(async ({ input }) => {
 				const workspace = getWorkspace(input.workspaceId);
 				if (!workspace) {
+					return null;
+				}
+				// DoyDeck folder workspaces are non-git: no GitHub PR status.
+				if (workspace.type === "folder") {
 					return null;
 				}
 
@@ -219,6 +240,10 @@ export const createGitStatusProcedures = () => {
 			.query(async ({ input }) => {
 				const workspace = getWorkspace(input.workspaceId);
 				if (!workspace) {
+					return [];
+				}
+				// DoyDeck folder workspaces are non-git: no PR comments.
+				if (workspace.type === "folder") {
 					return [];
 				}
 
