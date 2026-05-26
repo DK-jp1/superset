@@ -6,7 +6,7 @@ import { useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef } from "react";
 import { HiMiniXMark } from "react-icons/hi2";
 import { useCopyToClipboard } from "renderer/hooks/useCopyToClipboard";
-import { HotkeyLabel } from "renderer/hotkeys";
+import { HotkeyLabel, PLATFORM } from "renderer/hotkeys";
 import { electronTrpc } from "renderer/lib/electron-trpc";
 import { useHoverGitHubStatus } from "renderer/lib/githubQueryPolicy";
 import { useWorkspaceDeleteHandler } from "renderer/react-query/workspaces";
@@ -195,7 +195,8 @@ export function WorkspaceListItem({
 	const handleClick = (e?: React.MouseEvent) => {
 		if (rename.isRenaming) return;
 
-		if (e?.metaKey) {
+		// Multi-select toggle: Cmd+click on macOS, Ctrl+click on Windows/Linux.
+		if (e?.metaKey || e?.ctrlKey) {
 			selectionStore.getState().toggle(id, projectId);
 			return;
 		}
@@ -407,7 +408,8 @@ export function WorkspaceListItem({
 									{shortcutIndex !== undefined &&
 										shortcutIndex < MAX_KEYBOARD_SHORTCUT_INDEX && (
 											<span className="text-[10px] text-muted-foreground font-mono tabular-nums shrink-0">
-												⌘{shortcutIndex + 1}
+												{PLATFORM === "mac" ? "⌘" : "Ctrl+"}
+												{shortcutIndex + 1}
 											</span>
 										)}
 									{!isBranchWorkspace && (

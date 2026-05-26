@@ -134,8 +134,13 @@ export {
 
 /**
  * Workspace type
+ *
+ * - "worktree": git worktree in a separate dir (worktreeId set).
+ * - "branch": works in-place in the project's mainRepoPath on a git branch.
+ * - "folder": non-git plain folder opened directly (DoyDeck). cwd = mainRepoPath,
+ *   branch is "" and all git-only UI (Changes/Diff/PR/worktree) is hidden.
  */
-export const workspaceTypeSchema = z.enum(["worktree", "branch"]);
+export const workspaceTypeSchema = z.enum(["worktree", "branch", "folder"]);
 
 export type WorkspaceType = z.infer<typeof workspaceTypeSchema>;
 

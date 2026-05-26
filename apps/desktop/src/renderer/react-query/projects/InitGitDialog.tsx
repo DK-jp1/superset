@@ -10,7 +10,7 @@ import { Button } from "@superset/ui/button";
 import { useGitInitDialogStore } from "renderer/stores/git-init-dialog";
 
 export function InitGitDialog() {
-	const { isOpen, isPending, paths, onConfirm, onCancel } =
+	const { isOpen, isPending, paths, onConfirm, onCancel, onOpenWithoutGit } =
 		useGitInitDialogStore();
 
 	const isSingle = paths.length === 1;
@@ -65,6 +65,15 @@ export function InitGitDialog() {
 					>
 						Cancel
 					</Button>
+					{onOpenWithoutGit ? (
+						<Button
+							variant="outline"
+							disabled={isPending}
+							onClick={() => onOpenWithoutGit()}
+						>
+							Open without Git
+						</Button>
+					) : null}
 					<Button disabled={isPending} onClick={() => onConfirm?.()}>
 						{isPending ? "Initializing..." : "Initialize Git"}
 					</Button>

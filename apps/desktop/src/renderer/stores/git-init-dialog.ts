@@ -7,10 +7,13 @@ interface GitInitDialogState {
 	paths: string[];
 	onConfirm: (() => void) | null;
 	onCancel: (() => void) | null;
+	/** DoyDeck: open the folder(s) as a project without git. */
+	onOpenWithoutGit: (() => void) | null;
 	open: (params: {
 		paths: string[];
 		onConfirm: () => void;
 		onCancel: () => void;
+		onOpenWithoutGit?: () => void;
 	}) => void;
 	setIsPending: (isPending: boolean) => void;
 	close: () => void;
@@ -24,9 +27,17 @@ export const useGitInitDialogStore = create<GitInitDialogState>()(
 			paths: [],
 			onConfirm: null,
 			onCancel: null,
+			onOpenWithoutGit: null,
 
-			open: ({ paths, onConfirm, onCancel }) => {
-				set({ isOpen: true, isPending: false, paths, onConfirm, onCancel });
+			open: ({ paths, onConfirm, onCancel, onOpenWithoutGit }) => {
+				set({
+					isOpen: true,
+					isPending: false,
+					paths,
+					onConfirm,
+					onCancel,
+					onOpenWithoutGit: onOpenWithoutGit ?? null,
+				});
 			},
 
 			setIsPending: (isPending) => {
@@ -40,6 +51,7 @@ export const useGitInitDialogStore = create<GitInitDialogState>()(
 					paths: [],
 					onConfirm: null,
 					onCancel: null,
+					onOpenWithoutGit: null,
 				});
 			},
 		}),

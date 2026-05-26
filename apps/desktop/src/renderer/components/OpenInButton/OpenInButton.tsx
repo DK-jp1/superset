@@ -130,7 +130,7 @@ export function OpenInButton({
 							if (group === "vscode") {
 								if (!showShortcuts) return null;
 								return (
-									<span className="text-xs text-muted-foreground">⌘O</span>
+									<span className="text-xs text-muted-foreground">{openInShortcut}</span>
 								);
 							}
 							if (!showOpenInShortcut) return null;

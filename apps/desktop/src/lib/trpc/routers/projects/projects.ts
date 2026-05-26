@@ -252,6 +252,62 @@ async function ensureMainWorkspace(project: Project): Promise<void> {
 	}
 }
 
+/**
+ * DoyDeck: create (or reuse) a non-git "folder" workspace for a project whose
+ * mainRepoPath is a plain folder. Mirrors ensureMainWorkspace but never touches
+ * git: no branch lookup, branch is "", type is "folder". cwd resolution falls
+ * back to project.mainRepoPath (same as branch-type in-place workspaces).
+ */
+async function ensureFolderWorkspace(project: Project): Promise<void> {
+	const existing = localDb
+		.select()
+		.from(workspaces)
+		.where(
+			and(
+				eq(workspaces.projectId, project.id),
+				eq(workspaces.type, "folder"),
+				isNull(workspaces.deletingAt),
+			),
+		)
+		.get();
+
+	if (existing) {
+		touchWorkspace(existing.id);
+		setLastActiveWorkspace(existing.id);
+		return;
+	}
+
+	const workspace = localDb
+		.insert(workspaces)
+		.values({
+			projectId: project.id,
+			type: "folder",
+			branch: "",
+			name: "default",
+			tabOrder: 0,
+		})
+		.returning()
+		.get();
+
+	if (!workspace) {
+		console.warn(
+			`[ensureFolderWorkspace] Failed to create folder workspace for project ${project.id}`,
+		);
+		return;
+	}
+
+	setLastActiveWorkspace(workspace.id);
+	activateProject(project);
+
+	track("workspace_opened", {
+		workspace_id: workspace.id,
+		project_id: project.id,
+		type: "folder",
+		was_existing: false,
+		auto_created: true,
+	});
+}
+
 // Callers must additionally reject dot-only names (".", "..") to prevent path traversal
 const SAFE_REPO_NAME_REGEX = /^[a-zA-Z0-9._\- ]+$/;
 const ALLOWED_URL_PROTOCOLS = new Set(["http:", "https:", "ssh:", "git:"]);
@@ -1179,6 +1235,28 @@ export const createProjectsRouter = (getWindow: () => BrowserWindow | null) => {
 				track("project_opened", {
 					project_id: project.id,
 					method: "init",
+				});
+
+				return { project };
+			}),
+
+		/**
+		 * DoyDeck: open a plain folder as a project WITHOUT git. Used by the
+		 * "open without git" path of the needs-git-init prompt. Creates a
+		 * folder-type workspace whose cwd is the folder itself.
+		 */
+		openFolderNoGit: publicProcedure
+			.input(z.object({ path: z.string() }))
+			.mutation(async ({ input }) => {
+				if (!existsSync(input.path)) {
+					throw new Error("Path does not exist");
+				}
+				const project = upsertProject(input.path, "");
+				await ensureFolderWorkspace(project);
+
+				track("project_opened", {
+					project_id: project.id,
+					method: "folder",
 				});
 
 				return { project };

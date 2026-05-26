@@ -18,6 +18,7 @@ export function useOpenProject() {
 	const openNewMutation = useOpenNew();
 	const openFromPathMutation = useOpenFromPath();
 	const initGitAndOpen = electronTrpc.projects.initGitAndOpen.useMutation();
+	const openFolderNoGit = electronTrpc.projects.openFolderNoGit.useMutation();
 	const utils = electronTrpc.useUtils();
 
 	const pendingRef = useRef<PendingGitInit | null>(null);
@@ -65,9 +66,39 @@ export function useOpenProject() {
 					pendingRef.current = null;
 					p.resolve(p.immediateSuccesses);
 				},
+				// DoyDeck: open the folder(s) as a project without git.
+				onOpenWithoutGit: async () => {
+					const p = pendingRef.current;
+					if (!p) return;
+
+					useGitInitDialogStore.getState().setIsPending(true);
+
+					const projects: Project[] = [...p.immediateSuccesses];
+
+					try {
+						for (const path of p.paths) {
+							try {
+								const result = await openFolderNoGit.mutateAsync({ path });
+								projects.push(result.project);
+							} catch (error) {
+								console.error(
+									"[useOpenProject] Failed to open folder without git:",
+									path,
+									error,
+								);
+							}
+						}
+
+						await utils.projects.getRecents.invalidate();
+					} finally {
+						useGitInitDialogStore.getState().close();
+						pendingRef.current = null;
+						p.resolve(projects);
+					}
+				},
 			});
 		},
-		[initGitAndOpen, utils],
+		[initGitAndOpen, openFolderNoGit, utils],
 	);
 
 	const openNew = useCallback((): Promise<Project[]> => {
@@ -162,6 +193,7 @@ export function useOpenProject() {
 		isPending:
 			openNewMutation.isPending ||
 			openFromPathMutation.isPending ||
-			initGitAndOpen.isPending,
+			initGitAndOpen.isPending ||
+			openFolderNoGit.isPending,
 	};
 }
