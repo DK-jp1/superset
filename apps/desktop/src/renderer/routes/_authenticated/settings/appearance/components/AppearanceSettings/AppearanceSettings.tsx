@@ -6,6 +6,7 @@ import {
 } from "../../../utils/settings-search";
 import { FontSettingSection } from "./components/FontSettingSection";
 import { MarkdownStyleSection } from "./components/MarkdownStyleSection";
+import { TerminalBackgroundSection } from "./components/TerminalBackgroundSection";
 import { ThemeSection } from "./components/ThemeSection";
 
 /**
@@ -68,6 +69,9 @@ export function AppearanceSettings({ visibleItems }: AppearanceSettingsProps) {
 				)}
 				{showTerminalFont && (
 					<FontSettingSection key="terminal-font" variant="terminal" />
+				)}
+				{showTerminalFont && (
+					<TerminalBackgroundSection key="terminal-background" />
 				)}
 			</SectionList>
 		</div>

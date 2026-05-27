@@ -1,0 +1,1 @@
+export { TerminalBackgroundSection } from "./TerminalBackgroundSection";

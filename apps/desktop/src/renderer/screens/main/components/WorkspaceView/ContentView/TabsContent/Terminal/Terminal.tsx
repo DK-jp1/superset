@@ -25,6 +25,14 @@ import {
 } from "./hooks";
 import { ScrollToBottomButton } from "./ScrollToBottomButton";
 import { TerminalSearch } from "./TerminalSearch";
+import {
+	clampBgOpacity,
+	getBgObjectUrl,
+	readBgImage,
+	readBgOpacity,
+	readBgPosition,
+	TERMINAL_BG_CHANGED_EVENT,
+} from "./terminal-background";
 import type {
 	TerminalExitReason,
 	TerminalProps,
@@ -32,6 +40,26 @@ import type {
 } from "./types";
 import { shellEscapePaths } from "./utils";
 import * as v1TerminalCache from "./v1-terminal-cache";
+
+/** Convert a #rgb / #rrggbb color to an rgba() string with the given alpha. */
+function hexToRgba(color: string, alpha: number): string {
+	const hex = color.trim().replace(/^#/, "");
+	const full =
+		hex.length === 3
+			? hex
+					.split("")
+					.map((c) => c + c)
+					.join("")
+			: hex;
+	if (full.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(full)) {
+		// Not a hex color (already rgb/rgba/named) — leave as-is.
+		return color;
+	}
+	const r = Number.parseInt(full.slice(0, 2), 16);
+	const g = Number.parseInt(full.slice(2, 4), 16);
+	const b = Number.parseInt(full.slice(4, 6), 16);
+	return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 
 const stripLeadingEmoji = (text: string) =>
 	text.trim().replace(/^[\p{Emoji}\p{Symbol}]\s*/u, "");
@@ -394,11 +422,68 @@ export const Terminal = memo(function Terminal({
 		};
 	}, [paneId, xtermInstance, handleStreamData, setConnectionError]);
 
+	// DoyDeck: optional terminal background image. The image (a ~775KB base64
+	// data URL), the terminal opacity over it, and its placement are stored in
+	// renderer localStorage and managed from Settings → Appearance → Terminal
+	// background. We subscribe to TERMINAL_BG_CHANGED_EVENT (same-window updates)
+	// and "storage" (other windows) so changes apply live without reopening.
+	//
+	// Performance: the data URL is NEVER fed into CSS background-image — that
+	// would re-decode the full-res image and copy the huge string into every
+	// inline style and React state on each opacity/position tweak (the crash
+	// Doy hit). Instead getBgObjectUrl() decodes the data URL into a Blob once
+	// and returns a short shared blob: URL. We only re-read it when the image's
+	// data URL actually changes; opacity/position are light scalars.
+	const [bgObjectUrl, setBgObjectUrl] = useState<string | null>(() =>
+		getBgObjectUrl(),
+	);
+	const [bgOpacity, setBgOpacity] = useState<number>(() => readBgOpacity());
+	const [bgPosition, setBgPosition] = useState<string>(() => readBgPosition());
+	// Track the last seen data URL so we only regenerate the blob URL when the
+	// source image truly changes, not on opacity/position updates.
+	const lastBgDataUrlRef = useRef<string | null>(readBgImage());
+
+	useEffect(() => {
+		const reload = () => {
+			const nextDataUrl = readBgImage();
+			if (nextDataUrl !== lastBgDataUrlRef.current) {
+				lastBgDataUrlRef.current = nextDataUrl;
+				// Source image changed → refresh the shared blob URL (cache handles
+				// revoking the previous one). Skipped when only opacity/position move.
+				setBgObjectUrl(getBgObjectUrl());
+			}
+			setBgOpacity(readBgOpacity());
+			setBgPosition(readBgPosition());
+		};
+		window.addEventListener(TERMINAL_BG_CHANGED_EVENT, reload);
+		window.addEventListener("storage", reload);
+		return () => {
+			window.removeEventListener(TERMINAL_BG_CHANGED_EVENT, reload);
+			window.removeEventListener("storage", reload);
+		};
+	}, []);
+
+	// blob: URLs are produced by getBgObjectUrl() only from valid image data
+	// URLs, so this is already a safe, short value for CSS url().
+	const bgImageOverride = bgObjectUrl;
+
 	useEffect(() => {
 		const xterm = xtermRef.current;
 		if (!xterm || !terminalTheme) return;
-		xterm.options.theme = terminalTheme;
-	}, [terminalTheme]);
+		if (bgImageOverride) {
+			// Canvas is fully transparent; dimming is done by a uniform overlay over
+			// the WHOLE pane (see render). If the canvas itself dimmed the image, the
+			// strips the canvas doesn't cover (p-2 padding, integer-row remainder)
+			// would show the image at full brightness — the bright edges Doy saw.
+			const base = terminalTheme.background ?? getDefaultTerminalBg();
+			xterm.options.theme = {
+				...terminalTheme,
+				background: hexToRgba(base, 0),
+			};
+		} else {
+			xterm.options.theme = terminalTheme;
+		}
+	}, [terminalTheme, bgImageOverride]);
 
 	const { data: fontSettings } = electronTrpc.settings.getFontSettings.useQuery(
 		undefined,
@@ -456,11 +541,34 @@ export const Terminal = memo(function Terminal({
 		<div
 			role="application"
 			className="relative h-full w-full overflow-hidden"
-			style={{ backgroundColor: terminalBg }}
+			style={{
+				backgroundColor: terminalBg,
+				...(bgImageOverride
+					? {
+							backgroundImage: `url("${bgImageOverride}")`,
+							// uniform (contain) keeps the image's real proportions; the
+							// placement is user-selectable in Settings → Appearance.
+							backgroundSize: "contain",
+							backgroundPosition: bgPosition,
+							backgroundRepeat: "no-repeat",
+						}
+					: {}),
+			}}
 			onDragOver={handleDragOver}
 			onDrop={handleDrop}
 			data-testid="terminal-pane"
 		>
+			{bgImageOverride && (
+				// Uniform dim layer over the entire pane so the background image is
+				// dimmed evenly — including the p-2 padding and the integer-row
+				// remainder the (transparent) terminal canvas doesn't cover.
+				<div
+					className="pointer-events-none absolute inset-0"
+					style={{
+						backgroundColor: hexToRgba(terminalBg, clampBgOpacity(bgOpacity)),
+					}}
+				/>
+			)}
 			<TerminalSearch
 				searchAddon={searchAddonRef.current}
 				isOpen={isSearchOpen}
@@ -473,7 +581,7 @@ export const Terminal = memo(function Terminal({
 				!isWorkspaceRunPane && (
 					<SessionKilledOverlay onRestart={restartTerminal} />
 				)}
-			<div className="h-full w-full p-2">
+			<div className="relative z-10 h-full w-full p-2">
 				<div ref={terminalRef} className="h-full w-full" />
 			</div>
 		</div>

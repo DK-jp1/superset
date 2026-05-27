@@ -27,6 +27,10 @@ export const TERMINAL_OPTIONS: ITerminalOptions = {
 	fontSize: DEFAULT_TERMINAL_FONT_SIZE,
 	fontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
 	theme: TERMINAL_THEME,
+	// Required so a custom terminal background image (painted on the pane
+	// container behind the canvas) can show through. No visual change while the
+	// theme background stays opaque.
+	allowTransparency: true,
 	allowProposedApi: true,
 	scrollback: DEFAULT_TERMINAL_SCROLLBACK,
 	// Allow Option+key to type special characters on international keyboards (e.g., Option+2 = @)

@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { basename, extname } from "node:path";
 import {
 	type AgentCustomDefinition,
 	type AgentPresetOverrideEnvelope,
@@ -33,7 +35,12 @@ import {
 	upsertCustomAgentDefinition,
 } from "@superset/shared/agent-settings";
 import { TRPCError } from "@trpc/server";
-import { app } from "electron";
+import {
+	app,
+	type BrowserWindow,
+	dialog,
+	type OpenDialogOptions,
+} from "electron";
 import { env } from "main/env.main";
 import { exitImmediately } from "main/index";
 import { hasCustomRingtone } from "main/lib/custom-ringtones";
@@ -259,8 +266,97 @@ export function getPresetsForTrigger(
 	);
 }
 
-export const createSettingsRouter = () => {
+/**
+ * Maximum size (bytes) allowed for an imported terminal background image. The
+ * image is stored as a base64 data URL in renderer localStorage, whose total
+ * budget is ~5MB. base64 inflates by ~33%, so a 3MB source file becomes ~4MB
+ * encoded — kept under the quota to avoid a silent QuotaExceededError on save.
+ */
+const MAX_TERMINAL_BG_IMAGE_BYTES = 3 * 1024 * 1024;
+
+const TERMINAL_BG_IMAGE_EXTENSIONS = [
+	"png",
+	"jpg",
+	"jpeg",
+	"gif",
+	"webp",
+	"bmp",
+] as const;
+
+const TERMINAL_BG_MIME_BY_EXT: Record<string, string> = {
+	".png": "image/png",
+	".jpg": "image/jpeg",
+	".jpeg": "image/jpeg",
+	".gif": "image/gif",
+	".webp": "image/webp",
+	".bmp": "image/bmp",
+};
+
+type PickTerminalBackgroundImageResult =
+	| { canceled: true }
+	| { canceled: false; dataUrl: string; fileName: string }
+	| { canceled: false; error: string };
+
+export const createSettingsRouter = (getWindow: () => BrowserWindow | null) => {
 	return router({
+		pickTerminalBackgroundImage: publicProcedure.mutation(
+			async (): Promise<PickTerminalBackgroundImageResult> => {
+				const window = getWindow();
+				const openDialogOptions: OpenDialogOptions = {
+					properties: ["openFile"],
+					title: "Select Terminal Background Image",
+					filters: [
+						{
+							name: "Images",
+							extensions: [...TERMINAL_BG_IMAGE_EXTENSIONS],
+						},
+					],
+				};
+				const result = window
+					? await dialog.showOpenDialog(window, openDialogOptions)
+					: await dialog.showOpenDialog(openDialogOptions);
+
+				if (result.canceled || result.filePaths.length === 0) {
+					return { canceled: true };
+				}
+
+				const filePath = result.filePaths[0];
+				const ext = extname(filePath).toLowerCase();
+				const mime = TERMINAL_BG_MIME_BY_EXT[ext];
+				if (!mime) {
+					return {
+						canceled: false,
+						error: `Unsupported image type: ${ext || "(none)"}`,
+					};
+				}
+
+				try {
+					const buffer = await readFile(filePath);
+					if (buffer.byteLength > MAX_TERMINAL_BG_IMAGE_BYTES) {
+						return {
+							canceled: false,
+							error: `Image is too large (${Math.round(
+								buffer.byteLength / (1024 * 1024),
+							)} MB). Maximum is 3 MB.`,
+						};
+					}
+					const dataUrl = `data:${mime};base64,${buffer.toString("base64")}`;
+					return {
+						canceled: false,
+						dataUrl,
+						fileName: basename(filePath),
+					};
+				} catch (error) {
+					return {
+						canceled: false,
+						error:
+							error instanceof Error
+								? error.message
+								: "Failed to read image file",
+					};
+				}
+			},
+		),
 		getTerminalPresets: publicProcedure.query(() => {
 			const row = getSettings();
 			if (!row.terminalPresetsInitialized) {

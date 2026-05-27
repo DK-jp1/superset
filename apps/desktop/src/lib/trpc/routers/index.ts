@@ -53,7 +53,7 @@ export const createAppRouter = (getWindow: () => BrowserWindow | null) => {
 		resourceMetrics: createResourceMetricsRouter(),
 		menu: createMenuRouter(),
 		external: createExternalRouter(),
-		settings: createSettingsRouter(),
+		settings: createSettingsRouter(getWindow),
 		system: createSystemRouter(),
 		config: createConfigRouter(),
 		device: createDeviceRouter(),
