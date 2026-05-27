@@ -7,6 +7,14 @@ async function refreshRepoContext(
 	worktreePath: string,
 ): Promise<RepoContext | null> {
 	try {
+		// No GitHub remote (non-git "folder" workspaces, or any repo without an
+		// origin) — skip the `gh repo view` call entirely. Otherwise it fails with
+		// "no git remotes found" on every refresh and spams the log.
+		const remoteUrl = await getOriginUrl(worktreePath);
+		if (!remoteUrl) {
+			return null;
+		}
+
 		const { stdout } = await execWithShellEnv(
 			"gh",
 			["repo", "view", "--json", "url,isFork,parent"],
