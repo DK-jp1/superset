@@ -258,7 +258,7 @@ async function ensureMainWorkspace(project: Project): Promise<void> {
  * git: no branch lookup, branch is "", type is "folder". cwd resolution falls
  * back to project.mainRepoPath (same as branch-type in-place workspaces).
  */
-async function ensureFolderWorkspace(project: Project): Promise<void> {
+async function ensureFolderWorkspace(project: Project): Promise<string | null> {
 	const existing = localDb
 		.select()
 		.from(workspaces)
@@ -274,7 +274,7 @@ async function ensureFolderWorkspace(project: Project): Promise<void> {
 	if (existing) {
 		touchWorkspace(existing.id);
 		setLastActiveWorkspace(existing.id);
-		return;
+		return existing.id;
 	}
 
 	const workspace = localDb
@@ -293,7 +293,7 @@ async function ensureFolderWorkspace(project: Project): Promise<void> {
 		console.warn(
 			`[ensureFolderWorkspace] Failed to create folder workspace for project ${project.id}`,
 		);
-		return;
+		return null;
 	}
 
 	setLastActiveWorkspace(workspace.id);
@@ -306,6 +306,8 @@ async function ensureFolderWorkspace(project: Project): Promise<void> {
 		was_existing: false,
 		auto_created: true,
 	});
+
+	return workspace.id;
 }
 
 // Callers must additionally reject dot-only names (".", "..") to prevent path traversal
@@ -1255,15 +1257,75 @@ export const createProjectsRouter = (getWindow: () => BrowserWindow | null) => {
 					throw new Error("Please select a folder, not a file");
 				}
 				const project = upsertProject(input.path, "");
-				await ensureFolderWorkspace(project);
+				const workspaceId = await ensureFolderWorkspace(project);
 
 				track("project_opened", {
 					project_id: project.id,
 					method: "folder",
 				});
 
-				return { project };
+				return { project, workspaceId };
 			}),
+
+		// DoyDeck: open a folder as a project WITHOUT git, bypassing the
+		// getGitRoot() walk-up. Needed because a folder nested inside a git
+		// repo (e.g. anything under a home dir that is itself a repo) would
+		// otherwise always resolve to the ancestor repo and never reach the
+		// folder-mode path.
+		openFolderNoGitDialog: publicProcedure.mutation(
+			async (): Promise<
+				| { canceled: true }
+				| { canceled: false; error: string }
+				| {
+						canceled: false;
+						projects: Project[];
+						firstWorkspaceId: string | null;
+				  }
+			> => {
+				const window = getWindow();
+				if (!window) {
+					return { canceled: false, error: "No window available" };
+				}
+				const result = await dialog.showOpenDialog(window, {
+					properties: ["openDirectory", "multiSelections"],
+					title: "Open Folder (without Git)",
+				});
+
+				if (result.canceled || result.filePaths.length === 0) {
+					return { canceled: true };
+				}
+
+				const projects: Project[] = [];
+				let firstWorkspaceId: string | null = null;
+				for (const selectedPath of result.filePaths) {
+					if (!existsSync(selectedPath)) {
+						continue;
+					}
+					try {
+						if (!statSync(selectedPath).isDirectory()) {
+							continue;
+						}
+					} catch {
+						// Unreadable path (e.g. permission denied) — skip it.
+						continue;
+					}
+					const project = upsertProject(selectedPath, "");
+					const workspaceId = await ensureFolderWorkspace(project);
+					if (firstWorkspaceId === null) {
+						firstWorkspaceId = workspaceId;
+					}
+
+					track("project_opened", {
+						project_id: project.id,
+						method: "folder_no_git_dialog",
+					});
+
+					projects.push(project);
+				}
+
+				return { canceled: false, projects, firstWorkspaceId };
+			},
+		),
 
 		cloneRepo: publicProcedure
 			.input(

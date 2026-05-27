@@ -8,7 +8,8 @@ import { SupersetLogo } from "renderer/routes/sign-in/components/SupersetLogo";
 
 export function StartView() {
 	const navigate = useNavigate();
-	const { openNew, openFromPath, isPending } = useOpenProject();
+	const { openNew, openFromPath, openFolderNoGitDialog, isPending } =
+		useOpenProject();
 	const [error, setError] = useState<string | null>(null);
 	const [isDragOver, setIsDragOver] = useState(false);
 
@@ -46,6 +47,39 @@ export function StartView() {
 			}
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to open project");
+		}
+	};
+
+	const handleOpenWithoutGit = async () => {
+		setError(null);
+		try {
+			const { projects, firstWorkspaceId, canceled } =
+				await openFolderNoGitDialog();
+			if (canceled) return;
+			// Folder projects auto-create a "default" workspace — jump straight to
+			// its terminal instead of the git-flavored "create workspace" screen.
+			if (firstWorkspaceId) {
+				navigate({
+					to: "/workspace/$workspaceId",
+					params: { workspaceId: firstWorkspaceId },
+					replace: true,
+				});
+				return;
+			}
+			const firstProjectId = projects[0]?.id;
+			if (firstProjectId) {
+				navigate({
+					to: "/project/$projectId",
+					params: { projectId: firstProjectId },
+					replace: true,
+				});
+				return;
+			}
+			// Non-canceled but nothing opened (all paths invalid/unreadable):
+			// surface it instead of silently doing nothing.
+			setError("Could not open the selected folder");
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Failed to open folder");
 		}
 	};
 
@@ -193,6 +227,22 @@ export function StartView() {
 								<LuPlus className="size-3.5" />
 								New Project
 							</Button>
+						</div>
+
+						<div
+							className={cn(
+								"flex items-center justify-center transition-opacity",
+								isDragOver && "opacity-0",
+							)}
+						>
+							<button
+								type="button"
+								onClick={handleOpenWithoutGit}
+								disabled={isPending}
+								className="text-xs text-muted-foreground/80 underline underline-offset-2 hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none"
+							>
+								Or open any folder without Git
+							</button>
 						</div>
 					</div>
 

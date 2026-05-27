@@ -19,6 +19,8 @@ export function useOpenProject() {
 	const openFromPathMutation = useOpenFromPath();
 	const initGitAndOpen = electronTrpc.projects.initGitAndOpen.useMutation();
 	const openFolderNoGit = electronTrpc.projects.openFolderNoGit.useMutation();
+	const openFolderNoGitDialogMutation =
+		electronTrpc.projects.openFolderNoGitDialog.useMutation();
 	const utils = electronTrpc.useUtils();
 
 	const pendingRef = useRef<PendingGitInit | null>(null);
@@ -187,13 +189,53 @@ export function useOpenProject() {
 		[openFromPathMutation, showDialog],
 	);
 
+	// DoyDeck: open a folder as a project without git via a dedicated dialog,
+	// bypassing git detection entirely (so folders nested in a git repo still work).
+	// Returns the first folder workspace id so callers can jump straight to its
+	// terminal instead of landing on the git-flavored "create workspace" screen.
+	const openFolderNoGitDialog = useCallback((): Promise<{
+		projects: Project[];
+		firstWorkspaceId: string | null;
+		canceled: boolean;
+	}> => {
+		return new Promise((resolve) => {
+			openFolderNoGitDialogMutation.mutate(undefined, {
+				onSuccess: async (result) => {
+					if ("canceled" in result && result.canceled) {
+						resolve({ projects: [], firstWorkspaceId: null, canceled: true });
+						return;
+					}
+					if ("error" in result) {
+						resolve({ projects: [], firstWorkspaceId: null, canceled: false });
+						return;
+					}
+					if ("projects" in result) {
+						await utils.projects.getRecents.invalidate();
+						resolve({
+							projects: result.projects,
+							firstWorkspaceId: result.firstWorkspaceId,
+							canceled: false,
+						});
+						return;
+					}
+					resolve({ projects: [], firstWorkspaceId: null, canceled: false });
+				},
+				onError: () => {
+					resolve({ projects: [], firstWorkspaceId: null, canceled: false });
+				},
+			});
+		});
+	}, [openFolderNoGitDialogMutation, utils]);
+
 	return {
 		openNew,
 		openFromPath,
+		openFolderNoGitDialog,
 		isPending:
 			openNewMutation.isPending ||
 			openFromPathMutation.isPending ||
 			initGitAndOpen.isPending ||
-			openFolderNoGit.isPending,
+			openFolderNoGit.isPending ||
+			openFolderNoGitDialogMutation.isPending,
 	};
 }
