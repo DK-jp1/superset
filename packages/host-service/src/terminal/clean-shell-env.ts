@@ -193,6 +193,15 @@ function spawnCleanShellEnv(): Promise<Record<string, string>> {
 let cache: Record<string, string> | null = null;
 let cacheTime = 0;
 
+/** Snapshot all string-valued env vars from the current process. */
+function snapshotProcessEnv(): Record<string, string> {
+	const result: Record<string, string> = {};
+	for (const [key, value] of Object.entries(process.env)) {
+		if (typeof value === "string") result[key] = value;
+	}
+	return result;
+}
+
 export async function getStrictShellEnvironment(): Promise<
 	Record<string, string>
 > {
@@ -200,7 +209,14 @@ export async function getStrictShellEnvironment(): Promise<
 		return { ...cache };
 	}
 
-	const env = await spawnCleanShellEnv();
+	// Windows has no POSIX login-shell env to source: process.env already holds
+	// the full user environment. The spawnCleanShellEnv() probe issues a POSIX
+	// command (`command env` via `-i -l -c`) that cmd.exe can't run, so it always
+	// failed with "delimiter not found" and fell back anyway. Skip it on win32.
+	const env =
+		process.platform === "win32"
+			? snapshotProcessEnv()
+			: await spawnCleanShellEnv();
 	cache = env;
 	cacheTime = Date.now();
 	return { ...cache };
