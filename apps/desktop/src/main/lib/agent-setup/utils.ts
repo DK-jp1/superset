@@ -64,11 +64,15 @@ export function findRealBinary(name: string): string | null {
 		// - ~/.superset-*/bin (workspace-specific instances)
 		const supersetBinDir = path.join(homedir, ".superset", "bin");
 		const supersetPrefix = path.join(homedir, ".superset-");
+		// Windows uses "\bin\" while POSIX uses "/bin/" — check both so
+		// workspace-specific wrapper scripts are filtered on every platform.
+		const hasBinSegment = (p: string) =>
+			p.includes("/bin/") || p.includes("\\bin\\");
 		const paths = allPaths.filter(
 			(p) =>
 				p &&
 				!p.startsWith(supersetBinDir) &&
-				!(p.startsWith(supersetPrefix) && p.includes("/bin/")) &&
+				!(p.startsWith(supersetPrefix) && hasBinSegment(p)) &&
 				(isWindows || isExecutableUnixPath(p)),
 		);
 		return paths[0] || null;

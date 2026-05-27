@@ -36,7 +36,9 @@ export function WorkspaceRow({
 	onReopen,
 	isOpening,
 }: WorkspaceRowProps) {
-	const isBranch = workspace.type === "branch";
+	// branch & folder are both in-place (plain folder icon, no worktree); only
+	// real worktrees get the git-worktree icon/label.
+	const isBranch = workspace.type === "branch" || workspace.type === "folder";
 	const { githubStatus, onMouseEnter: onGithubMouseEnter } =
 		useHoverGitHubStatus({
 			workspaceId: workspace.workspaceId,

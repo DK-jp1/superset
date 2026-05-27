@@ -109,10 +109,13 @@ export function getAppCommand(
 		return [{ command: "open", args: ["-a", appName, targetPath] }];
 	}
 
-	// Linux (and other non-macOS platforms)
-	const linuxCandidates = LINUX_CLI_CANDIDATES[app];
-	if (linuxCandidates) {
-		return linuxCandidates.map((cmd) => ({
+	// Windows & Linux both launch editors via their PATH CLI (e.g. `code`,
+	// `cursor`, `zed`). On Windows these are `.cmd` shims, so spawnAsync() runs
+	// them through a shell on win32 (see spawnAsync). The CLI command names are
+	// the same across Windows and Linux for the editors we support.
+	const cliCandidates = LINUX_CLI_CANDIDATES[app];
+	if (cliCandidates) {
+		return cliCandidates.map((cmd) => ({
 			command: cmd,
 			args: [targetPath],
 		}));
@@ -149,6 +152,9 @@ const TRAILING_PUNCTUATION = /[.,;:!?]+$/;
 function looksLikePath(str: string): boolean {
 	return (
 		str.includes("/") ||
+		str.includes("\\") ||
+		// Windows drive-absolute path, e.g. C:\... or C:/...
+		/^[a-zA-Z]:[\\/]/.test(str) ||
 		str.startsWith(".") ||
 		str.startsWith("~") ||
 		str.startsWith("/")
@@ -324,9 +330,31 @@ export function resolvePath(filePath: string, cwd?: string): string {
  */
 export function spawnAsync(command: string, args: string[]): Promise<void> {
 	return new Promise((resolve, reject) => {
-		const child = spawn(command, args, {
+		// On Windows, editor launchers are `.cmd` shims; Node refuses to spawn
+		// `.cmd`/`.bat` without a shell, so we must run through cmd.exe. That means
+		// every arg is re-parsed by cmd.exe, so we (1) reject args containing chars
+		// that survive double-quoting in cmd.exe (`"` ends the quote, `%` triggers
+		// env expansion, CR/LF inject new commands), and (2) wrap every arg in
+		// double quotes so `& | < > ^ ( )` are treated literally. This blocks
+		// command injection via crafted paths (e.g. agent-emitted file links).
+		const useShell = process.platform === "win32";
+		if (useShell) {
+			const CMD_UNSAFE = /["%\r\n]/;
+			const bad = args.find((a) => CMD_UNSAFE.test(a));
+			if (bad !== undefined) {
+				reject(
+					new Error(
+						`Refusing to launch: path contains unsafe characters (" % or newline): ${bad}`,
+					),
+				);
+				return;
+			}
+		}
+		const spawnArgs = useShell ? args.map((a) => `"${a}"`) : args;
+		const child = spawn(command, spawnArgs, {
 			stdio: ["ignore", "ignore", "pipe"],
 			detached: false,
+			shell: useShell,
 		});
 
 		let stderr = "";

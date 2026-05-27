@@ -33,6 +33,31 @@ export function playSoundFile(
 		);
 	}
 
+	if (process.platform === "win32") {
+		// Best-effort playback via PowerShell MediaPlayer (handles mp3/wav/ogg).
+		// Always resolves via onComplete — never retries — so a missing codec or
+		// PowerShell does not spawn bogus fallbacks like the Linux path below.
+		const psVolume = Math.max(0, Math.min(1, volumeDecimal));
+		const escapedPath = soundPath.replace(/'/g, "''");
+		const script = [
+			"Add-Type -AssemblyName presentationCore;",
+			"$p = New-Object System.Windows.Media.MediaPlayer;",
+			`$p.Open([uri]'${escapedPath}');`,
+			`$p.Volume = ${psVolume};`,
+			"$p.Play();",
+			// MediaPlayer.Play() is async; wait for the clip to finish (bounded).
+			"$deadline = (Get-Date).AddSeconds(30);",
+			"while (-not $p.NaturalDuration.HasTimeSpan -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 50 }",
+			"if ($p.NaturalDuration.HasTimeSpan) { Start-Sleep -Seconds ([math]::Ceiling($p.NaturalDuration.TimeSpan.TotalSeconds)) }",
+			"$p.Close();",
+		].join(" ");
+		return execFile(
+			"powershell",
+			["-NoProfile", "-NonInteractive", "-Command", script],
+			() => callbacks?.onComplete?.(),
+		);
+	}
+
 	// Linux: paplay --volume accepts 0-65536 (65536 = 100%)
 	const paVolume = Math.round(volumeDecimal * 65536);
 	return execFile(

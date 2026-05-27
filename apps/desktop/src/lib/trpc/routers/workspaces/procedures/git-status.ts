@@ -305,7 +305,8 @@ export const createGitStatusProcedures = () => {
 					return null;
 				}
 
-				if (workspace.type === "branch") {
+				if (workspace.type === "branch" || workspace.type === "folder") {
+					// branch & folder workspaces are in-place; no separate worktree.
 					return {
 						worktreeName: workspace.name,
 						branchName: workspace.branch,

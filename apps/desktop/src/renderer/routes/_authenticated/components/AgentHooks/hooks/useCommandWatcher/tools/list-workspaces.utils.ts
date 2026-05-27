@@ -7,7 +7,7 @@ export interface ListedWorkspace {
 	branch: string;
 	isActive: boolean;
 	projectId: string;
-	type: "worktree" | "branch";
+	type: "worktree" | "branch" | "folder";
 }
 
 export type WorkspaceListSourceWorkspace = Pick<
@@ -39,12 +39,12 @@ export function buildWorkspaceList({
 		id: workspace.id,
 		name: workspace.name,
 		path:
-			workspace.type === "branch"
+			workspace.type === "branch" || workspace.type === "folder"
 				? (mainRepoPathByProjectId.get(workspace.projectId) ?? "")
 				: (getWorktreePathByWorkspaceId?.(workspace.id) ?? ""),
 		branch: workspace.branch,
 		isActive: workspace.id === activeWorkspaceId,
 		projectId: workspace.projectId,
-		type: workspace.type as "worktree" | "branch",
+		type: workspace.type,
 	}));
 }

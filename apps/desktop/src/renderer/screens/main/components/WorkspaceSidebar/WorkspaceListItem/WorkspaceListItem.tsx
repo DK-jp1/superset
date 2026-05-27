@@ -39,7 +39,7 @@ interface WorkspaceListItemProps {
 	worktreePath: string;
 	name: string;
 	branch: string;
-	type: "worktree" | "branch";
+	type: "worktree" | "branch" | "folder";
 	isUnread?: boolean;
 	index: number;
 	shortcutIndex?: number;
@@ -65,6 +65,9 @@ export function WorkspaceListItem({
 	orderedWorkspaceIds = [],
 }: WorkspaceListItemProps) {
 	const isBranchWorkspace = type === "branch";
+	const isFolderWorkspace = type === "folder";
+	// branch & folder both live in-place at the project root (no worktree).
+	const isInPlaceWorkspace = isBranchWorkspace || isFolderWorkspace;
 	const navigate = useNavigate();
 	const matchRoute = useMatchRoute();
 	const {
@@ -157,7 +160,8 @@ export function WorkspaceListItem({
 		useWorkspaceDeleteHandler();
 	const { status: localChanges } = useGitChangesStatus({
 		worktreePath,
-		enabled: hasHovered && !!worktreePath,
+		// folder workspaces are non-git; skip the git status query (it would fail).
+		enabled: hasHovered && !!worktreePath && !isFolderWorkspace,
 		staleTime: GITHUB_STATUS_STALE_TIME,
 	});
 
@@ -329,6 +333,7 @@ export function WorkspaceListItem({
 						<div className="relative size-5 flex items-center justify-center">
 							<WorkspaceIcon
 								isBranchWorkspace={isBranchWorkspace}
+								isFolderWorkspace={isFolderWorkspace}
 								isActive={isActive}
 								isUnread={isUnread}
 								workspaceStatus={workspaceStatus}
@@ -337,7 +342,14 @@ export function WorkspaceListItem({
 						</div>
 					</TooltipTrigger>
 					<TooltipContent side="right" sideOffset={8}>
-						{isBranchWorkspace ? (
+						{isFolderWorkspace ? (
+							<>
+								<p className="text-xs font-medium">Folder workspace</p>
+								<p className="text-xs text-muted-foreground">
+									Opened without Git — runs directly in the folder
+								</p>
+							</>
+						) : isBranchWorkspace ? (
 							<>
 								<p className="text-xs font-medium">Local workspace</p>
 								<p className="text-xs text-muted-foreground">

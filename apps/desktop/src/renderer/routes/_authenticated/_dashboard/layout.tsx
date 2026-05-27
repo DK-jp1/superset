@@ -75,7 +75,7 @@ function DashboardLayout() {
 	const [deleteTarget, setDeleteTarget] = useState<{
 		workspaceId: string;
 		workspaceName: string;
-		workspaceType: "worktree" | "branch";
+		workspaceType: "worktree" | "branch" | "folder";
 	} | null>(null);
 
 	useHotkey(

@@ -26,7 +26,7 @@ const TERMINAL_COUNT_STALE_TIME_MS = 1_000;
 interface DeleteWorkspaceDialogProps {
 	workspaceId: string;
 	workspaceName: string;
-	workspaceType?: "worktree" | "branch";
+	workspaceType?: "worktree" | "branch" | "folder";
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }
@@ -38,7 +38,9 @@ export function DeleteWorkspaceDialog({
 	open,
 	onOpenChange,
 }: DeleteWorkspaceDialogProps) {
-	const isBranch = workspaceType === "branch";
+	// branch & folder are both in-place (no worktree to remove, no branch-delete
+	// option) — they use the simple "close workspace" dialog, not worktree removal.
+	const isBranch = workspaceType === "branch" || workspaceType === "folder";
 	const deleteWorkspace = useDeleteWorkspace();
 	const closeWorkspace = useCloseWorkspace();
 	const setDeleteLocalBranchSetting =

@@ -14,7 +14,13 @@ function shortenHomePath(path: string, homeDir: string | undefined): string {
 		return `~${normalizedPath.slice(normalizedHome.length)}`;
 	}
 
-	return normalizedPath.replace(/^\/(?:Users|home)\/[^/]+/, "~");
+	// Fallback when homeDir is unknown: shorten well-known home roots.
+	// POSIX: /Users/<u> or /home/<u>. Windows (separators already normalized to
+	// "/"): C:/Users/<u>.
+	return normalizedPath.replace(
+		/^(?:\/(?:Users|home)\/[^/]+|[a-zA-Z]:\/Users\/[^/]+)/,
+		"~",
+	);
 }
 
 export function formatPathWithProject(

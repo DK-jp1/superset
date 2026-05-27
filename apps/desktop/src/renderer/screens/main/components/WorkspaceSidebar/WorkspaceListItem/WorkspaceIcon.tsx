@@ -1,5 +1,5 @@
 import { cn } from "@superset/ui/utils";
-import { LuFolderGit2, LuLaptop } from "react-icons/lu";
+import { LuFolder, LuFolderGit2, LuLaptop } from "react-icons/lu";
 import { AsciiSpinner } from "renderer/screens/main/components/AsciiSpinner";
 import { StatusIndicator } from "renderer/screens/main/components/StatusIndicator";
 import type { ActivePaneStatus } from "shared/tabs-types";
@@ -7,6 +7,8 @@ import { STROKE_WIDTH } from "../constants";
 
 interface WorkspaceIconProps {
 	isBranchWorkspace: boolean;
+	/** Non-git folder workspace — shown with a plain folder icon. */
+	isFolderWorkspace?: boolean;
 	isActive: boolean;
 	isUnread: boolean;
 	workspaceStatus: ActivePaneStatus | null;
@@ -20,6 +22,7 @@ const OVERLAY_POSITION = {
 
 export function WorkspaceIcon({
 	isBranchWorkspace,
+	isFolderWorkspace = false,
 	isActive,
 	isUnread,
 	workspaceStatus,
@@ -27,29 +30,22 @@ export function WorkspaceIcon({
 }: WorkspaceIconProps) {
 	const overlayPosition = OVERLAY_POSITION[variant];
 	const iconColor = isActive ? "text-foreground" : "text-muted-foreground";
+	const iconClass = cn(
+		"size-4",
+		variant === "expanded" && "transition-colors",
+		iconColor,
+	);
 
 	return (
 		<>
 			{workspaceStatus === "working" ? (
 				<AsciiSpinner className="text-base" />
+			) : isFolderWorkspace ? (
+				<LuFolder className={iconClass} strokeWidth={STROKE_WIDTH} />
 			) : isBranchWorkspace ? (
-				<LuLaptop
-					className={cn(
-						"size-4",
-						variant === "expanded" && "transition-colors",
-						iconColor,
-					)}
-					strokeWidth={STROKE_WIDTH}
-				/>
+				<LuLaptop className={iconClass} strokeWidth={STROKE_WIDTH} />
 			) : (
-				<LuFolderGit2
-					className={cn(
-						"size-4",
-						variant === "expanded" && "transition-colors",
-						iconColor,
-					)}
-					strokeWidth={STROKE_WIDTH}
-				/>
+				<LuFolderGit2 className={iconClass} strokeWidth={STROKE_WIDTH} />
 			)}
 			{workspaceStatus && workspaceStatus !== "working" && (
 				<span className={cn("absolute", overlayPosition)}>

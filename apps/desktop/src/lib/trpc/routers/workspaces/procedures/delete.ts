@@ -75,7 +75,9 @@ export const createDeleteProcedures = () => {
 					.getForWorkspaceId(input.id)
 					.terminal.getSessionCountByWorkspaceId(input.id);
 
-				if (workspace.type === "branch") {
+				if (workspace.type === "branch" || workspace.type === "folder") {
+					// branch & folder workspaces are in-place (no worktree to remove);
+					// deletion only drops the workspace record, never the user's folder.
 					return {
 						canDelete: true,
 						reason: null,

@@ -1,5 +1,6 @@
 import {
 	projects,
+	type WorkspaceType,
 	workspaceSections,
 	workspaces,
 	worktrees,
@@ -64,7 +65,7 @@ export const createQueryProcedures = () => {
 
 				return {
 					...workspace,
-					type: workspace.type as "worktree" | "branch",
+					type: workspace.type,
 					worktreePath: getWorkspacePath(workspace) ?? "",
 					project: project
 						? {
@@ -102,7 +103,7 @@ export const createQueryProcedures = () => {
 				sectionId: string | null;
 				worktreeId: string | null;
 				worktreePath: string;
-				type: "worktree" | "branch";
+				type: WorkspaceType;
 				branch: string;
 				name: string;
 				tabOrder: number;
@@ -212,14 +213,18 @@ export const createQueryProcedures = () => {
 					let worktreePath = "";
 					if (workspace.type === "worktree" && workspace.worktreeId) {
 						worktreePath = worktreePathMap.get(workspace.worktreeId) ?? "";
-					} else if (workspace.type === "branch") {
+					} else if (
+						workspace.type === "branch" ||
+						workspace.type === "folder"
+					) {
+						// branch & folder workspaces live in-place at the project root.
 						worktreePath = group.project.mainRepoPath;
 					}
 
 					const item: WorkspaceItem = {
 						...workspace,
 						sectionId: workspace.sectionId ?? null,
-						type: workspace.type as "worktree" | "branch",
+						type: workspace.type,
 						worktreePath,
 						isUnread: workspace.isUnread ?? false,
 						isUnnamed: workspace.isUnnamed ?? false,
@@ -334,7 +339,7 @@ export const createQueryProcedures = () => {
 				const worktreePath =
 					workspace.type === "worktree" && worktree?.path
 						? worktree.path
-						: workspace.type === "branch"
+						: workspace.type === "branch" || workspace.type === "folder"
 							? project.mainRepoPath
 							: undefined;
 
