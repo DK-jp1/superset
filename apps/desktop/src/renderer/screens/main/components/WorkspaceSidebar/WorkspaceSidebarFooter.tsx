@@ -8,7 +8,12 @@ import {
 import { toast } from "@superset/ui/sonner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@superset/ui/tooltip";
 import { useNavigate } from "@tanstack/react-router";
-import { LuFolderGit, LuFolderOpen, LuFolderPlus } from "react-icons/lu";
+import {
+	LuFolder,
+	LuFolderGit,
+	LuFolderOpen,
+	LuFolderPlus,
+} from "react-icons/lu";
 import { useOpenProject } from "renderer/react-query/projects";
 import { useOpenMainRepoWorkspace } from "renderer/react-query/workspaces";
 import { STROKE_WIDTH } from "./constants";
@@ -21,8 +26,37 @@ export function WorkspaceSidebarFooter({
 	isCollapsed = false,
 }: WorkspaceSidebarFooterProps) {
 	const navigate = useNavigate();
-	const { openNew, isPending: isOpenPending } = useOpenProject();
+	const {
+		openNew,
+		openFolderNoGitDialog,
+		isPending: isOpenPending,
+	} = useOpenProject();
 	const openMainRepoWorkspace = useOpenMainRepoWorkspace();
+
+	// DoyDeck: open an existing folder without git from the sidebar menu, jumping
+	// straight to its default workspace terminal (same as the StartView entry).
+	const handleOpenWithoutGit = async () => {
+		try {
+			const { firstWorkspaceId, projects, canceled } =
+				await openFolderNoGitDialog();
+			if (canceled) return;
+			if (firstWorkspaceId) {
+				navigate({
+					to: "/workspace/$workspaceId",
+					params: { workspaceId: firstWorkspaceId },
+				});
+				return;
+			}
+			if (projects.length === 0) {
+				toast.error("Could not open the selected folder");
+			}
+		} catch (error) {
+			toast.error("Failed to open folder", {
+				description:
+					error instanceof Error ? error.message : "An unknown error occurred",
+			});
+		}
+	};
 
 	const handleOpenProject = async () => {
 		try {
@@ -74,6 +108,13 @@ export function WorkspaceSidebarFooter({
 							<LuFolderOpen className="size-4" strokeWidth={STROKE_WIDTH} />
 							Open project
 						</DropdownMenuItem>
+						<DropdownMenuItem
+							onClick={handleOpenWithoutGit}
+							disabled={isLoading}
+						>
+							<LuFolder className="size-4" strokeWidth={STROKE_WIDTH} />
+							Open folder (no Git)
+						</DropdownMenuItem>
 						<DropdownMenuItem onClick={() => navigate({ to: "/new-project" })}>
 							<LuFolderGit className="size-4" strokeWidth={STROKE_WIDTH} />
 							New project
@@ -102,6 +143,10 @@ export function WorkspaceSidebarFooter({
 					<DropdownMenuItem onClick={handleOpenProject} disabled={isLoading}>
 						<LuFolderOpen className="size-4" strokeWidth={STROKE_WIDTH} />
 						Open project
+					</DropdownMenuItem>
+					<DropdownMenuItem onClick={handleOpenWithoutGit} disabled={isLoading}>
+						<LuFolder className="size-4" strokeWidth={STROKE_WIDTH} />
+						Open folder (no Git)
 					</DropdownMenuItem>
 					<DropdownMenuItem onClick={() => navigate({ to: "/new-project" })}>
 						<LuFolderGit className="size-4" strokeWidth={STROKE_WIDTH} />
