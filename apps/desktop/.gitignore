@@ -30,3 +30,10 @@ routeTree.gen.ts
 
 # Generated file icons (material-icon-theme)
 src/resources/public/file-icons/
+
+# DoyDeck local Windows dev/build helper scripts (machine-specific paths)
+_doydeck-dev.ps1
+_doydeck-env.ps1
+_step1-compile.ps1
+_step2-native.ps1
+_step3-package.ps1

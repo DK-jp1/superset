@@ -66,8 +66,6 @@ export function WorkspaceListItem({
 }: WorkspaceListItemProps) {
 	const isBranchWorkspace = type === "branch";
 	const isFolderWorkspace = type === "folder";
-	// branch & folder both live in-place at the project root (no worktree).
-	const isInPlaceWorkspace = isBranchWorkspace || isFolderWorkspace;
 	const navigate = useNavigate();
 	const matchRoute = useMatchRoute();
 	const {
@@ -261,7 +259,9 @@ export function WorkspaceListItem({
 			? { additions: pr.additions, deletions: pr.deletions }
 			: null);
 
-	const showBranchSubtitle = isBranchWorkspace || (!!name && name !== branch);
+	// Folder workspaces have no branch (branch=""); never show an empty subtitle row.
+	const showBranchSubtitle =
+		isBranchWorkspace || (!isFolderWorkspace && !!name && name !== branch);
 
 	if (isCollapsed) {
 		return (
