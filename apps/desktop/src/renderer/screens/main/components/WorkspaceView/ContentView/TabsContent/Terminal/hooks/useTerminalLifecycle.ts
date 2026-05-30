@@ -100,6 +100,8 @@ export interface UseTerminalLifecycleOptions {
 	searchAddonRef: MutableRefObject<SearchAddon | null>;
 	isExitedRef: MutableRefObject<boolean>;
 	wasKilledByUserRef: MutableRefObject<boolean>;
+	/** Timestamp of first stream data; reset to null on full restart. */
+	firstDataAtRef: MutableRefObject<number | null>;
 	commandBufferRef: MutableRefObject<string>;
 	isFocusedRef: MutableRefObject<boolean>;
 	isRestoredModeRef: MutableRefObject<boolean>;
@@ -163,6 +165,7 @@ export function useTerminalLifecycle({
 	searchAddonRef,
 	isExitedRef,
 	wasKilledByUserRef,
+	firstDataAtRef,
 	commandBufferRef,
 	isFocusedRef,
 	isRestoredModeRef,
@@ -365,6 +368,10 @@ export function useTerminalLifecycle({
 				isExitedRef.current = false;
 				isStreamReadyRef.current = false;
 				wasKilledByUserRef.current = false;
+				// New session: restart the early-exit grace clock so a shell that
+				// dies immediately after restart shows the prompt instead of
+				// auto-closing on the previous session's stale first-data time.
+				firstDataAtRef.current = null;
 				setExitStatus(null);
 				resetModes();
 				xterm.clear();

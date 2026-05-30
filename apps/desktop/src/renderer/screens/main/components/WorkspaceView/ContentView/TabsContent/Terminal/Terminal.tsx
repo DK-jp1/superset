@@ -122,6 +122,11 @@ export const Terminal = memo(function Terminal({
 	);
 	const wasKilledByUserRef = useRef(false);
 	const pendingEventsRef = useRef<TerminalStreamEvent[]>([]);
+	// Timestamp (performance.now) of this session's first stream data. Null until
+	// the shell produces output. Shared across stream/restore/lifecycle so the
+	// early-exit guard in useTerminalStream sees data from every delivery path
+	// (live stream + flushed queue) and is reset on restart.
+	const firstDataAtRef = useRef<number | null>(null);
 	const commandBufferRef = useRef("");
 	const tabIdRef = useRef(tabId);
 	tabIdRef.current = tabId;
@@ -230,6 +235,7 @@ export const Terminal = memo(function Terminal({
 		xtermRef,
 		fitAddonRef,
 		pendingEventsRef,
+		firstDataAtRef,
 		isAlternateScreenRef,
 		isBracketedPasteRef,
 		modeScanBufferRef,
@@ -288,6 +294,7 @@ export const Terminal = memo(function Terminal({
 			isExitedRef,
 			wasKilledByUserRef,
 			pendingEventsRef,
+			firstDataAtRef,
 			setExitStatus,
 			setConnectionError,
 			updateModesFromData,
@@ -343,6 +350,7 @@ export const Terminal = memo(function Terminal({
 		searchAddonRef,
 		isExitedRef,
 		wasKilledByUserRef,
+		firstDataAtRef,
 		commandBufferRef,
 		isFocusedRef,
 		isRestoredModeRef,

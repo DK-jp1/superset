@@ -11,6 +11,7 @@ import { ResizablePanel } from "../../ResizablePanel";
 import { ChangesContent, ScrollProvider } from "../ChangesContent";
 import { ContentView } from "../ContentView";
 import { useBrowserLifecycle } from "../hooks/useBrowserLifecycle";
+import { useTerminalCacheReaper } from "../hooks/useTerminalCacheReaper";
 import { RightSidebar } from "../RightSidebar";
 
 const COMPACT_COMMANDER_SIDEBAR_MIN_WIDTH = 320;
@@ -29,6 +30,7 @@ export function WorkspaceLayout({
 	onOpenQuickOpen,
 }: WorkspaceLayoutProps) {
 	useBrowserLifecycle();
+	useTerminalCacheReaper();
 	const isSidebarOpen = useSidebarStore((s) => s.isSidebarOpen);
 	const sidebarWidth = useSidebarStore((s) => s.sidebarWidth);
 	const setSidebarWidth = useSidebarStore((s) => s.setSidebarWidth);

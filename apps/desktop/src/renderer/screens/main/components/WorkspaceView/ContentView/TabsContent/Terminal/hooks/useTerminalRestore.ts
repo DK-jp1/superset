@@ -14,6 +14,8 @@ export interface UseTerminalRestoreOptions {
 	xtermRef: React.MutableRefObject<XTerm | null>;
 	fitAddonRef: React.MutableRefObject<FitAddon | null>;
 	pendingEventsRef: React.MutableRefObject<TerminalStreamEvent[]>;
+	/** Timestamp of first stream data; null until the shell produces output. */
+	firstDataAtRef: React.MutableRefObject<number | null>;
 	isAlternateScreenRef: React.MutableRefObject<boolean>;
 	isBracketedPasteRef: React.MutableRefObject<boolean>;
 	modeScanBufferRef: React.MutableRefObject<string>;
@@ -54,6 +56,7 @@ export function useTerminalRestore({
 	xtermRef,
 	fitAddonRef,
 	pendingEventsRef,
+	firstDataAtRef,
 	isAlternateScreenRef,
 	isBracketedPasteRef,
 	modeScanBufferRef,
@@ -93,6 +96,12 @@ export function useTerminalRestore({
 		);
 		for (const event of events) {
 			if (event.type === "data") {
+				// Mirror useTerminalStream: record first-data time from the
+				// queued/flushed path too, so the early-exit guard works even
+				// when a shell's whole lifetime predates stream-ready.
+				if (firstDataAtRef.current === null) {
+					firstDataAtRef.current = performance.now();
+				}
 				updateModesRef.current(event.data);
 				xterm.write(event.data);
 				updateCwdRef.current(event.data);
@@ -104,7 +113,7 @@ export function useTerminalRestore({
 				onDisconnectEventRef.current(event.reason);
 			}
 		}
-	}, [xtermRef, pendingEventsRef]);
+	}, [xtermRef, pendingEventsRef, firstDataAtRef]);
 
 	const maybeApplyInitialState = useCallback(() => {
 		if (!didFirstRenderRef.current) return;

@@ -6,6 +6,19 @@ import { setPaneWorkspaceRunState } from "renderer/stores/tabs/workspace-run";
 import { DEBUG_TERMINAL } from "../config";
 import type { TerminalExitReason, TerminalStreamEvent } from "../types";
 
+/**
+ * A clean (code 0) shell exit auto-closes the pane/tab (the intended
+ * "type `exit` to close" behavior). But a freshly spawned shell that dies
+ * almost immediately — producing no output, or exiting within this grace
+ * window of its first output — is NOT a user-initiated `exit`; it is a shell
+ * that failed to stay alive (observed on Windows as a newly created tab that
+ * "closes the moment it is created"). Below this threshold we show the restart
+ * overlay instead of vanishing. Comfortably above machine-speed immediate
+ * death (<100ms) and below the time a human needs to read a prompt and type
+ * `exit`.
+ */
+const EARLY_EXIT_GRACE_MS = 1500;
+
 export interface UseTerminalStreamOptions {
 	paneId: string;
 	xtermRef: React.MutableRefObject<XTerm | null>;
@@ -13,6 +26,8 @@ export interface UseTerminalStreamOptions {
 	isExitedRef: React.MutableRefObject<boolean>;
 	wasKilledByUserRef: React.MutableRefObject<boolean>;
 	pendingEventsRef: React.MutableRefObject<TerminalStreamEvent[]>;
+	/** Timestamp of first stream data; null until the shell produces output. */
+	firstDataAtRef: React.MutableRefObject<number | null>;
 	setExitStatus: (status: "killed" | "exited" | null) => void;
 	setConnectionError: (error: string | null) => void;
 	updateModesFromData: (data: string) => void;
@@ -39,6 +54,7 @@ export function useTerminalStream({
 	isExitedRef,
 	wasKilledByUserRef,
 	pendingEventsRef,
+	firstDataAtRef,
 	setExitStatus,
 	setConnectionError,
 	updateModesFromData,
@@ -80,9 +96,24 @@ export function useTerminalStream({
 						: "[Restart to start a new session]",
 				);
 			} else if (exitCode === 0 && !isWorkspaceRunPane) {
-				// Clean exit (e.g. typing "exit") — close the pane/tab
-				removePane(paneId);
-				return;
+				// Clean exit (e.g. typing "exit") — close the pane/tab.
+				// Guard against a freshly spawned shell that exits immediately:
+				// that is not a user `exit`, and auto-closing it makes a newly
+				// created tab vanish on its own. Only auto-close once the shell
+				// has genuinely been alive (produced output and survived past
+				// the grace window).
+				const firstDataAt = firstDataAtRef.current;
+				const livedLongEnough =
+					firstDataAt !== null &&
+					performance.now() - firstDataAt >= EARLY_EXIT_GRACE_MS;
+				if (livedLongEnough) {
+					removePane(paneId);
+					return;
+				}
+				// Immediate/early exit — show the restart overlay instead of
+				// silently closing the tab.
+				xterm.writeln("\r\n\r\n[Process exited]");
+				xterm.writeln("[Press any key to restart]");
 			} else {
 				xterm.writeln(
 					exitCode === 0
@@ -106,6 +137,7 @@ export function useTerminalStream({
 			isExitedRef,
 			isStreamReadyRef,
 			wasKilledByUserRef,
+			firstDataAtRef,
 			setExitStatus,
 			setPaneStatus,
 			removePane,
@@ -164,6 +196,9 @@ export function useTerminalStream({
 
 			// Process events when stream is ready
 			if (event.type === "data") {
+				if (firstDataAtRef.current === null) {
+					firstDataAtRef.current = performance.now();
+				}
 				if (DEBUG_TERMINAL && !firstStreamDataReceivedRef.current) {
 					firstStreamDataReceivedRef.current = true;
 					console.log(
@@ -189,6 +224,7 @@ export function useTerminalStream({
 			xtermRef,
 			isStreamReadyRef,
 			pendingEventsRef,
+			firstDataAtRef,
 			handleTerminalExit,
 			handleStreamError,
 			setConnectionError,
