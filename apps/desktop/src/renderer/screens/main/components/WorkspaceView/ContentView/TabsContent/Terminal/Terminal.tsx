@@ -589,7 +589,12 @@ export const Terminal = memo(function Terminal({
 				!isWorkspaceRunPane && (
 					<SessionKilledOverlay onRestart={restartTerminal} />
 				)}
-			<div className="relative z-10 h-full w-full p-2">
+			{/* z-[1]: above the background-image + dim layer, but BELOW the
+			    overlay controls (ScrollToBottomButton / TerminalSearch /
+			    SessionKilledOverlay are all z-10). Sharing z-10 here let this
+			    full-size wrapper paint over — and steal clicks from — those
+			    controls (DoyDeck terminal-background regression). */}
+			<div className="relative z-[1] h-full w-full p-2">
 				<div ref={terminalRef} className="h-full w-full" />
 			</div>
 		</div>
