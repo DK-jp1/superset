@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+	isSyntheticPasteShortcut,
 	shouldBubbleClipboardShortcut,
 	shouldSelectAllShortcut,
 } from "./clipboard-shortcuts";
@@ -146,6 +147,101 @@ describe("shouldBubbleClipboardShortcut", () => {
 			expect(shouldBubbleClipboardShortcut(event, options), name).toBe(
 				expected,
 			);
+		}
+	});
+});
+
+describe("isSyntheticPasteShortcut", () => {
+	// Synthetic injectors (voice input like Typeless) send Ctrl/Cmd+V with an
+	// empty event.code (no physical scancode) — identity only in event.key.
+	function synth(
+		overrides: Partial<{
+			code: string;
+			key: string;
+			isComposing: boolean;
+			metaKey: boolean;
+			ctrlKey: boolean;
+			altKey: boolean;
+			shiftKey: boolean;
+		}>,
+	) {
+		return {
+			code: "",
+			key: "v",
+			metaKey: false,
+			ctrlKey: false,
+			altKey: false,
+			shiftKey: false,
+			...overrides,
+		};
+	}
+
+	const cases = [
+		{
+			name: "Windows synthetic Ctrl+V (empty code)",
+			event: synth({ ctrlKey: true }),
+			isMac: false,
+			expected: true,
+		},
+		{
+			name: "Windows synthetic Ctrl+Shift+V",
+			event: synth({ ctrlKey: true, shiftKey: true }),
+			isMac: false,
+			expected: true,
+		},
+		{
+			name: "uppercase key V (caps/shift) still matches",
+			event: synth({ key: "V", ctrlKey: true }),
+			isMac: false,
+			expected: true,
+		},
+		{
+			name: "Mac synthetic Cmd+V",
+			event: synth({ metaKey: true }),
+			isMac: true,
+			expected: true,
+		},
+		{
+			name: "real keyboard Ctrl+V (code=KeyV) excluded — native paste path",
+			event: synth({ code: "KeyV", ctrlKey: true }),
+			isMac: false,
+			expected: false,
+		},
+		{
+			name: "AltGr (Ctrl+Alt+V) excluded",
+			event: synth({ ctrlKey: true, altKey: true }),
+			isMac: false,
+			expected: false,
+		},
+		{
+			name: "no modifier excluded",
+			event: synth({}),
+			isMac: false,
+			expected: false,
+		},
+		{
+			name: "different key (Ctrl+A) excluded",
+			event: synth({ key: "a", ctrlKey: true }),
+			isMac: false,
+			expected: false,
+		},
+		{
+			name: "IME composing excluded",
+			event: synth({ ctrlKey: true, isComposing: true }),
+			isMac: false,
+			expected: false,
+		},
+		{
+			name: "Windows Ctrl-only (no meta) not treated as Mac",
+			event: synth({ metaKey: true }),
+			isMac: false,
+			expected: false,
+		},
+	];
+
+	it("matches only synthetic paste chords with empty code", () => {
+		for (const { name, event, isMac, expected } of cases) {
+			expect(isSyntheticPasteShortcut(event, isMac), name).toBe(expected);
 		}
 	});
 });

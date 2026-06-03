@@ -1,9 +1,41 @@
 export interface ClipboardShortcutEvent {
 	code: string;
+	/** Logical key value (e.g. "v"). Fallback identity when `code` is empty. */
+	key?: string;
+	/** True while an IME composition is active; such events are never a paste. */
+	isComposing?: boolean;
 	metaKey: boolean;
 	ctrlKey: boolean;
 	altKey: boolean;
 	shiftKey: boolean;
+}
+
+/**
+ * Detect a paste chord (Ctrl/Cmd+V) that arrived as a SYNTHETIC keystroke with
+ * an empty `event.code`.
+ *
+ * Voice-input / keystroke-injection tools (e.g. Typeless on Windows) paste via
+ * SendInput Ctrl+V. Those events carry no physical scancode, so `event.code` is
+ * "" (only `event.key`/`keyCode` identify the key). Two things then break:
+ *   1. The code-based clipboard match (`event.code === "KeyV"`) misses it, so
+ *      xterm encodes the chord into the PTY as a raw ^V (0x16) instead of pasting.
+ *   2. The browser fires NO native `paste` event for the synthetic chord, so the
+ *      usual "bubble and let the paste pipeline run" approach pastes nothing.
+ * The caller handles this by reading the clipboard and pasting directly.
+ *
+ * Real keyboard Ctrl+V (`code === "KeyV"`) is intentionally excluded so its
+ * native paste pipeline stays untouched.
+ */
+export function isSyntheticPasteShortcut(
+	event: ClipboardShortcutEvent,
+	isMac: boolean,
+): boolean {
+	if (event.isComposing) return false;
+	if (event.code !== "") return false;
+	if ((event.key ?? "").toLowerCase() !== "v") return false;
+	const primaryModifier = isMac ? event.metaKey : event.ctrlKey;
+	// Allow optional Shift (Ctrl+Shift+V); exclude Alt to avoid AltGr layouts.
+	return primaryModifier && !event.altKey;
 }
 
 export interface ClipboardShortcutOptions {

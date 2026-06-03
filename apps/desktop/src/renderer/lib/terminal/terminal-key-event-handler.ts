@@ -1,6 +1,7 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { resolveHotkeyFromEvent } from "renderer/hotkeys";
 import {
+	isSyntheticPasteShortcut,
 	shouldBubbleClipboardShortcut,
 	shouldSelectAllShortcut,
 } from "./clipboard-shortcuts";
@@ -60,6 +61,24 @@ export function createTerminalKeyEventHandler(
 			if (event.type === "keydown") {
 				event.preventDefault();
 				terminal.selectAll();
+			}
+			return false;
+		}
+
+		// Synthetic Ctrl/Cmd+V (voice-input / keystroke injectors like Typeless):
+		// empty `event.code` means the code-based clipboard match misses it AND no
+		// native paste event fires, so xterm would encode a raw ^V into the PTY.
+		// Paste from the clipboard ourselves. Real Ctrl+V (code="KeyV") is excluded
+		// and keeps its native paste pipeline.
+		if (isSyntheticPasteShortcut(event, isMac)) {
+			if (event.type === "keydown") {
+				event.preventDefault();
+				void navigator.clipboard
+					.readText()
+					.then((text) => {
+						if (text) terminal.paste(text);
+					})
+					.catch(() => {});
 			}
 			return false;
 		}
