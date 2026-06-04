@@ -12,6 +12,7 @@ import {
 	LuSettings,
 	LuX,
 } from "react-icons/lu";
+import { fileManagerName } from "renderer/lib/platform/fileManagerName";
 
 interface DashboardSidebarProjectContextMenuProps {
 	onCreateSection: () => void;
@@ -41,7 +42,7 @@ export function DashboardSidebarProjectContextMenu({
 				<ContextMenuSeparator />
 				<ContextMenuItem onSelect={onOpenInFinder}>
 					<LuFolderOpen className="size-4 mr-2" />
-					Open in Finder
+					Open in {fileManagerName()}
 				</ContextMenuItem>
 				<ContextMenuItem onSelect={onOpenSettings}>
 					<LuSettings className="size-4 mr-2" />

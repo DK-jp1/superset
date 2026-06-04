@@ -23,6 +23,7 @@ import {
 	LuTrash2,
 	LuX,
 } from "react-icons/lu";
+import { fileManagerName } from "renderer/lib/platform/fileManagerName";
 import { useCollections } from "renderer/routes/_authenticated/providers/CollectionsProvider";
 import { useDashboardSidebarHover } from "../../../../providers/DashboardSidebarHoverProvider";
 
@@ -90,7 +91,7 @@ export function DashboardSidebarWorkspaceContextMenu({
 						<ContextMenuSeparator />
 						<ContextMenuItem onSelect={onOpenInFinder}>
 							<LuFolderOpen className="size-4 mr-2" />
-							Open in Finder
+							Open in {fileManagerName()}
 						</ContextMenuItem>
 						<ContextMenuItem onSelect={onCopyPath}>
 							<LuCopy className="size-4 mr-2" />

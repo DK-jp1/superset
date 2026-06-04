@@ -5,6 +5,7 @@ import {
 import { toast } from "@superset/ui/sonner";
 import { Clipboard, Copy, FolderOpen } from "lucide-react";
 import { useCopyToClipboard } from "renderer/hooks/useCopyToClipboard";
+import { fileManagerName } from "renderer/lib/platform/fileManagerName";
 import { electronTrpcClient } from "renderer/lib/trpc-client";
 
 interface PathActionsMenuItemsProps {
@@ -31,7 +32,7 @@ export function PathActionsMenuItems({
 			await electronTrpcClient.external.openInFinder.mutate(absolutePath);
 		} catch (error) {
 			toast.error(
-				`Failed to reveal in Finder: ${error instanceof Error ? error.message : "Unknown error"}`,
+				`Failed to reveal in ${fileManagerName()}: ${error instanceof Error ? error.message : "Unknown error"}`,
 			);
 		}
 	};
@@ -40,7 +41,7 @@ export function PathActionsMenuItems({
 		<>
 			<ContextMenuItem onSelect={handleRevealInFinder}>
 				<FolderOpen />
-				Reveal in Finder
+				Reveal in {fileManagerName()}
 			</ContextMenuItem>
 			<ContextMenuSeparator />
 			<ContextMenuItem onSelect={() => handleCopy(absolutePath, "Path copied")}>

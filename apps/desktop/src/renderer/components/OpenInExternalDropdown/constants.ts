@@ -26,6 +26,7 @@ import windsurfIcon from "renderer/assets/app-icons/windsurf.svg";
 import windsurfWhiteIcon from "renderer/assets/app-icons/windsurf-white.svg";
 import xcodeIcon from "renderer/assets/app-icons/xcode.svg";
 import zedIcon from "renderer/assets/app-icons/zed.png";
+import { fileManagerName } from "renderer/lib/platform/fileManagerName";
 
 export interface OpenInExternalAppOption {
 	id: ExternalApp;
@@ -38,7 +39,8 @@ export interface OpenInExternalAppOption {
 export const FINDER_OPTIONS: OpenInExternalAppOption[] = [
 	{
 		id: "finder",
-		label: "Finder",
+		// Platform-native file manager name (Finder on macOS, File Explorer on Windows).
+		label: fileManagerName(),
 		lightIcon: finderIcon,
 		darkIcon: finderIcon,
 	},

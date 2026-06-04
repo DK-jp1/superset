@@ -6,6 +6,7 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@superset/ui/dropdown-menu";
+import { Input } from "@superset/ui/input";
 import {
 	Select,
 	SelectContent,
@@ -13,14 +14,14 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@superset/ui/select";
-import { Input } from "@superset/ui/input";
+import { toast } from "@superset/ui/sonner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@superset/ui/tooltip";
 import { cn } from "@superset/ui/utils";
 import {
 	Bot,
-	ChevronsUpDown,
 	ChevronDown,
 	ChevronRight,
+	ChevronsUpDown,
 	Copy,
 	FileQuestion,
 	FolderOpen,
@@ -33,13 +34,13 @@ import {
 } from "lucide-react";
 import type { ComponentType } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { quote } from "shell-quote";
-import { toast } from "@superset/ui/sonner";
 import { useCopyToClipboard } from "renderer/hooks/useCopyToClipboard";
 import {
 	type ElectronRouterOutputs,
 	electronTrpc,
 } from "renderer/lib/electron-trpc";
+import { fileManagerName } from "renderer/lib/platform/fileManagerName";
+import type { CommanderSelectedPath } from "renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/components/WorkspaceSidebar/components/CommanderTab/commander-types";
 import { FileIcon } from "renderer/screens/main/components/WorkspaceView/RightSidebar/FilesView/utils";
 import {
 	addSelectedPathToCommanderSession,
@@ -51,7 +52,7 @@ import { useDoyDeckDropdownClose } from "renderer/stores/doydeck-dropdown-close-
 import { registerDoyDeckExplorerPathNavigator } from "renderer/stores/doydeck-explorer-navigation";
 import { setDoyDeckNativeFileDragActive } from "renderer/stores/doydeck-native-file-drag";
 import { openDoyDeckCenterPreview } from "renderer/stores/doydeck-preview-openers";
-import type { CommanderSelectedPath } from "renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/components/WorkspaceSidebar/components/CommanderTab/commander-types";
+import { quote } from "shell-quote";
 import { DoyDeckPreviewRenderer } from "./DoyDeckPreviewRenderer";
 
 type ExplorerRootId =
@@ -267,7 +268,8 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 	const rootsQuery = electronTrpc.doydeckExplorer.getRoots.useQuery({
 		workspaceId,
 	});
-	const resolvePathMutation = electronTrpc.doydeckExplorer.resolvePath.useMutation();
+	const resolvePathMutation =
+		electronTrpc.doydeckExplorer.resolvePath.useMutation();
 	const openInFinderMutation = electronTrpc.external.openInFinder.useMutation();
 
 	const roots = rootsQuery.data?.roots ?? [];
@@ -379,9 +381,7 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 	const previewPanelHeightPx =
 		explorerContentHeight > 0 && listHeightPx > 0
 			? Math.max(
-					explorerContentHeight -
-						listHeightPx -
-						EXPLORER_SPLITTER_HEIGHT_PX,
+					explorerContentHeight - listHeightPx - EXPLORER_SPLITTER_HEIGHT_PX,
 					MIN_PREVIEW_HEIGHT_PX,
 				)
 			: 0;
@@ -437,9 +437,7 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 	);
 
 	const selectedPreviewFilePath =
-		selectedKind === "file" || selectedKind === "symlink"
-			? selectedPath
-			: null;
+		selectedKind === "file" || selectedKind === "symlink" ? selectedPath : null;
 	const selectedRelativePath = selectedPath
 		? getRelativePath(rootPath, selectedPath)
 		: "";
@@ -629,7 +627,9 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		) {
 			event.preventDefault();
 			resetNativeFileUploadDrag();
-			toast.error("Files over 10MB are not available for Browser AI upload drag");
+			toast.error(
+				"Files over 10MB are not available for Browser AI upload drag",
+			);
 			return;
 		}
 
@@ -664,9 +664,9 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 				path: selectedPath,
 			});
 			await openInFinderMutation.mutateAsync(resolved.absolutePath);
-			toast.success("Opened in Finder");
+			toast.success(`Opened in ${fileManagerName()}`);
 		} catch (error) {
-			toast.error("Could not open in Finder", {
+			toast.error(`Could not open in ${fileManagerName()}`, {
 				description: getErrorMessage(error),
 			});
 		}
@@ -709,18 +709,14 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 			const availableHeight = rect.height;
 			if (
 				availableHeight <=
-				MIN_LIST_HEIGHT_PX +
-					EXPLORER_SPLITTER_HEIGHT_PX +
-					MIN_PREVIEW_HEIGHT_PX
+				MIN_LIST_HEIGHT_PX + EXPLORER_SPLITTER_HEIGHT_PX + MIN_PREVIEW_HEIGHT_PX
 			) {
 				return;
 			}
 			const rawListHeight = clientY - rect.top;
 			const clampedListHeight = Math.min(
 				Math.max(rawListHeight, MIN_LIST_HEIGHT_PX),
-				availableHeight -
-					EXPLORER_SPLITTER_HEIGHT_PX -
-					MIN_PREVIEW_HEIGHT_PX,
+				availableHeight - EXPLORER_SPLITTER_HEIGHT_PX - MIN_PREVIEW_HEIGHT_PX,
 			);
 			setListHeightPx(Math.round(clampedListHeight));
 		};
@@ -740,12 +736,12 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 		updateHeight(event.clientY);
 	};
 
-		return (
-			<div
-				ref={explorerRootRef}
-				className="flex h-full min-h-0 flex-col overflow-hidden bg-background"
-				data-testid="doydeck-explorer-root"
-			>
+	return (
+		<div
+			ref={explorerRootRef}
+			className="flex h-full min-h-0 flex-col overflow-hidden bg-background"
+			data-testid="doydeck-explorer-root"
+		>
 			<div className="flex shrink-0 items-center gap-2 border-b px-2 py-2">
 				<Select
 					value={rootId}
@@ -964,7 +960,7 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 						/>
 						<IconButton
 							icon={FolderOpen}
-							label="Open in Finder"
+							label={`Open in ${fileManagerName()}`}
 							disabled={
 								!selectedPath ||
 								resolvePathMutation.isPending ||
@@ -1066,7 +1062,7 @@ export function DoyDeckExplorer({ workspaceId }: DoyDeckExplorerProps) {
 									onSelect={() => void handleOpenInFinder()}
 								>
 									<FolderOpen className="size-3.5" />
-									Open in Finder
+									Open in {fileManagerName()}
 								</DropdownMenuItem>
 								<DropdownMenuItem
 									disabled={!selectedPath}

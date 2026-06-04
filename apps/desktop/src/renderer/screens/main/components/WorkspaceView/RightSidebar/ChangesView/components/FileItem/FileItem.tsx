@@ -18,6 +18,7 @@ import {
 	VscRemove,
 	VscTrash,
 } from "react-icons/vsc";
+import { fileManagerName } from "renderer/lib/platform/fileManagerName";
 import { toAbsoluteWorkspacePath } from "shared/absolute-paths";
 import type { ChangeCategory, ChangedFile } from "shared/changes-types";
 import { createFileKey, useScrollContext } from "../../../../ChangesContent";
@@ -286,7 +287,7 @@ export function FileItem({
 					<ContextMenuSeparator />
 					<ContextMenuItem onClick={revealInFinder}>
 						<VscFolderOpened className="mr-2 size-4" />
-						Reveal in Finder
+						Reveal in {fileManagerName()}
 					</ContextMenuItem>
 					<ContextMenuItem onClick={openInEditor}>
 						<VscLinkExternal className="mr-2 size-4" />

@@ -28,6 +28,7 @@ import {
 	LuPencil,
 	LuX,
 } from "react-icons/lu";
+import { fileManagerName } from "renderer/lib/platform/fileManagerName";
 import {
 	useCreateSectionFromWorkspaces,
 	useMoveWorkspacesToSection,
@@ -146,7 +147,7 @@ export function WorkspaceContextMenu({
 		<>
 			<ContextMenuItem onSelect={onOpenInFinder}>
 				<LuFolderOpen className="size-4 mr-2" strokeWidth={STROKE_WIDTH} />
-				Open in Finder
+				Open in {fileManagerName()}
 			</ContextMenuItem>
 			<ContextMenuItem onSelect={onOpenInEditor}>
 				<LuExternalLink className="size-4 mr-2" strokeWidth={STROKE_WIDTH} />

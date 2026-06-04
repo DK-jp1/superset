@@ -12,6 +12,7 @@ import { Label } from "@superset/ui/label";
 import { toast } from "@superset/ui/sonner";
 import { Textarea } from "@superset/ui/textarea";
 import { useState } from "react";
+import { PLATFORM } from "renderer/hotkeys";
 import { apiTrpcClient } from "renderer/lib/api-trpc-client";
 
 interface SubmitPromptDialogProps {
@@ -108,7 +109,7 @@ export function SubmitPromptDialog({
 					<Button type="button" onClick={handleSubmit} disabled={!canSubmit}>
 						{isSubmitting ? "Submitting…" : "Submit prompt"}
 						<span className="ml-2 inline-flex items-center gap-1 text-base font-mono tabular-nums opacity-80">
-							<span>⌘</span>
+							<span>{PLATFORM === "mac" ? "⌘" : "Ctrl"}</span>
 							<span>↵</span>
 						</span>
 					</Button>

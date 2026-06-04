@@ -16,6 +16,7 @@ import {
 	LuPencil,
 	LuTrash2,
 } from "react-icons/lu";
+import { fileManagerName } from "renderer/lib/platform/fileManagerName";
 import type { DirectoryEntry } from "shared/file-tree-types";
 import { useFileDrag, usePathActions } from "../../../ChangesView/hooks";
 import { SEARCH_RESULT_ROW_HEIGHT } from "../../constants";
@@ -170,7 +171,7 @@ export function FileSearchResultItem({
 
 				<ContextMenuItem onClick={revealInFinder}>
 					<LuFolderOpen className="mr-2 size-4" />
-					Reveal in Finder
+					Reveal in {fileManagerName()}
 				</ContextMenuItem>
 				<ContextMenuItem onClick={openInEditor}>
 					<LuExternalLink className="mr-2 size-4" />
