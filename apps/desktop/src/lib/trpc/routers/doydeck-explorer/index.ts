@@ -292,11 +292,13 @@ function buildXlsxPreview(buffer: Buffer) {
 					raw: false,
 				}) as unknown[][])
 			: [];
-		const rows = rawRows.slice(0, XLSX_MAX_ROWS_PER_SHEET).map((row) =>
-			row
-				.slice(0, XLSX_MAX_COLUMNS_PER_SHEET)
-				.map((cell) => cellToPreviewText(cell)),
-		);
+		const rows = rawRows
+			.slice(0, XLSX_MAX_ROWS_PER_SHEET)
+			.map((row) =>
+				row
+					.slice(0, XLSX_MAX_COLUMNS_PER_SHEET)
+					.map((cell) => cellToPreviewText(cell)),
+			);
 		return {
 			name,
 			rows,
@@ -404,7 +406,16 @@ function buildRootDefinitions(workspaceId?: string) {
 			label: "Developer",
 			absolutePath: path.join(homePath, "Developer"),
 		},
-		{ id: "volumes" as const, label: "Volumes", absolutePath: "/Volumes" },
+		// macOS lists mounted volumes under /Volumes; Windows has no equivalent
+		// directory, so point this shortcut at the system drive root instead
+		// (users can type any other drive, e.g. D:\, into the path bar).
+		process.platform === "win32"
+			? {
+					id: "volumes" as const,
+					label: `${process.env.SystemDrive ?? "C:"}\\`,
+					absolutePath: `${process.env.SystemDrive ?? "C:"}\\`,
+				}
+			: { id: "volumes" as const, label: "Volumes", absolutePath: "/Volumes" },
 		{
 			id: "currentWorkspace" as const,
 			label: "Current Workspace",
@@ -437,7 +448,10 @@ function resolveTargetPath(rootPath: string, absolutePath?: string): string {
 	return targetPath;
 }
 
-function resolveExplorerNavigationPath(inputPath: string, workspaceId?: string) {
+function resolveExplorerNavigationPath(
+	inputPath: string,
+	workspaceId?: string,
+) {
 	const trimmedPath = trimPathInput(inputPath);
 	if (!trimmedPath) {
 		throw new TRPCError({
@@ -452,11 +466,17 @@ function resolveExplorerNavigationPath(inputPath: string, workspaceId?: string) 
 				"SMB URLs are not opened directly. Mount the share first, then use its /Volumes path.",
 		});
 	}
-	if (/^[a-zA-Z]:[\\/]/.test(trimmedPath) || /^\\\\/.test(trimmedPath)) {
+	// Windows drive paths (C:\…) and UNC paths (\\server\share) are first-class
+	// on Windows. On macOS/Linux they are not real local paths, so keep rejecting
+	// them there.
+	if (
+		process.platform !== "win32" &&
+		(/^[a-zA-Z]:[\\/]/.test(trimmedPath) || /^\\\\/.test(trimmedPath))
+	) {
 		throw new TRPCError({
 			code: "BAD_REQUEST",
 			message:
-				"Windows and UNC paths must be mounted on this Mac before DoyDeck Explorer can open them.",
+				"Windows and UNC paths aren't available on this machine. Mount the share first.",
 		});
 	}
 
@@ -541,7 +561,10 @@ async function prepareBrowserAiAttachmentFile(input: {
 	workspaceId?: string;
 	filePath: string;
 }) {
-	const targetPath = resolveExplorerNavigationPath(input.filePath, input.workspaceId);
+	const targetPath = resolveExplorerNavigationPath(
+		input.filePath,
+		input.workspaceId,
+	);
 	if (EXCLUDED_ENTRY_NAMES.has(path.basename(targetPath))) {
 		throw new Error("This path is not available in DoyDeck Explorer");
 	}
@@ -579,8 +602,7 @@ async function prepareBrowserAiAttachmentFile(input: {
 		name: path.basename(targetPath),
 		extension,
 		mimeType:
-			BROWSER_AI_ATTACHMENT_MIME_TYPES[extension] ||
-			"application/octet-stream",
+			BROWSER_AI_ATTACHMENT_MIME_TYPES[extension] || "application/octet-stream",
 		byteLength: stats.size,
 		dataBase64: buffer.toString("base64"),
 	};
@@ -613,7 +635,9 @@ async function collectReviewScreenshotPaths(input: {
 			if (!LOOP_REVIEW_SCREENSHOT_EXTENSIONS.has(getExtension(entry.name))) {
 				continue;
 			}
-			const filePath = normalizeAbsolutePath(path.join(directoryPath, entry.name));
+			const filePath = normalizeAbsolutePath(
+				path.join(directoryPath, entry.name),
+			);
 			if (!isPathWithinRoot(workspaceRoot, filePath)) continue;
 			try {
 				const stats = await fs.stat(filePath);
@@ -788,83 +812,83 @@ export const createDoyDeckExplorerRouter = () => {
 						message: "This path is not available in DoyDeck Explorer",
 					});
 				}
-					const stats = await fs.lstat(targetPath);
+				const stats = await fs.lstat(targetPath);
 
-					if (stats.isDirectory()) {
+				if (stats.isDirectory()) {
 					throw new TRPCError({
 						code: "BAD_REQUEST",
-							message: "Cannot preview a directory",
-						});
-					}
+						message: "Cannot preview a directory",
+					});
+				}
 
-					if (isUnsupportedOfficeFile(targetPath)) {
-						return {
-							kind: "unsupportedOffice" as const,
-							byteLength: stats.size,
-							maxBytes: OFFICE_MAX_PREVIEW_BYTES,
-							mimeType: null,
-						};
-					}
+				if (isUnsupportedOfficeFile(targetPath)) {
+					return {
+						kind: "unsupportedOffice" as const,
+						byteLength: stats.size,
+						maxBytes: OFFICE_MAX_PREVIEW_BYTES,
+						mimeType: null,
+					};
+				}
 
-					const realPath = normalizeAbsolutePath(await fs.realpath(targetPath));
-					if (!isPathWithinRoot(rootPath, realPath)) {
+				const realPath = normalizeAbsolutePath(await fs.realpath(targetPath));
+				if (!isPathWithinRoot(rootPath, realPath)) {
 					throw new TRPCError({
 						code: "BAD_REQUEST",
 						message: "Symlink target is outside the selected Explorer root",
 					});
-					}
+				}
 
-					const mediaPreviewInfo = getMediaPreviewInfo(targetPath);
-					const officePreviewInfo = getOfficePreviewInfo(targetPath);
-					const defaultMaxBytes = officePreviewInfo
-						? OFFICE_MAX_PREVIEW_BYTES
-						: mediaPreviewInfo
-							? MEDIA_MAX_PREVIEW_BYTES
-							: TEXT_MAX_PREVIEW_BYTES;
-					const maxBytes = Math.min(
-						input.maxBytes ?? defaultMaxBytes,
-						defaultMaxBytes,
+				const mediaPreviewInfo = getMediaPreviewInfo(targetPath);
+				const officePreviewInfo = getOfficePreviewInfo(targetPath);
+				const defaultMaxBytes = officePreviewInfo
+					? OFFICE_MAX_PREVIEW_BYTES
+					: mediaPreviewInfo
+						? MEDIA_MAX_PREVIEW_BYTES
+						: TEXT_MAX_PREVIEW_BYTES;
+				const maxBytes = Math.min(
+					input.maxBytes ?? defaultMaxBytes,
+					defaultMaxBytes,
 				);
 				if (stats.size > maxBytes) {
 					return {
-							kind: "tooLarge" as const,
-							byteLength: stats.size,
+						kind: "tooLarge" as const,
+						byteLength: stats.size,
+						maxBytes,
+						mimeType:
+							officePreviewInfo?.mimeType ?? mediaPreviewInfo?.mimeType ?? null,
+					};
+				}
+
+				const buffer = await fs.readFile(targetPath);
+				if (officePreviewInfo) {
+					try {
+						const preview = await buildOfficePreview({
+							buffer,
+							officeType: officePreviewInfo.officeType,
+						});
+						return {
+							kind: "office" as const,
+							officeType: officePreviewInfo.officeType,
+							title: path.basename(targetPath),
+							mimeType: officePreviewInfo.mimeType,
+							byteLength: buffer.byteLength,
 							maxBytes,
-							mimeType:
-								officePreviewInfo?.mimeType ?? mediaPreviewInfo?.mimeType ?? null,
+							...preview,
+						};
+					} catch (error) {
+						return {
+							kind: "unsupportedOffice" as const,
+							byteLength: buffer.byteLength,
+							maxBytes,
+							mimeType: officePreviewInfo.mimeType,
+							error: getErrorMessage(error),
 						};
 					}
+				}
 
-					const buffer = await fs.readFile(targetPath);
-					if (officePreviewInfo) {
-						try {
-							const preview = await buildOfficePreview({
-								buffer,
-								officeType: officePreviewInfo.officeType,
-							});
-							return {
-								kind: "office" as const,
-								officeType: officePreviewInfo.officeType,
-								title: path.basename(targetPath),
-								mimeType: officePreviewInfo.mimeType,
-								byteLength: buffer.byteLength,
-								maxBytes,
-								...preview,
-							};
-						} catch (error) {
-							return {
-								kind: "unsupportedOffice" as const,
-								byteLength: buffer.byteLength,
-								maxBytes,
-								mimeType: officePreviewInfo.mimeType,
-								error: getErrorMessage(error),
-							};
-						}
-					}
-
-					if (mediaPreviewInfo) {
-						return {
-							kind: mediaPreviewInfo.kind,
+				if (mediaPreviewInfo) {
+					return {
+						kind: mediaPreviewInfo.kind,
 						content: buffer.toString("base64"),
 						mimeType: mediaPreviewInfo.mimeType,
 						byteLength: buffer.byteLength,
