@@ -525,6 +525,150 @@ export const Terminal = memo(function Terminal({
 		window.setTimeout(focusTerminal, 0);
 	};
 
+	// Right-click paste. xterm's internal canvas stops contextmenu propagation
+	// before it reaches xterm.element or the React tree, so we listen on
+	// document in the capture phase (the only level that fires — confirmed by
+	// CDP probe). Paste via a synthetic ClipboardEvent on the hidden textarea
+	// so xterm processes it through its standard paste pipeline.
+	useEffect(() => {
+		const pane = terminalRef.current?.closest('[data-testid="terminal-pane"]');
+		if (!pane) return;
+		const handler = async (event: Event) => {
+			const mouseEvent = event as MouseEvent;
+			if (!pane.contains(mouseEvent.target as Node)) return;
+			const xterm = xtermRef.current;
+			if (!xterm) return;
+			if (xterm.hasSelection()) return;
+			mouseEvent.preventDefault();
+			try {
+				const text = await navigator.clipboard.readText();
+				if (!text || isExitedRef.current) return;
+				const textarea = pane.querySelector(".xterm-helper-textarea");
+				if (textarea) {
+					const dt = new DataTransfer();
+					dt.setData("text/plain", text);
+					textarea.dispatchEvent(
+						new ClipboardEvent("paste", {
+							bubbles: true,
+							cancelable: true,
+							clipboardData: dt,
+						}),
+					);
+				}
+			} catch {}
+		};
+		document.addEventListener("contextmenu", handler, true);
+		return () => document.removeEventListener("contextmenu", handler, true);
+	}, [xtermInstance]);
+
+	// Middle-click auto-scroll (Windows-style): press the scroll wheel to enter
+	// auto-scroll mode, move the mouse up/down to control speed & direction,
+	// click again to stop. Uses synthetic WheelEvents on the xterm-screen so
+	// xterm's internal scroll handler processes them (viewport.scrollTop is
+	// managed by xterm and cannot be set directly).
+	useEffect(() => {
+		let active = false;
+		let originY = 0;
+		let rafId: number | null = null;
+		let indicator: HTMLDivElement | null = null;
+		let lastEvent: MouseEvent | null = null;
+		let activeTarget: Element | null = null;
+
+		function stop() {
+			active = false;
+			activeTarget = null;
+			if (indicator) {
+				indicator.remove();
+				indicator = null;
+			}
+			if (rafId !== null) {
+				cancelAnimationFrame(rafId);
+				rafId = null;
+			}
+		}
+
+		function tick() {
+			if (!active || !lastEvent || !activeTarget) return;
+			const dy = lastEvent.clientY - originY;
+			const absDy = Math.abs(dy);
+			if (absDy > 5) {
+				const lines = Math.sign(dy) * Math.ceil(absDy / 20);
+				activeTarget.dispatchEvent(
+					new WheelEvent("wheel", {
+						deltaY: -lines * 40,
+						deltaMode: 0,
+						bubbles: true,
+						cancelable: true,
+					}),
+				);
+			}
+			rafId = requestAnimationFrame(tick);
+		}
+
+		const onDown = (e: MouseEvent) => {
+			if (e.button !== 1) return;
+			const pane = (e.target as Element).closest(
+				'[data-testid="terminal-pane"]',
+			);
+			if (!pane) return;
+			const screen = pane.querySelector(".xterm-screen");
+			if (!screen) return;
+			e.preventDefault();
+			e.stopPropagation();
+			if (active) {
+				stop();
+				return;
+			}
+			active = true;
+			activeTarget = screen;
+			originY = e.clientY;
+			lastEvent = e;
+
+			const el = document.createElement("div");
+			el.style.cssText =
+				"position:fixed;z-index:99999;width:28px;height:28px;border-radius:50%;" +
+				"border:2px solid rgba(255,255,255,0.7);background:rgba(0,0,0,0.5);" +
+				"pointer-events:none;transform:translate(-50%,-50%);" +
+				"display:flex;align-items:center;justify-content:center;" +
+				"font-size:12px;color:white;user-select:none;";
+			el.textContent = "↕";
+			el.style.left = `${e.clientX}px`;
+			el.style.top = `${e.clientY}px`;
+			document.body.appendChild(el);
+			indicator = el;
+
+			rafId = requestAnimationFrame(tick);
+		};
+		const onMove = (e: MouseEvent) => {
+			if (active) lastEvent = e;
+		};
+		const onClick = (e: MouseEvent) => {
+			if (!active) return;
+			e.preventDefault();
+			e.stopPropagation();
+			stop();
+		};
+		const onUp = (e: MouseEvent) => {
+			if (active && e.button === 1) {
+				e.preventDefault();
+				e.stopPropagation();
+			}
+		};
+
+		document.addEventListener("mousedown", onDown, true);
+		document.addEventListener("mousemove", onMove, true);
+		document.addEventListener("click", onClick, true);
+		document.addEventListener("mouseup", onUp, true);
+
+		return () => {
+			document.removeEventListener("mousedown", onDown, true);
+			document.removeEventListener("mousemove", onMove, true);
+			document.removeEventListener("click", onClick, true);
+			document.removeEventListener("mouseup", onUp, true);
+			stop();
+		};
+	}, []);
+
 	const handleDrop = (event: React.DragEvent) => {
 		event.preventDefault();
 		const files = Array.from(event.dataTransfer.files);
