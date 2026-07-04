@@ -567,16 +567,32 @@ export const Terminal = memo(function Terminal({
 	// xterm's internal scroll handler processes them (viewport.scrollTop is
 	// managed by xterm and cannot be set directly).
 	useEffect(() => {
+		// Windows-style speed law: scroll speed scales smoothly with how far the
+		// mouse is from the anchor (slow near the anchor, fast far away), instead
+		// of jumping to full speed the instant you leave a tiny dead zone.
+		const DEAD_ZONE_PX = 20; // radius around anchor where nothing scrolls
+		const MIN_STEPS_PER_SEC = 3; // floor so just past the dead zone still moves
+		const SCROLL_GAIN = 0.14; // px-past-dead-zone → extra steps per second
+		const MAX_STEPS_PER_SEC = 40; // upper speed cap
+		const SCROLL_STEP_PX = 40; // one wheel notch (xterm's line step)
+		const MAX_FRAME_DT = 0.05; // clamp dt so a stalled frame can't lurch
+
 		let active = false;
 		let originY = 0;
 		let rafId: number | null = null;
 		let indicator: HTMLDivElement | null = null;
 		let lastEvent: MouseEvent | null = null;
 		let activeTarget: Element | null = null;
+		let lastFrameTime = 0; // rAF timestamp of the previous tick
+		let scrollAcc = 0; // fractional scroll steps carried between frames
+		let lastDir = 0; // last scroll direction, reset acc on reversal
 
 		function stop() {
 			active = false;
 			activeTarget = null;
+			lastFrameTime = 0;
+			scrollAcc = 0;
+			lastDir = 0;
 			if (indicator) {
 				indicator.remove();
 				indicator = null;
@@ -587,20 +603,45 @@ export const Terminal = memo(function Terminal({
 			}
 		}
 
-		function tick() {
+		function tick(now: number) {
 			if (!active || !lastEvent || !activeTarget) return;
+			if (lastFrameTime === 0) lastFrameTime = now;
+			const dt = Math.min(MAX_FRAME_DT, (now - lastFrameTime) / 1000);
+			lastFrameTime = now;
+
 			const dy = lastEvent.clientY - originY;
-			const absDy = Math.abs(dy);
-			if (absDy > 5) {
-				const lines = Math.sign(dy) * Math.ceil(absDy / 20);
-				activeTarget.dispatchEvent(
-					new WheelEvent("wheel", {
-						deltaY: -lines * 40,
-						deltaMode: 0,
-						bubbles: true,
-						cancelable: true,
-					}),
+			const dir = Math.sign(dy);
+			const over = Math.max(0, Math.abs(dy) - DEAD_ZONE_PX);
+
+			// Crossing the anchor flips direction: drop any leftover momentum so
+			// we don't keep scrolling the old way for a frame or two.
+			if (dir !== lastDir) {
+				scrollAcc = 0;
+				lastDir = dir;
+			}
+
+			if (over > 0 && dir !== 0) {
+				const stepsPerSec = Math.min(
+					MAX_STEPS_PER_SEC,
+					MIN_STEPS_PER_SEC + over * SCROLL_GAIN,
 				);
+				scrollAcc += stepsPerSec * dt;
+				if (scrollAcc >= 1) {
+					const steps = Math.floor(scrollAcc);
+					scrollAcc -= steps;
+					activeTarget.dispatchEvent(
+						new WheelEvent("wheel", {
+							deltaY: -dir * steps * SCROLL_STEP_PX,
+							deltaMode: 0,
+							bubbles: true,
+							cancelable: true,
+						}),
+					);
+				}
+			} else {
+				// Inside the dead zone: drop any leftover fraction so it can't
+				// surface as a surprise notch when the cursor moves back out.
+				scrollAcc = 0;
 			}
 			rafId = requestAnimationFrame(tick);
 		}
@@ -623,6 +664,9 @@ export const Terminal = memo(function Terminal({
 			activeTarget = screen;
 			originY = e.clientY;
 			lastEvent = e;
+			lastFrameTime = 0;
+			scrollAcc = 0;
+			lastDir = 0;
 
 			const el = document.createElement("div");
 			el.style.cssText =

@@ -403,13 +403,20 @@ export class HostServiceCoordinator extends EventEmitter {
 			// Prod: detached so PTYs survive Electron restarts via manifest
 			// adoption (HOST_SERVICE_LIFECYCLE.md). Dev: attached so a `bun dev`
 			// kill propagates and serve.ts's dev shutdown can stop pty-daemon.
-			child = childProcess.spawn(process.execPath, [this.scriptPath], {
-				detached: !isDev,
-				stdio,
-				env: childEnv,
-				// Avoid a flashing CMD window on Windows.
-				windowsHide: true,
-			});
+			// --max-old-space-size caps the V8 old-space heap so the long-lived
+			// service GCs churn instead of ballooning (observed 500MB+ with the
+			// multi-GB default). Bounds retention, not throughput.
+			child = childProcess.spawn(
+				process.execPath,
+				["--max-old-space-size=768", this.scriptPath],
+				{
+					detached: !isDev,
+					stdio,
+					env: childEnv,
+					// Avoid a flashing CMD window on Windows.
+					windowsHide: true,
+				},
+			);
 		} finally {
 			if (logFd >= 0) {
 				try {

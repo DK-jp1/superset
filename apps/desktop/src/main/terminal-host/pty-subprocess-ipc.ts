@@ -23,6 +23,25 @@ export interface PtySubprocessFrame {
 const HEADER_BYTES = 5;
 const EMPTY_PAYLOAD = Buffer.alloc(0);
 
+/** Frame types a subprocess may receive on stdin (daemon -> subprocess). */
+export const COMMAND_FRAME_TYPES: ReadonlySet<number> = new Set([
+	PtySubprocessIpcType.Spawn,
+	PtySubprocessIpcType.Write,
+	PtySubprocessIpcType.Resize,
+	PtySubprocessIpcType.Kill,
+	PtySubprocessIpcType.Dispose,
+	PtySubprocessIpcType.Signal,
+]);
+
+/** Frame types the daemon may receive on stdout (subprocess -> daemon). */
+export const EVENT_FRAME_TYPES: ReadonlySet<number> = new Set([
+	PtySubprocessIpcType.Ready,
+	PtySubprocessIpcType.Spawned,
+	PtySubprocessIpcType.Data,
+	PtySubprocessIpcType.Exit,
+	PtySubprocessIpcType.Error,
+]);
+
 // Hard cap to avoid OOM if the stream is corrupted.
 // PTY data is untrusted input in practice (terminal apps can emit arbitrarily).
 const MAX_FRAME_BYTES = 64 * 1024 * 1024; // 64MB
@@ -63,6 +82,26 @@ export class PtySubprocessFrameDecoder {
 	private payload: Buffer | null = null;
 	private payloadOffset = 0;
 
+	/**
+	 * @param allowedTypes valid frame types for this stream direction. A desynced
+	 * stream reads garbage bytes as a header; validating the type byte makes
+	 * garbage overwhelmingly likely to throw (and trigger recovery) instead of
+	 * being silently consumed as a plausible-looking frame.
+	 */
+	constructor(private readonly allowedTypes?: ReadonlySet<number>) {}
+
+	/**
+	 * Drop all partially-decoded state. Called after a framing error so the
+	 * decoder can resynchronize on the next clean frame boundary instead of
+	 * misreading every subsequent chunk forever.
+	 */
+	reset(): void {
+		this.headerOffset = 0;
+		this.frameType = null;
+		this.payload = null;
+		this.payloadOffset = 0;
+	}
+
 	push(chunk: Buffer): PtySubprocessFrame[] {
 		const frames: PtySubprocessFrame[] = [];
 
@@ -84,6 +123,9 @@ export class PtySubprocessFrameDecoder {
 				const type = this.header.readUInt8(0) as PtySubprocessIpcType;
 				const payloadLength = this.header.readUInt32LE(1);
 
+				if (this.allowedTypes && !this.allowedTypes.has(type)) {
+					throw new Error(`PtySubprocess IPC unknown frame type: ${type}`);
+				}
 				if (payloadLength > MAX_FRAME_BYTES) {
 					throw new Error(
 						`PtySubprocess IPC frame too large: ${payloadLength} bytes`,

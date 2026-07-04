@@ -13,6 +13,7 @@ import type { IPty } from "node-pty";
 import * as pty from "node-pty";
 import treeKill from "tree-kill";
 import {
+	COMMAND_FRAME_TYPES,
 	PtySubprocessFrameDecoder,
 	PtySubprocessIpcType,
 	writeFrame,
@@ -462,7 +463,49 @@ function handleDispose(): void {
 // Main
 // =============================================================================
 
-const decoder = new PtySubprocessFrameDecoder();
+const decoder = new PtySubprocessFrameDecoder(COMMAND_FRAME_TYPES);
+
+// Framing-error recovery. A desynced stdin stream used to leave the decoder
+// corrupted forever: every subsequent chunk threw, input frames (keystrokes)
+// never reached the PTY, and the UI got an endless stream of error toasts —
+// the terminal looked frozen until the whole app was force-quit.
+// Now we reset the decoder so it can resync on the next clean frame boundary,
+// rate-limit the error toast, and exit the subprocess (letting the daemon
+// surface a normal per-pane exit) if the stream stays corrupted.
+const PARSE_ERROR_TOAST_INTERVAL_MS = 10_000;
+const PARSE_ERROR_ESCALATION_WINDOW_MS = 10_000;
+const PARSE_ERROR_ESCALATION_LIMIT = 5;
+let lastParseErrorSentAt = 0;
+let parseErrorTimestamps: number[] = [];
+
+function handleFrameParseError(error: unknown): void {
+	decoder.reset();
+
+	const now = Date.now();
+	parseErrorTimestamps = parseErrorTimestamps.filter(
+		(t) => now - t < PARSE_ERROR_ESCALATION_WINDOW_MS,
+	);
+	parseErrorTimestamps.push(now);
+
+	if (now - lastParseErrorSentAt >= PARSE_ERROR_TOAST_INTERVAL_MS) {
+		lastParseErrorSentAt = now;
+		sendError(
+			`Failed to parse frame: ${error instanceof Error ? error.message : String(error)} (decoder reset)`,
+		);
+	}
+
+	// Stream is persistently corrupted — exit so the daemon reports a normal
+	// per-session exit instead of an unusable-but-alive terminal.
+	if (parseErrorTimestamps.length >= PARSE_ERROR_ESCALATION_LIMIT) {
+		console.error(
+			"[pty-subprocess] Persistent IPC framing corruption, exiting for restart",
+		);
+		sendError(
+			"Terminal IPC stream is persistently corrupted; restarting this pane",
+		);
+		handleDispose();
+	}
+}
 
 process.stdin.on("data", (chunk: Buffer) => {
 	try {
@@ -490,9 +533,7 @@ process.stdin.on("data", (chunk: Buffer) => {
 			}
 		}
 	} catch (error) {
-		sendError(
-			`Failed to parse frame: ${error instanceof Error ? error.message : String(error)}`,
-		);
+		handleFrameParseError(error);
 	}
 });
 

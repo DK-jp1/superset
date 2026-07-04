@@ -38,6 +38,7 @@ import type {
 import { treeKillAsync } from "../lib/tree-kill";
 import {
 	createFrameHeader,
+	EVENT_FRAME_TYPES,
 	PtySubprocessFrameDecoder,
 	PtySubprocessIpcType,
 } from "./pty-subprocess-ipc";
@@ -149,6 +150,8 @@ export class Session {
 	private disposed = false;
 	private terminatingAt: number | null = null;
 	private subprocessDecoder: PtySubprocessFrameDecoder | null = null;
+	private lastBroadcastErrorMessage: string | null = null;
+	private lastBroadcastErrorAt = 0;
 	private subprocessStdinQueue: Buffer[] = [];
 	private subprocessStdinQueuedBytes = 0;
 	private subprocessStdinDrainArmed = false;
@@ -266,14 +269,24 @@ export class Session {
 
 		// Spawn subprocess with filtered env to prevent leaking NODE_ENV etc.
 		const electronPath = process.execPath;
-		this.subprocess = this.spawnProcess(electronPath, [subprocessPath], {
-			stdio: ["pipe", "pipe", "inherit"],
-			env: { ...processEnv, ELECTRON_RUN_AS_NODE: "1" },
-		});
+		// Cap the V8 old-space heap. Without a cap the subprocess inherits the
+		// multi-GB default, so V8 rarely GCs under heavy PTY throughput and the
+		// process balloons (observed: 10MB -> ~240MB in minutes, never returned).
+		// The relay only needs its bounded queues (64MB input hard limit + small
+		// output batches), so 128MB keeps GC active with ample headroom. Perf is
+		// unaffected: this bounds retention, not throughput.
+		this.subprocess = this.spawnProcess(
+			electronPath,
+			["--max-old-space-size=128", subprocessPath],
+			{
+				stdio: ["pipe", "pipe", "inherit"],
+				env: { ...processEnv, ELECTRON_RUN_AS_NODE: "1" },
+			},
+		);
 
 		// Read framed messages from subprocess stdout
 		if (this.subprocess.stdout) {
-			this.subprocessDecoder = new PtySubprocessFrameDecoder();
+			this.subprocessDecoder = new PtySubprocessFrameDecoder(EVENT_FRAME_TYPES);
 			this.subprocess.stdout.on("data", (chunk: Buffer) => {
 				try {
 					const frames = this.subprocessDecoder?.push(chunk) ?? [];
@@ -285,6 +298,9 @@ export class Session {
 						`[Session ${this.sessionId}] Failed to parse subprocess frames:`,
 						error,
 					);
+					// Drop partial decode state so the stream can resync on the next
+					// clean frame instead of misreading every subsequent chunk.
+					this.subprocessDecoder?.reset();
 				}
 			});
 		}
@@ -425,6 +441,21 @@ export class Session {
 					`[Session ${this.sessionId}] Subprocess error:`,
 					errorMessage,
 				);
+
+				// Coalesce repeated framing-desync errors so the UI shows one toast
+				// instead of an endless stream. Scoped to parse errors only — other
+				// error kinds (write failures etc.) must never be swallowed.
+				if (errorMessage.startsWith("Failed to parse frame")) {
+					const now = Date.now();
+					if (
+						errorMessage === this.lastBroadcastErrorMessage &&
+						now - this.lastBroadcastErrorAt < 10_000
+					) {
+						break;
+					}
+					this.lastBroadcastErrorMessage = errorMessage;
+					this.lastBroadcastErrorAt = now;
+				}
 
 				this.broadcastEvent("error", {
 					type: "error",

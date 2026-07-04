@@ -1205,15 +1205,23 @@ export class TerminalHostClient extends EventEmitter {
 			const isDev = !app.isPackaged;
 			let child: ReturnType<typeof spawn> | null = null;
 			try {
-				child = spawn(process.execPath, [daemonScript], {
-					detached: !isDev,
-					stdio: logFd >= 0 ? ["ignore", logFd, logFd] : "ignore",
-					env: {
-						...process.env,
-						ELECTRON_RUN_AS_NODE: "1",
-						NODE_ENV: process.env.NODE_ENV,
+				// Cap the V8 old-space heap so idle scrollback/emulator churn gets
+				// GC'd instead of accumulating for the daemon's (long) lifetime.
+				// 384MB fits many concurrent sessions' headless emulators (5000-line
+				// scrollback each) with headroom; bounds retention, not throughput.
+				child = spawn(
+					process.execPath,
+					["--max-old-space-size=384", daemonScript],
+					{
+						detached: !isDev,
+						stdio: logFd >= 0 ? ["ignore", logFd, logFd] : "ignore",
+						env: {
+							...process.env,
+							ELECTRON_RUN_AS_NODE: "1",
+							NODE_ENV: process.env.NODE_ENV,
+						},
 					},
-				});
+				);
 			} finally {
 				if (logFd >= 0) {
 					try {

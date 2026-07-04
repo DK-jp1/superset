@@ -694,9 +694,17 @@ export class DaemonSupervisor {
 			// Prod: detached so PTYs survive host-service restarts via socket
 			// adoption. Dev: attached as defense-in-depth in case serve.ts's
 			// dev shutdown doesn't fire (e.g. host-service crash).
+			// --max-old-space-size caps the V8 old-space heap so PTY output churn
+			// gets GC'd instead of retained for the daemon's (long) lifetime.
+			// Node places the flag in process.execArgv, so the self-upgrade path
+			// (Server.ts successor spawn forwards execArgv) inherits it too.
 			child = childProcess.spawn(
 				process.execPath,
-				[this.opts.scriptPath, `--socket=${socketPath}`],
+				[
+					"--max-old-space-size=256",
+					this.opts.scriptPath,
+					`--socket=${socketPath}`,
+				],
 				{
 					detached: !isDev,
 					stdio,
